@@ -1,5 +1,11 @@
 # MinIO — local S3-compatible object storage for the flywheel.
 # Replaces the external OSD-hosted MinIO that thor-testing used.
+#
+# Storage: hostPath PV at /var/lib/minio on the SNO node.
+# Pre-requisite: directory must exist with SELinux label container_file_t:
+#   sudo mkdir -p /var/lib/minio
+#   sudo chcon -Rt svirt_sandbox_file_t /var/lib/minio
+#   sudo chown nobody:nobody /var/lib/minio
 ---
 apiVersion: v1
 kind: Namespace
@@ -26,6 +32,10 @@ spec:
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  claimRef:
+    namespace: minio
+    name: minio-data
   hostPath:
     path: /var/lib/minio
 ---
@@ -37,6 +47,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  storageClassName: ""
   resources:
     requests:
       storage: 50Gi
