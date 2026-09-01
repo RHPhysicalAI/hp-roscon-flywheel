@@ -46,6 +46,16 @@ RUN apt-get update \
 RUN source /opt/ros/"$ROS_DISTRO"/setup.bash \
   && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
 
+# ---- ML dependencies (LeRobot + PyTorch for ACT inference) ----
+# CPU-only PyTorch for now — GPU inference added when VFIO passthrough is set up.
+# scipy<2 required: LeRobot 0.5.x imports scipy.fftpack which SciPy 2.0 removed.
+RUN pip install --no-cache-dir \
+  torch torchvision torchaudio \
+  "lerobot[feetech,async]==0.5.1" \
+  "numpy>=2.0.0,<2.3" \
+  "scipy>=1.11.0,<2" \
+  && pip cache purge
+
 # ---- Episode emitter (flywheel adapter) ----
 COPY src/episode-emitter/episode_emitter.py /ws_pai/episode_emitter.py
 

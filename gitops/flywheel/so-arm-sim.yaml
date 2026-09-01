@@ -45,17 +45,30 @@ spec:
               value: "5.0"
             - name: MCP_ENABLED
               value: "false"
+            - name: RUN_INFERENCE
+              value: "true"
+            - name: POLICY_PATH
+              value: "francocipollone/rospai_act_sim_arm101_place_cubes_on_tray"
+            - name: POLICY_DEVICE
+              value: "cpu"
+            - name: HF_HOME
+              value: "/data/hf-cache"
           resources:
             requests:
-              cpu: "2"
-              memory: 2Gi
-            limits:
               cpu: "4"
               memory: 4Gi
+            limits:
+              cpu: "8"
+              memory: 8Gi
           volumeMounts:
             - name: episodes
               mountPath: /data/episodes
+            - name: hf-cache
+              mountPath: /data/hf-cache
       volumes:
         - name: episodes
           hostPath:
             path: /var/lib/episodes
+        - name: hf-cache
+          hostPath:
+            path: /var/lib/hf-cache

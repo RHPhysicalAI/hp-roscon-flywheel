@@ -67,10 +67,32 @@ echo "[entrypoint] Starting episode emitter..."
 python3 /ws_pai/episode_emitter.py &
 EMITTER_PID=$!
 
-echo "[entrypoint] All processes started: zenoh=$ZENOH_PID sim=$SIM_PID emitter=$EMITTER_PID"
+# 4. Start ACT policy inference via Rosetta (if enabled)
+INFERENCE_PID=""
+if [ "${RUN_INFERENCE:-true}" = "true" ]; then
+  echo "[entrypoint] Starting ACT policy inference via Rosetta..."
+  echo "[entrypoint] Policy: ${POLICY_PATH:-francocipollone/rospai_act_sim_arm101_place_cubes_on_tray}"
+  echo "[entrypoint] Device: ${POLICY_DEVICE:-cpu}"
+  ros2 launch rosetta rosetta_client_launch.py \
+    contract_path:=$(ros2 pkg prefix pai_data_collection)/share/pai_data_collection/config/rosetta/so_arm101.yaml \
+    pretrained_name_or_path:=${POLICY_PATH:-francocipollone/rospai_act_sim_arm101_place_cubes_on_tray} \
+    policy_type:=act \
+    policy_device:=${POLICY_DEVICE:-cpu} \
+    &
+  INFERENCE_PID=$!
+  echo "[entrypoint] Inference started, PID: $INFERENCE_PID"
+else
+  echo "[entrypoint] Inference disabled (RUN_INFERENCE=false)"
+fi
+
+echo "[entrypoint] All processes started: zenoh=$ZENOH_PID sim=$SIM_PID emitter=$EMITTER_PID inference=$INFERENCE_PID"
 
 # Wait for any process to exit, then stop all
-wait -n $ZENOH_PID $SIM_PID $EMITTER_PID
+if [ -n "$INFERENCE_PID" ]; then
+  wait -n $ZENOH_PID $SIM_PID $EMITTER_PID $INFERENCE_PID
+else
+  wait -n $ZENOH_PID $SIM_PID $EMITTER_PID
+fi
 echo "[entrypoint] A process exited, shutting down..."
-kill $ZENOH_PID $SIM_PID $EMITTER_PID 2>/dev/null
+kill $ZENOH_PID $SIM_PID $EMITTER_PID $INFERENCE_PID 2>/dev/null
 wait
