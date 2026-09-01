@@ -30,26 +30,20 @@ SSH to the desktop and confirm:
 
 Options for bare-metal SNO on Ubuntu/x86_64:
 
-### Option A: Assisted Installer (recommended)
-- Pull secret from console.redhat.com
-- Generate the discovery ISO via the Assisted Installer UI or API
-- Boot from the ISO (or write to USB), it installs RHCOS + SNO
-- **Note:** this replaces Ubuntu with RHCOS on the machine. If that's acceptable, this is the
-  cleanest path. If not, Option B.
+### Decision: SNO in a KVM VM with GPU passthrough (Ubuntu host preserved)
 
-### Option B: SNO in a VM (KVM)
+Ubuntu stays. SNO runs in a KVM VM with the RTX 5090 passed through via VFIO.
+
 - Keep Ubuntu as the host OS
-- Create a KVM VM with enough resources (16+ cores, 64+ GB RAM, 200 GB disk)
+- Create a KVM VM with sufficient resources (16+ cores, 64+ GB RAM, 200+ GB disk)
 - VFIO passthrough the RTX 5090 to the VM so SNO sees real GPU
-- Install SNO inside the VM via Assisted Installer
-- **Trade-off:** more complexity, but preserves Ubuntu. VFIO passthrough of the 5090 should work
-  (discrete PCIe GPU with proper IOMMU groups, unlike the Thor's integrated GPU).
+- Install SNO inside the VM via Assisted Installer (pull secret from console.redhat.com)
+- VFIO passthrough of the 5090 should work — it's a discrete PCIe GPU with proper IOMMU groups
+  (unlike the Thor's integrated GPU which can't be passed through)
 
-### Option C: MicroShift on Ubuntu (fallback)
-- If SNO overhead is too heavy for the desktop's resources, MicroShift is the fallback
-- Runs directly on the existing Ubuntu host (no RHCOS replacement)
-- Lighter weight but less representative of the "OpenShift platform" demo story
-- Decision: only go here if Phase 0 measurement shows SNO leaves < 64 GB free for workloads
+**Fallback:** if SNO overhead inside the VM leaves insufficient resources for workloads, fall
+back to MicroShift running directly on Ubuntu (lighter weight, less representative of the
+"OpenShift platform" story, but functional).
 
 **Verify after install:**
 - [ ] `oc get nodes` — single node, Ready
