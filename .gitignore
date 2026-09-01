@@ -1,0 +1,36 @@
+# Working notes, planning artifacts, scratch — not repo-worthy
+.plans/
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Secrets / credentials
+pull-secret.json
+*.key
+*.pub
+kubeconfig
+auth/
+
+# Build artifacts
+*.iso
+*.qcow2
+*.img
+
+# Data (episodes, models, rosbags — too large for git)
+data/
+models/
+*.hdf5
+*.rosbag
+*.bag
