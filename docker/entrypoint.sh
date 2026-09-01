@@ -45,6 +45,26 @@ for i in $(seq 1 60); do
   sleep 2
 done
 
+# Re-spawn controllers if they failed (common in constrained environments
+# where Gazebo takes longer to initialize than the spawner timeout allows)
+echo "[entrypoint] Ensuring controllers are active..."
+sleep 5
+for ctrl in joint_state_broadcaster forward_position_controller; do
+  if ! ros2 control list_controllers 2>/dev/null | grep -q "$ctrl.*active"; then
+    echo "[entrypoint] Re-spawning $ctrl..."
+    ros2 run controller_manager spawner "$ctrl" -c /controller_manager \
+      --ros-args -p use_sim_time:=true &
+  fi
+done
+sleep 10
+
+# Verify controllers
+if ros2 control list_controllers 2>/dev/null | grep -q "forward_position_controller.*active"; then
+  echo "[entrypoint] Controllers active — arm ready for commands"
+else
+  echo "[entrypoint] WARNING: forward_position_controller not active — arm may not respond to commands"
+fi
+
 # 3. Start episode emitter
 echo "[entrypoint] Starting episode emitter..."
 python3 /ws_pai/episode_emitter.py &
