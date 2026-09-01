@@ -18,9 +18,9 @@ metadata:
   labels:
     app: so-arm-sim
 spec:
-  # replicas=0 by default — scale to 1 via dashboard "Start Flywheel" or manually.
-  # Uses Recreate strategy because hostPath volumes can't be shared across pods.
-  replicas: 0
+  # Dashboard Start/Stop buttons scale 0↔1. Argo ignores replica diffs
+  # so the dashboard can control the flywheel without git fighting it.
+  replicas: 1
   strategy:
     type: Recreate
   selector:
