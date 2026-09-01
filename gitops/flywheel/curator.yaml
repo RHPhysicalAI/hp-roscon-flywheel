@@ -1,4 +1,19 @@
-# This project was developed with assistance from AI tools.
+# SO-ARM101 episode curator — task-performance quality scoring.
+#
+# Scores rollout episodes from the SO-ARM101 Gazebo sim on TASK PERFORMANCE:
+#   Gate 0: injected failures (has_failure=true → always reject, for demo)
+#   Gate 1: episode completeness (did the rollout run without sim errors?)
+#   Gate 2: task success (did the arm place the cubes on the tray?)
+#   Gate 3: trajectory smoothness (is the joint motion smooth or jerky?)
+#
+# High-scoring episodes (successful task with smooth motion) become training
+# data for LeRobot ACT fine-tuning. Low-scoring episodes are rejected on-device
+# and never enter the training set.
+#
+# The curation threshold is a tunable knob — in production you'd plug in a
+# learned quality model. The governed pipeline ensures data never leaves the
+# device without passing curation.
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,18 +21,17 @@ metadata:
   namespace: flywheel
 data:
   curator.py: |
-    """On-device episode curator -- Generator quality scoring (D031 / Option E).
+    """SO-ARM101 episode curator — task-performance quality scoring.
 
-    Scores episodes on GENERATOR OUTPUT QUALITY:
-    1. Was the Text-to-Image generation successful? (gen_ok)
-    2. Was the Action Policy prediction successful? (policy_ok)
-    3. Is the predicted action trajectory physically plausible? (smoothness)
-    4. Was this an injected failure? (always reject)
+    Evaluates rollout episodes from the Gazebo sim + ACT policy:
+      Gate 0: injected failures → always reject (demo failure injection)
+      Gate 1: episode completeness → did the rollout finish without errors?
+      Gate 2: task success → did the arm complete the placement task?
+      Gate 3: trajectory smoothness → smooth joint motion (ACT quality signal)
 
-    This is the curation signal for the Generator-native flywheel. High-score
-    episodes (model generated coherent images and predicted smooth action
-    trajectories) become training examples for Vision SFT. Low-score episodes
-    are rejected on-device and never reach the hub.
+    Episodes that pass curation become training data for LeRobot ACT fine-tuning.
+    As the policy improves, trajectories get smoother and task success increases —
+    the flywheel's quality signal is directly tied to policy performance.
     """
     import json, os, time, pathlib
 
@@ -28,42 +42,44 @@ data:
     SMOOTHNESS_THRESHOLD = float(os.environ.get("SMOOTHNESS_THRESHOLD", "0.15"))
 
     def score_episode(episode: dict) -> tuple[float, str]:
-        # Gate 0: injected failures
+        # Gate 0: injected failures (demo mechanism — always reject)
         if episode.get("has_failure"):
             return 0.0, "injected-failure"
 
-        score  = 1.0
-        parts  = []
+        score = 1.0
+        parts = []
 
-        # Gate 1: generation success
-        gen = episode.get("generation", {})
-        if gen.get("status") != "ok":
+        # Gate 1: episode completeness
+        rollout = episode.get("rollout", {})
+        if rollout.get("status") != "ok":
             score -= 0.4
-            parts.append(f"gen-failed({gen.get('status','')})")
-        elif gen.get("image_size", 0) < 1000:
-            score -= 0.2
-            parts.append("gen-tiny-image")
-
-        # Gate 2: policy success
-        pol = episode.get("policy", {})
-        if pol.get("status") not in ("ok", "fallback"):
+            parts.append(f"rollout-error({rollout.get('status', 'unknown')})")
+        elif rollout.get("steps", 0) < 10:
             score -= 0.3
-            parts.append(f"policy-failed({pol.get('status','')})")
+            parts.append(f"truncated({rollout.get('steps', 0)} steps)")
 
-        # Gate 3: action trajectory smoothness
-        smoothness = episode.get("avg_smoothness", pol.get("smoothness", 0.0))
+        # Gate 2: task success (primary signal)
+        if not episode.get("task_success", False):
+            score -= 0.4
+            parts.append("task-failed")
+
+        # Gate 3: trajectory smoothness (ACT quality signal)
+        # Lower smoothness = smoother motion = better policy output.
+        # As the policy improves via fine-tuning, this value decreases.
+        smoothness = episode.get("avg_smoothness", 0.0)
         if smoothness >= SMOOTHNESS_THRESHOLD:
-            excess    = smoothness - SMOOTHNESS_THRESHOLD
-            penalty   = min(0.3, excess * 2.0)
-            score    -= penalty
+            excess  = smoothness - SMOOTHNESS_THRESHOLD
+            penalty = min(0.3, excess * 2.0)
+            score  -= penalty
             parts.append(f"jerky(s={smoothness:.4f})")
 
         score = round(max(0.0, min(1.0, score)), 3)
 
         if score >= PASS_THRESHOLD:
             reason = (
-                f"clean (gen={gen.get('status','')} "
-                f"policy={pol.get('status','')} "
+                f"clean (task={'success' if episode.get('task_success') else 'fail'} "
+                f"rollout={rollout.get('status', '?')} "
+                f"steps={rollout.get('steps', '?')} "
                 f"smoothness={smoothness:.4f})"
             )
         else:
@@ -73,7 +89,7 @@ data:
 
     if __name__ == "__main__":
         print(
-            f"[curator] Starting -- Generator quality scoring (D031)\n"
+            f"[curator] Starting — SO-ARM101 task-performance scoring\n"
             f"  pass_threshold={PASS_THRESHOLD} "
             f"smoothness_threshold={SMOOTHNESS_THRESHOLD}\n"
             f"  watching {RAW_DIR}",
@@ -87,8 +103,8 @@ data:
                 try:
                     episode = json.loads(path.read_text())
                     score, reason = score_episode(episode)
-                    episode["curation_score"]   = score
-                    episode["curation_reason"]  = reason
+                    episode["curation_score"]  = score
+                    episode["curation_reason"] = reason
 
                     if score >= PASS_THRESHOLD:
                         episode["curation_verdict"] = "pass"
@@ -135,13 +151,11 @@ spec:
           env:
             - name: PASS_THRESHOLD
               value: "0.5"
-            # SMOOTHNESS_THRESHOLD: calibrated against real Cosmos3-Edge Action Policy
-            # output on 256x256 BridgeData2 frames. Base model predictions are in
-            # the 0.3-0.8 range; pre-loaded pool chunks were ~0.07-0.09 (artificially
-            # smooth). 1.0 allows most real predictions; injected failures (~1.2-1.4)
-            # are still caught. Fine-tuned model should produce lower values.
+            # SMOOTHNESS_THRESHOLD: will be calibrated against real ACT policy
+            # output on SO-ARM101 joint trajectories. Start permissive (0.15),
+            # tighten after observing real rollout distributions.
             - name: SMOOTHNESS_THRESHOLD
-              value: "1.0"
+              value: "0.15"
           volumeMounts:
             - name: code
               mountPath: /app

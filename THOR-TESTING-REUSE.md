@@ -62,40 +62,40 @@ All components use `hostPath` volumes pointing at `/var/lib/episodes/` on the no
 
 ### Episode JSON contract (what the curator reads)
 
-The SO-ARM producer must emit JSON with these fields:
+The SO-ARM episode-emitter adapter writes a summary JSON after each rollout. The full
+rollout data (MCAP rosbag / LeRobot dataset) is stored separately for training; this JSON
+is the lightweight metadata the curator scores on.
 
 ```json
 {
   "episode_id":     "string  -- uuid4",
   "timestamp":      "string  -- ISO 8601 UTC",
-  "scene":          "string  -- task name",
-  "model_version":  "string  -- e.g. soarm-act-v1",
+  "scene":          "string  -- task name (e.g. 'place_cubes_on_tray')",
+  "model_version":  "string  -- e.g. 'soarm-act-v1'",
   "has_failure":    "bool    -- true = injected failure, curator always rejects",
 
-  "generation": {
+  "rollout": {
     "status":       "string  -- 'ok' if rollout completed, 'error' if sim crashed",
-    "latency_ms":   "number  -- rollout wall time"
+    "steps":        "number  -- total timesteps in the episode",
+    "duration_s":   "number  -- wall time in seconds"
   },
 
-  "policy": {
-    "status":       "string  -- 'ok' if ACT returned action, 'fallback' if timeout",
-    "chunk_size":   "number  -- timesteps in action chunk",
-    "smoothness":   "number  -- mean abs delta between consecutive action steps"
-  },
+  "task_success":   "bool    -- did the arm complete the placement task?",
+  "cubes_placed":   "number  -- how many cubes landed on the tray (0-3)",
 
-  "avg_smoothness": "number  -- same as policy.smoothness (top-level for curator)",
-  "task_success":   "bool    -- did the arm complete the task?"
+  "avg_smoothness": "number  -- mean abs delta between consecutive joint commands",
+
+  "rosbag_path":    "string  -- relative path to the MCAP rosbag for training"
 }
 ```
 
-### Curator scoring (adapt, don't rewrite)
+### Curator scoring (rewritten for SO-ARM)
 
-The existing curator (`gitops/flywheel/curator.yaml`) scores on:
-- Gate 0: `has_failure` -> always reject (keep unchanged)
-- Gate 1: `generation.status != "ok"` -> penalty (keep unchanged)
-- Gate 2: `policy.status` not ok/fallback -> penalty (keep unchanged)
-- Gate 3: `avg_smoothness` above threshold -> penalty (retune threshold for ACT output)
-- **Gate 4 (new):** `task_success == false` -> penalty
+The curator (`gitops/flywheel/curator.yaml`) scores on task performance:
+- Gate 0: `has_failure` -> always reject (demo failure injection)
+- Gate 1: `rollout.status != "ok"` or `rollout.steps < 10` -> penalty (incomplete episode)
+- Gate 2: `task_success == false` -> penalty (primary signal — did the arm do the job?)
+- Gate 3: `avg_smoothness` above threshold -> penalty (jerky motion = low-quality trajectory)
 
 Keep the pass/reject directory structure and Kafka publish unchanged.
 
