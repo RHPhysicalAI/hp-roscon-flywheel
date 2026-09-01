@@ -8,16 +8,14 @@
 # The dashboard itself is a demo beat: it is GitOps-delivered (Argo CD sync),
 # runs on the edge device (not the hub), and needs no terminal during Acts 2-3.
 #
-# Controls:  Start/Stop Flywheel, Dream v1/v2, Stop Dreamer, Clear Data
-# Display:   Live scene frame, Reasoner output, curation log (scrolling tail),
-#            Forward Dynamics dream video comparison (the Act 3 money shot),
+# Controls:  Start/Stop Flywheel, Clear Data
+# Display:   Sim status, rollout stats, curation log (scrolling tail),
+#            policy comparison (v1 vs v2 rollout videos),
 #            flywheel progress bar, model version indicator
-# Education: Contextual annotations explaining each panel; toggleable for
-#            repeat audiences
 #
-# Auth posture: none (matches PoC-wide unauthenticated posture, D028).
+# Auth posture: none (matches PoC-wide unauthenticated posture).
 # RBAC: dashboard SA has Deployment patch in flywheel namespace + Service read
-#       in vllm namespace (to detect active color/model version).
+#       in act-serving namespace (to detect active policy version).
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -115,13 +113,13 @@ data:
         """blue selector = v1, green = v2."""
         api = _core()
         if not api:
-            return "cosmos3-edge-v1"
+            return "soarm-act-v1"
         try:
-            svc = api.read_namespaced_service("cosmos3-edge", VLLM_NS)
+            svc = api.read_namespaced_service("act-policy", VLLM_NS)
             color = (svc.spec.selector or {}).get("color", "blue")
-            return "cosmos3-edge-v2" if color == "green" else "cosmos3-edge-v1"
+            return "soarm-act-v2" if color == "green" else "soarm-act-v1"
         except Exception:
-            return "cosmos3-edge-v1"
+            return "soarm-act-v1"
 
     # ---- Episode helpers -----------------------------------------------------
     def _jsons(d: pathlib.Path) -> list[pathlib.Path]:
@@ -159,8 +157,8 @@ data:
         if not DREAMS.exists():
             return {"v1": None, "v2": None}
         mp4s = list(DREAMS.glob("*.mp4"))
-        v1 = sorted(f.name for f in mp4s if "-cosmos3-edge-v1.mp4" in f.name)
-        v2 = sorted(f.name for f in mp4s if "-cosmos3-edge-v2.mp4" in f.name)
+        v1 = sorted(f.name for f in mp4s if "-soarm-act-v1.mp4" in f.name)
+        v2 = sorted(f.name for f in mp4s if "-soarm-act-v2.mp4" in f.name)
         return {"v1": v1[-1] if v1 else None, "v2": v2[-1] if v2 else None}
 
     def status_snapshot() -> dict:
@@ -197,10 +195,10 @@ data:
                 "pct":       min(100, round(sent / THRESHOLD * 100)),
                 "triggered": sent >= THRESHOLD,
             },
-            "flywheel_running": get_replicas(FW_NS, "robot-sim") > 0,
+            "flywheel_running": get_replicas(FW_NS, "so-arm-sim") > 0,
             "dreamer_running":  get_replicas(FW_NS, "dreamer")   > 0,
             "model_version":    mv,
-            "promoted":         mv == "cosmos3-edge-v2",
+            "promoted":         mv == "soarm-act-v2",
             "latest": {
                 "scene":             scene,
                 "scene_description": scene_description,
@@ -278,7 +276,7 @@ data:
                 for p in DREAMS.glob("*.mp4"):
                     if p.name not in _watcher_seen_dreams:
                         _watcher_seen_dreams.add(p.name)
-                        ver = "v2" if "-cosmos3-edge-v2.mp4" in p.name else "v1"
+                        ver = "v2" if "-soarm-act-v2.mp4" in p.name else "v1"
                         broadcast("dream", {"file": p.name, "version": ver, "ts": now})
             if now - last_status >= 3:
                 last_status = now
@@ -354,7 +352,7 @@ data:
         action   = (request.json or {}).get("action", "start")
         replicas = 1 if action == "start" else 0
         ok = all(set_replicas(FW_NS, d, replicas)
-                 for d in ["robot-sim", "curator", "sync-agent"])
+                 for d in ["so-arm-sim", "curator", "sync-agent"])
         time.sleep(1)
         broadcast("status", status_snapshot())
         return jsonify({"ok": ok, "action": action})
@@ -363,7 +361,7 @@ data:
     def ctrl_dreamer():
         data    = request.json or {}
         action  = data.get("action", "start")
-        mv      = data.get("model_version", "cosmos3-edge-v1")
+        mv      = data.get("model_version", "soarm-act-v1")
         ok = True
         if action == "start":
             ok = ok and set_env_var(FW_NS, "dreamer", "MODEL_VERSION", mv)
@@ -410,7 +408,7 @@ data:
     <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Physical AI Edge Flywheel — Thor</title>
+    <title>Physical AI Edge Flywheel — SO-ARM101</title>
     <style>
     :root, [data-theme="light"] {
       --bg:        #f5f6f8;
@@ -885,7 +883,7 @@ data:
 
       <div id="model-badge" class="v1">
         <div id="model-dot"></div>
-        <span id="model-label">cosmos3-edge-v1</span>
+        <span id="model-label">soarm-act-v1</span>
       </div>
 
       <div id="controls">
@@ -930,7 +928,7 @@ data:
             Scene prompt will appear here...
           </div>
           <div class="annotation" style="margin-top:4px;font-size:10px">
-            Real 256&times;256 BridgeData2 frame (WidowX arm, UC Berkeley RAIL).
+            SO-ARM101 camera frame from Gazebo sim (480&times;480).
           </div>
         </div>
       </div>
@@ -938,7 +936,7 @@ data:
       <!-- STEP 1: Generate plan video + action policy (D031) -->
       <div class="card" id="generator-card">
         <div class="card-header">
-          <span class="card-title">1 &middot; Generate "plan" video and action policy from still image + action description</span>
+          <span class="card-title">1 &middot; SO-ARM101 rollout &mdash; ACT policy controlling arm in Gazebo sim</span>
         </div>
         <div class="card-body" id="generator-body">
           <div id="gen-empty" style="color:var(--txt3);font-size:12px;padding:30px 0;text-align:center">
@@ -955,13 +953,13 @@ data:
                 <video id="gen-vid" style="display:none;width:100%;height:100%;object-fit:cover" autoplay loop muted playsinline></video>
                 <img id="gen-img" style="display:none;width:100%;height:100%;object-fit:cover" alt="generated scene">
                 <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.6);color:#fff;font-size:9px;padding:2px 6px;text-align:center">
-                  256&times;256 I2V &mdash; Generated by Cosmos3-Edge
+                  480&times;480 &mdash; Gazebo wrist camera
                 </div>
               </div>
               <!-- I2V stats -->
               <div style="border:1px solid var(--border);border-radius:6px;padding:12px">
                 <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--txt2);margin-bottom:8px">
-                  Image &rarr; Video
+                  Rollout
                 </div>
                 <div class="r-field" style="border:none;padding:4px 0">
                   <div class="r-label">status</div>
@@ -979,7 +977,7 @@ data:
               <!-- Policy stats -->
               <div style="border:1px solid var(--border);border-radius:6px;padding:12px">
                 <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--txt2);margin-bottom:8px">
-                  Action Policy (DROID)
+                  ACT Policy
                 </div>
                 <div class="r-field" style="border:none;padding:4px 0">
                   <div class="r-label">status</div>
@@ -1006,7 +1004,7 @@ data:
                 <span id="g-curation">--</span>
               </div>
               <div class="annotation" style="font-size:10px">
-                On-device quality gate &mdash; rejected episodes never leave Thor
+                On-device quality gate &mdash; rejected episodes never enter training
               </div>
             </div>
             <!-- Inline curation log (moved here from standalone card) -->
@@ -1024,7 +1022,7 @@ data:
         <div class="card-header">
           <span class="card-title">Flywheel Progress</span>
           <span class="annotation">
-            Curated episodes flow to hub S3 &rarr; Kafka &rarr; training trigger &rarr; Kueue L40S GPU job
+            Curated episodes flow to MinIO &rarr; Kafka &rarr; training trigger &rarr; LeRobot ACT fine-tune
           </span>
         </div>
         <div id="progress-inner">
@@ -1042,14 +1040,14 @@ data:
           </div>
         </div>
         <div id="trigger-banner">
-          &#9889; Training threshold reached &mdash; Kueue queueing Vision SFT job on hub L40S &rarr; cosmos-framework training beginning
+          &#9889; Training threshold reached &mdash; LeRobot ACT fine-tune starting on curated rollout episodes
         </div>
       </div>
 
       <!-- DREAM COMPARISON (HERO) -->
       <div class="card" id="dream-card">
         <div class="card-header">
-          <span class="card-title">2 &middot; Forward Dynamics prediction based on the plan + action policy above</span>
+          <span class="card-title">2 &middot; Policy comparison &mdash; v1 (baseline) vs v2 (fine-tuned) rollout</span>
           <!-- Live-dreamer status indicator: hidden on the pinned-playback path
                (buttons call playPinnedDream, not the live dreamer). Backend
                /api/control/dreamer is retained for the manual live path
@@ -1060,12 +1058,10 @@ data:
         </div>
         <div id="dream-body">
           <div id="dream-annotation" class="annotation">
-            Forward Dynamics: real robot image + action trajectory &rarr; predicted arm motion,
-            computed on-device by the Cosmos3-Edge world model (Thor Blackwell GPU).
-            These buttons play a pinned, curated v1-vs-v2 pair &mdash; genuine outputs of the
-            base and the real 500-iter fine-tuned models at identical params (256&times;256,
-            seed 42) &mdash; so the comparison is deterministic every run. Compare the two
-            rollouts to see the flywheel&rsquo;s improvement.
+            Policy comparison: same task, same starting conditions &mdash; v1 is the baseline
+            ACT policy, v2 is fine-tuned on curated rollout data from the flywheel.
+            Compare task success rate, trajectory smoothness, and placement accuracy
+            to see the flywheel&rsquo;s improvement.
           </div>
           <div id="dream-videos">
 
@@ -1080,8 +1076,8 @@ data:
               </div>
               <div class="dream-meta">
                 <div>
-                  <div class="dream-version-label v1">cosmos3-edge-v1</div>
-                  <div class="dream-smoothness" id="dream-smooth-v1">Before fine-tuning</div>
+                  <div class="dream-version-label v1">soarm-act-v1</div>
+                  <div class="dream-smoothness" id="dream-smooth-v1">Baseline policy</div>
                 </div>
                 <div class="dream-controls">
                   <button class="btn btn-blue btn-sm" id="btn-dream-v1"
@@ -1111,8 +1107,8 @@ data:
               </div>
               <div class="dream-meta">
                 <div>
-                  <div class="dream-version-label v2">cosmos3-edge-v2</div>
-                  <div class="dream-smoothness" id="dream-smooth-v2">After fine-tuning</div>
+                  <div class="dream-version-label v2">soarm-act-v2</div>
+                  <div class="dream-smoothness" id="dream-smooth-v2">Fine-tuned policy</div>
                 </div>
                 <div class="dream-controls">
                   <button class="btn btn-gold btn-sm" id="btn-dream-v2"
@@ -1133,12 +1129,12 @@ data:
       <div id="statusbar">
         <div class="sb-item">
           <span class="sb-label">device</span>
-          <span class="sb-val">Thor T5000 &middot; Blackwell</span>
+          <span class="sb-val">SO-ARM101 &middot; Gazebo</span>
         </div>
         <span class="sb-sep">&middot;</span>
         <div class="sb-item">
           <span class="sb-label">model</span>
-          <span class="sb-val" id="sb-model">cosmos3-edge-v1</span>
+          <span class="sb-val" id="sb-model">soarm-act-v1</span>
         </div>
         <span class="sb-sep">&middot;</span>
         <div class="sb-item">
@@ -1152,8 +1148,8 @@ data:
         </div>
         <span class="sb-sep">&middot;</span>
         <div class="sb-item">
-          <span class="sb-label">vLLM</span>
-          <span class="sb-val">:30800</span>
+          <span class="sb-label">policy</span>
+          <span class="sb-val">ACT policy</span>
         </div>
         <span class="sb-sep">&middot;</span>
         <div class="sb-item">
@@ -1264,8 +1260,8 @@ data:
     // ---- Apply status -------------------------------------------------------
     function applyStatus(s) {
       // Model version
-      const mv = s.model_version || 'cosmos3-edge-v1';
-      const isV2 = mv === 'cosmos3-edge-v2';
+      const mv = s.model_version || 'soarm-act-v1';
+      const isV2 = mv === 'soarm-act-v2';
       document.getElementById('model-label').textContent = mv;
       document.getElementById('model-badge').className = isV2 ? 'v2' : 'v1';
       document.getElementById('sb-model').textContent = mv;
@@ -1448,7 +1444,7 @@ data:
           ph.classList.add('hidden');
           wrap.classList.add('has-video');
           if (ver === 'v2') {
-            document.getElementById('dream-smooth-v2').textContent = 'Post fine-tuning rollout';
+            document.getElementById('dream-smooth-v2').textContent = 'Fine-tuned policy rollout';
           }
           if (autoPlay) { vid.currentTime = 0; vid.play(); }
         };
@@ -1464,7 +1460,7 @@ data:
 
     // ---- Pinned showcase rollout playback -----------------------------------
     // The Play v1/v2 buttons play the pinned, curated comparison pair
-    // (zzz-showcase-cosmos3-edge-v{1,2}.mp4 on Thor's /var/lib/dreams,
+    // (zzz-showcase-soarm-act-v{1,2}.mp4 on /var/lib/dreams,
     // immutable) via the same _dreams() [-1] pick the status snapshot uses.
     // Deterministic: no live GPU dreamer run, same rollout every demo.
     // Videos do NOT autoplay -- pressing Play is the explicit trigger.
@@ -1511,21 +1507,21 @@ data:
       if (verdict === 'reject') {
         const r = ep.curation_reason || '';
         if (r.includes('injected'))
-          return 'Planted bad data \u2014 curator caught it, stays on Thor, never reaches hub';
+          return 'Injected failure \u2014 curator caught it, rejected before training';
         if (r.includes('gen-failed'))
-          return 'Text\u2192Image generation failed \u2014 Generator could not produce coherent output';
-        if (r.includes('gen-tiny'))
-          return 'Generated image too small \u2014 likely degenerate output, rejected';
-        if (r.includes('policy-failed'))
-          return 'Action Policy prediction failed \u2014 no valid trajectory produced';
+          return 'Rollout error \u2014 sim crashed or produced incomplete episode';
+        if (r.includes('truncated'))
+          return 'Episode too short \u2014 rollout ended before meaningful data was collected';
+        if (r.includes('task-failed'))
+          return 'Task failed \u2014 arm did not successfully place cubes on tray';
         if (r.includes('jerky'))
           return 'Predicted action trajectory is jerky \u2014 physically implausible, rejected';
         return 'Curation score below threshold \u2014 ' + r;
       }
-      const gen = ep.generation || {};
-      const pol = ep.policy || {};
-      const s = ep.avg_smoothness || pol.smoothness || 0;
-      return `I2V: ${gen.status || '?'} (${((gen.image_size||0)/1024).toFixed(0)}KB), Policy: ${pol.status || '?'} (smoothness ${s.toFixed(3)})`;
+      const rollout = ep.rollout || {};
+      const s = ep.avg_smoothness || 0;
+      const cubes = ep.cubes_placed || 0;
+      return `Rollout: ${rollout.status || '?'} (${rollout.steps || '?'} steps), Task: ${ep.task_success ? 'success' : 'fail'} (${cubes}/3 cubes, smoothness ${s.toFixed(3)})`;
     }
 
     // Authoritative log renderer: rebuilds the scrollable list from the
@@ -1634,7 +1630,7 @@ data:
 
     async function controlDreamer(action, model_version) {
       const btnId = action === 'start'
-        ? (model_version === 'cosmos3-edge-v2' ? 'btn-dream-v2' : 'btn-dream-v1')
+        ? (model_version === 'soarm-act-v2' ? 'btn-dream-v2' : 'btn-dream-v1')
         : 'btn-dream-stop';
       setLoading(btnId, true);
       try {
@@ -1645,7 +1641,7 @@ data:
         });
         const d = await r.json();
         if (action === 'start') {
-          const ver = model_version === 'cosmos3-edge-v2' ? 'v2' : 'v1';
+          const ver = model_version === 'soarm-act-v2' ? 'v2' : 'v1';
           showToast('Dreamer started \u2014 generating ' + ver + ' Forward Dynamics rollout\u2026',
                     ver === 'v2' ? 'toast-gold' : 'toast-blue');
         }
@@ -1655,7 +1651,7 @@ data:
     }
 
     async function controlClear() {
-      if (!confirm('Clear all episode data on Thor? This cannot be undone.')) return;
+      if (!confirm('Clear all episode data? This cannot be undone.')) return;
       setLoading('btn-clear', true);
       try {
         const r = await fetch('/api/control/clear', {method: 'POST'});
@@ -1721,12 +1717,12 @@ roleRef:
   name: dashboard-flywheel
   apiGroup: rbac.authorization.k8s.io
 ---
-# vllm namespace: read Service selector to detect active model version
+# act-serving namespace: read Service selector to detect active policy version
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: dashboard-vllm-reader
-  namespace: vllm
+  namespace: act-serving
 rules:
   - apiGroups: [""]
     resources: ["services"]
@@ -1739,7 +1735,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: dashboard-vllm-reader
-  namespace: vllm
+  namespace: act-serving
 subjects:
   - kind: ServiceAccount
     name: dashboard
@@ -1781,7 +1777,7 @@ spec:
             - name: FLYWHEEL_NS
               value: "flywheel"
             - name: VLLM_NS
-              value: "vllm"
+              value: "act-serving"
             - name: TRIGGER_THRESHOLD
               value: "10"
             - name: FRAMES_DIR
