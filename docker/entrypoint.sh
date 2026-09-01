@@ -45,24 +45,21 @@ for i in $(seq 1 60); do
   sleep 2
 done
 
-# Re-spawn controllers if they failed (common in constrained environments
-# where Gazebo takes longer to initialize than the spawner timeout allows)
-echo "[entrypoint] Ensuring controllers are active..."
+# Activate controllers via service call with a generous timeout.
+# The launch file's spawner uses a 5s timeout which is too short in
+# constrained environments (VMs, resource-limited pods). The service
+# call approach lets us set a 30s timeout.
+echo "[entrypoint] Activating controllers (30s timeout)..."
 sleep 5
-for ctrl in joint_state_broadcaster forward_position_controller; do
-  if ! ros2 control list_controllers 2>/dev/null | grep -q "$ctrl.*active"; then
-    echo "[entrypoint] Re-spawning $ctrl..."
-    ros2 run controller_manager spawner "$ctrl" -c /controller_manager \
-      --ros-args -p use_sim_time:=true &
-  fi
-done
-sleep 10
+ros2 service call /controller_manager/switch_controller \
+  controller_manager_msgs/srv/SwitchController \
+  "{activate_controllers: [joint_state_broadcaster, forward_position_controller], strictness: 1, timeout: {sec: 30, nanosec: 0}}" \
+  2>&1 | tee /tmp/controller_switch.log
 
-# Verify controllers
-if ros2 control list_controllers 2>/dev/null | grep -q "forward_position_controller.*active"; then
-  echo "[entrypoint] Controllers active — arm ready for commands"
+if grep -q "ok=True" /tmp/controller_switch.log; then
+  echo "[entrypoint] Controllers activated — arm ready for commands"
 else
-  echo "[entrypoint] WARNING: forward_position_controller not active — arm may not respond to commands"
+  echo "[entrypoint] WARNING: controller activation may have failed — check logs"
 fi
 
 # 3. Start episode emitter
