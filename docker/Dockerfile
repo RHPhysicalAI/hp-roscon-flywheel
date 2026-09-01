@@ -49,9 +49,9 @@ RUN source /opt/ros/"$ROS_DISTRO"/setup.bash \
 # ---- ML dependencies (LeRobot + PyTorch for ACT inference) ----
 # CPU-only PyTorch for now — GPU inference added when VFIO passthrough is set up.
 # scipy<2 required: LeRobot 0.5.x imports scipy.fftpack which SciPy 2.0 removed.
-# Remove Debian-installed typing-extensions (no RECORD file blocks pip upgrade)
-# then install ML deps
-RUN rm -rf /usr/lib/python3/dist-packages/typing_extensions* \
+# Debian-installed Python packages lack RECORD files, blocking pip upgrades.
+# Remove their .dist-info dirs so pip can freely install newer versions.
+RUN find /usr/lib/python3/dist-packages -name '*.dist-info' -exec rm -rf {} + 2>/dev/null || true \
   && pip install --no-cache-dir --break-system-packages \
   torch torchvision torchaudio \
   "lerobot[feetech,async]==0.5.1" \
