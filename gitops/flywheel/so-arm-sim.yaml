@@ -51,6 +51,8 @@ spec:
               value: "francocipollone/rospai_act_sim_arm101_place_cubes_on_tray"
             - name: POLICY_DEVICE
               value: "cpu"
+            - name: CUDA_VISIBLE_DEVICES
+              value: ""
             - name: HF_HOME
               value: "/data/hf-cache"
           resources:
