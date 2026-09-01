@@ -1,0 +1,581 @@
+# This project was developed with assistance from AI tools.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: robot-sim-code
+  namespace: flywheel
+data:
+  robot_sim.py: |
+    """Simulated robot control loop -- Generator-native flywheel (D031 / Option E).
+
+    DESIGN: This uses vLLM-Omni's ACTUAL Generator capabilities, not a text
+    chatbot facade. The Cosmos3OmniDiffusersPipeline (--omni mode) is a
+    Generator-only pipeline; its lm_head is discarded at load time, making
+    text output structurally impossible. This robot-sim works WITH that
+    architecture instead of fighting it.
+
+    Per episode:
+    1. IMAGE-TO-VIDEO: POST /v1/videos/sync with a BridgeData2 conditioning
+       frame + structured caption. Returns an MP4 video clip showing the
+       model's prediction of the robot manipulation scene. This is the
+       DOCUMENTED Cosmos3-Edge Generator endpoint (D032-C fix).
+
+    2. ACTION POLICY: POST /v1/videos (async) with action_mode=policy,
+       a BridgeData2 conditioning frame, and a task instruction.
+       Returns predicted DROID action chunks + a rollout video.
+       This is the model's core Physical AI capability.
+
+    3. RECORD: Episode captures the video clip, action chunk, rollout
+       quality metrics (smoothness, validity), and the conditioning frame
+       reference. The curator scores these on generation quality, not text.
+
+    The flywheel improves the Generator via cosmos-framework Vision SFT
+    (launch_sft_vision_edge.sh), which fine-tunes I2V + action quality
+    directly. After promotion, the model generates more coherent video
+    clips and predicts smoother action trajectories.
+
+    OTel trace shape:
+        episode  [episode.id, model.version, scene]
+          generate-scene    [gen.status, gen.size_bytes]
+          action-policy     [policy.status, policy.chunk_size, policy.smoothness]
+    """
+    import json, os, time, uuid, random, pathlib, base64, urllib.request, urllib.error
+    from contextlib import contextmanager
+
+    VLLM_URL          = os.environ.get("VLLM_URL", "http://cosmos3-edge.vllm.svc:8000")
+    EPISODE_DIR       = pathlib.Path(os.environ.get("EPISODE_DIR", "/data/episodes/raw"))
+    FRAMES_DIR        = pathlib.Path(os.environ.get("FRAMES_DIR", "/data/frames"))
+    ACTION_POOL_FILE  = pathlib.Path(os.environ.get("ACTION_POOL_FILE", "/data/action_pool.json"))
+    EPISODES_PER_CYCLE = int(os.environ.get("EPISODES_PER_CYCLE", "5"))
+    FAILURE_RATE      = float(os.environ.get("FAILURE_RATE", "0.3"))
+    MODEL_VERSION     = os.environ.get("MODEL_VERSION", "cosmos3-edge-v1")
+    OTEL_ENDPOINT     = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318")
+    COOLDOWN_S        = float(os.environ.get("EPISODE_COOLDOWN_S", "15"))
+
+    # Auto-detect the model name from the vLLM server.
+    # vLLM-Omni registers the model under its full local snapshot path
+    # (e.g., /root/.cache/huggingface/hub/models--nvidia--Cosmos3-Edge/snapshots/...)
+    # rather than the short HF name, so we query /v1/models at startup.
+    VLLM_MODEL_NAME = None
+    def _resolve_model_name():
+        global VLLM_MODEL_NAME
+        if VLLM_MODEL_NAME:
+            return VLLM_MODEL_NAME
+        try:
+            with urllib.request.urlopen(f"{VLLM_URL}/v1/models", timeout=10) as resp:
+                data = json.loads(resp.read())
+                models = data.get("data", [])
+                if models:
+                    VLLM_MODEL_NAME = models[0]["id"]
+                    print(f"[robot-sim] Resolved model name: {VLLM_MODEL_NAME}", flush=True)
+                    return VLLM_MODEL_NAME
+        except Exception as e:
+            print(f"[robot-sim] Could not resolve model name: {e}", flush=True)
+        return "nvidia/Cosmos3-Edge"
+
+    tracer      = None
+    otel_inject = None
+    try:
+        from opentelemetry import trace
+        from opentelemetry.propagate import inject as _inject
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.resources import Resource
+        resource = Resource.create({"service.name": "robot-sim", "model.version": MODEL_VERSION})
+        provider = TracerProvider(resource=resource)
+        provider.add_span_processor(
+            BatchSpanProcessor(OTLPSpanExporter(endpoint=f"{OTEL_ENDPOINT}/v1/traces"))
+        )
+        trace.set_tracer_provider(provider)
+        tracer      = trace.get_tracer("robot-sim")
+        otel_inject = _inject
+        print(f"[robot-sim] OTel tracing enabled -> {OTEL_ENDPOINT}", flush=True)
+    except ImportError:
+        print("[robot-sim] OTel SDK not available, tracing disabled", flush=True)
+
+    @contextmanager
+    def maybe_span(name, **attrs):
+        if tracer:
+            with tracer.start_as_current_span(name, attributes=attrs) as span:
+                yield span
+        else:
+            yield None
+
+    # ---- Scenes (tabletop manipulation, matching BridgeData2) ----------------
+    SCENES = {
+        "pick_place":   "A robotic arm picks up an object from a white tray and places it precisely in the target position on a wooden table.",
+        "sort_objects": "A robotic arm sorts small translucent objects by type, carefully arranging them on a rectangular tray.",
+        "open_close":   "A robotic arm interacts with a small pot and lemon on a kitchen stovetop, repositioning items carefully.",
+        "push_sweep":   "A robotic arm sweeps small beads across a white tray using a controlled scraping motion.",
+        "pour":         "A robotic arm gathers scattered almonds on a white tray, moving them to a collection area with the gripper.",
+    }
+
+    def load_action_pool() -> dict:
+        if ACTION_POOL_FILE.exists():
+            return json.loads(ACTION_POOL_FILE.read_text())
+        print("[robot-sim] WARNING: action_pool.json not found, using zero stub", flush=True)
+        stub = [[0.0] * 10 for _ in range(16)]
+        return {s: {"good": stub, "bad": stub, "domain_name": "umi",
+                     "action_chunk_size": 16, "fps": 20, "dims": 10}
+                for s in SCENES}
+
+    def _action_smoothness(chunk: list) -> float:
+        if not chunk or len(chunk) < 2:
+            return 0.0
+        total = 0.0
+        for i in range(1, len(chunk)):
+            delta = sum((a - b) ** 2 for a, b in zip(chunk[i], chunk[i - 1]))
+            total += delta ** 0.5
+        return round(total / (len(chunk) - 1), 4)
+
+    # ---- Generator API calls -------------------------------------------------
+
+    def call_image_to_video(scene_name: str, scene_prompt: str) -> dict:
+        """POST /v1/videos/sync -- Image-to-Video generation (D032-C fix).
+
+        Uses a BridgeData2 conditioning frame + structured caption to generate
+        a short video clip. This is the DOCUMENTED Cosmos3-Edge Generator
+        endpoint (not /v1/images/generations which is undocumented for Edge).
+        Saves first generated frame as latest_generated.png for dashboard.
+        """
+        frame_path = FRAMES_DIR / f"{scene_name}.jpg"
+        with maybe_span("generate-scene",
+                        **{"gen.model": "nvidia/Cosmos3-Edge",
+                           "gen.prompt_len": len(scene_prompt),
+                           "gen.scene": scene_name}) as span:
+            t0 = time.monotonic()
+            try:
+                if not frame_path.exists():
+                    raise FileNotFoundError(f"Conditioning frame not found: {frame_path}")
+
+                # Build multipart form data (the documented API uses multipart, not JSON)
+                import io
+                boundary = f"----cosmos3boundary{random.randint(100000,999999)}"
+                body_parts = []
+
+                # Form fields
+                fields = {
+                    "prompt": scene_prompt,
+                    "negative_prompt": "blurry, distorted, low quality, artifacts",
+                    "size": "256x256",          # match BridgeData2 resolution
+                    "num_frames": "17",          # conditioning + 16 generated (short clip)
+                    "fps": "5",                  # BridgeData2 native fps
+                    "num_inference_steps": "20",  # documented default
+                    "guidance_scale": "6.0",      # documented default
+                    "flow_shift": "12.0",         # documented i2v default
+                    "seed": str(random.randint(0, 999999)),
+                    "extra_params": json.dumps({
+                        "use_resolution_template": False,
+                        "use_duration_template": False,
+                        "guardrails": False,
+                    }),
+                }
+                for key, val in fields.items():
+                    body_parts.append(
+                        f"--{boundary}\r\n"
+                        f"Content-Disposition: form-data; name=\"{key}\"\r\n\r\n"
+                        f"{val}\r\n"
+                    )
+
+                # Image file part
+                frame_bytes = frame_path.read_bytes()
+                body_parts.append(
+                    f"--{boundary}\r\n"
+                    f"Content-Disposition: form-data; name=\"input_reference\"; "
+                    f"filename=\"{scene_name}.jpg\"\r\n"
+                    f"Content-Type: image/jpeg\r\n\r\n"
+                )
+                # Assemble multipart body
+                body_prefix = "".join(body_parts).encode()
+                body_suffix = f"\r\n--{boundary}--\r\n".encode()
+                full_body = body_prefix + frame_bytes + body_suffix
+
+                req = urllib.request.Request(
+                    f"{VLLM_URL}/v1/videos/sync",
+                    data=full_body,
+                    headers={
+                        "Content-Type": f"multipart/form-data; boundary={boundary}",
+                        "Accept": "video/mp4",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=300) as resp:
+                    video_bytes = resp.read()
+
+                latency_ms = round((time.monotonic() - t0) * 1000, 1)
+
+                # Save the generated video and extract first frame for dashboard
+                gen_vid_path = EPISODE_DIR.parent / "latest_generated.mp4"
+                gen_img_path = EPISODE_DIR.parent / "latest_generated.png"
+                if video_bytes and len(video_bytes) > 100:
+                    gen_vid_path.write_bytes(video_bytes)
+                    # Extract first frame as PNG for dashboard display
+                    # (ffmpeg not available in minimal image; save MP4 bytes
+                    # and let dashboard handle it, or save a placeholder)
+                    # For now: write video size as a proxy for quality
+                    gen_img_path.write_bytes(b"")  # clear old image
+
+                if span:
+                    span.set_attribute("gen.status", "ok")
+                    span.set_attribute("gen.latency_ms", latency_ms)
+                    span.set_attribute("gen.size_bytes", len(video_bytes))
+                    span.set_attribute("gen.type", "i2v")
+                return {
+                    "status": "ok",
+                    "image_size_bytes": len(video_bytes),
+                    "latency_ms": latency_ms,
+                    "type": "i2v",
+                }
+            except urllib.error.HTTPError as e:
+                elapsed = round((time.monotonic() - t0) * 1000, 1)
+                err_body = ""
+                try:
+                    err_body = e.read().decode()[:300]
+                except Exception:
+                    pass
+                err_msg = f"HTTP {e.code}: {err_body}"
+                if span:
+                    span.set_attribute("gen.status", "error")
+                    span.set_attribute("gen.error", err_msg[:200])
+                    span.set_attribute("gen.latency_ms", elapsed)
+                return {"status": "error", "error": err_msg,
+                        "image_size_bytes": 0, "latency_ms": elapsed}
+            except Exception as e:
+                elapsed = round((time.monotonic() - t0) * 1000, 1)
+                if span:
+                    span.set_attribute("gen.status", "error")
+                    span.set_attribute("gen.error", str(e)[:200])
+                    span.set_attribute("gen.latency_ms", elapsed)
+                return {"status": "error", "error": str(e)[:200],
+                        "image_size_bytes": 0, "latency_ms": elapsed}
+
+    def call_action_policy(scene_name: str, task_prompt: str) -> dict:
+        """POST /v1/videos (async) with action_mode=policy -- Action Policy.
+
+        Returns predicted action chunk + rollout video metadata.
+        Uses BridgeData2 conditioning frame from disk.
+        """
+        frame_path = FRAMES_DIR / f"{scene_name}.jpg"
+        with maybe_span("action-policy",
+                        **{"policy.scene": scene_name,
+                           "policy.has_frame": frame_path.exists()}) as span:
+            t0 = time.monotonic()
+            try:
+                if not frame_path.exists():
+                    raise FileNotFoundError(f"Frame not found: {frame_path}")
+
+                # Build multipart form data for the async videos endpoint
+                boundary = "----RobotSimBoundary" + str(random.randint(100000, 999999))
+
+                def text_part(name, value):
+                    return (
+                        f"--{boundary}\r\n"
+                        f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+                        f"{value}\r\n"
+                    ).encode()
+
+                frame_bytes = frame_path.read_bytes()
+                file_part = (
+                    f"--{boundary}\r\n"
+                    f'Content-Disposition: form-data; name="input_reference"; filename="{scene_name}.jpg"\r\n'
+                    f"Content-Type: image/jpeg\r\n\r\n"
+                ).encode() + frame_bytes + b"\r\n"
+
+                extra_params = json.dumps({
+                    "action_mode": "policy",
+                    "domain_name": "bridge_orig_lerobot",
+                    "raw_action_dim": 10,
+                    "action_chunk_size": 16,
+                    "guardrails": False,
+                    "use_resolution_template": False,
+                    "use_duration_template": False,
+                })
+
+                model_name = _resolve_model_name()
+                parts = [
+                    text_part("model", model_name),
+                    text_part("prompt", task_prompt),
+                    text_part("size", "320x192"),
+                    text_part("num_frames", "17"),
+                    text_part("fps", "5"),
+                    text_part("num_inference_steps", "20"),
+                    text_part("guidance_scale", "1.0"),
+                    text_part("flow_shift", "3.0"),
+                    text_part("seed", str(random.randint(0, 999999))),
+                    text_part("extra_params", extra_params),
+                    file_part,
+                    f"--{boundary}--\r\n".encode(),
+                ]
+                body = b"".join(parts)
+
+                req = urllib.request.Request(
+                    f"{VLLM_URL}/v1/videos",
+                    data=body,
+                    headers={
+                        "Content-Type": f"multipart/form-data; boundary={boundary}",
+                        "Accept": "application/json",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    job = json.loads(resp.read())
+
+                job_id = job.get("id")
+                if not job_id:
+                    raise ValueError(f"No job id: {job}")
+
+                # Poll for completion
+                deadline = time.monotonic() + 120
+                action_data = None
+                while time.monotonic() < deadline:
+                    time.sleep(2)
+                    try:
+                        with urllib.request.urlopen(
+                            f"{VLLM_URL}/v1/videos/{job_id}", timeout=10
+                        ) as resp:
+                            status = json.loads(resp.read())
+                        st = status.get("status", "")
+                        if st == "completed":
+                            action_data = status.get("action")
+                            break
+                        elif st == "failed":
+                            raise RuntimeError(f"Policy job failed: {status}")
+                    except urllib.error.HTTPError:
+                        pass
+
+                latency_ms = round((time.monotonic() - t0) * 1000, 1)
+
+                # Extract action chunk from the response.
+                # vLLM-Omni returns action.data as a list of lists [[D vals], ...]
+                # already shaped [T, D] — no reshape needed.
+                chunk = []
+                if action_data and isinstance(action_data, dict):
+                    raw = action_data.get("data", [])
+                    if raw and isinstance(raw, list):
+                        if isinstance(raw[0], list):
+                            # Already [T, D] shaped
+                            chunk = raw
+                        else:
+                            # Flat array — reshape using shape field
+                            shape = action_data.get("shape", [])
+                            if len(shape) == 2:
+                                T, D = shape
+                                chunk = [raw[i*D:(i+1)*D] for i in range(T)]
+
+                smoothness = _action_smoothness(chunk)
+
+                if span:
+                    span.set_attribute("policy.status", "ok")
+                    span.set_attribute("policy.latency_ms", latency_ms)
+                    span.set_attribute("policy.chunk_size", len(chunk))
+                    span.set_attribute("policy.smoothness", smoothness)
+                    span.set_attribute("policy.has_action", bool(chunk))
+
+                return {
+                    "status": "ok",
+                    "action_chunk": chunk,
+                    "chunk_size": len(chunk),
+                    "smoothness": smoothness,
+                    "domain_name": "bridge_orig_lerobot",
+                    "latency_ms": latency_ms,
+                    "has_frame": True,
+                }
+
+            except Exception as e:
+                elapsed = round((time.monotonic() - t0) * 1000, 1)
+                if span:
+                    span.set_attribute("policy.status", "error")
+                    span.set_attribute("policy.error", str(e)[:200])
+                    span.set_attribute("policy.latency_ms", elapsed)
+                # Fall back to action pool on error
+                pool = load_action_pool()
+                entry = pool.get(scene_name, {})
+                fallback_chunk = entry.get("good", [])
+                return {
+                    "status": "fallback",
+                    "error": str(e)[:200],
+                    "action_chunk": fallback_chunk,
+                    "chunk_size": len(fallback_chunk),
+                    "smoothness": _action_smoothness(fallback_chunk),
+                    "domain_name": entry.get("domain_name", "umi"),
+                    "latency_ms": elapsed,
+                    "has_frame": frame_path.exists(),
+                }
+
+    # ---- Episode runner ------------------------------------------------------
+
+    def run_episode() -> dict:
+        episode_id     = str(uuid.uuid4())[:12]
+        scene_name     = random.choice(list(SCENES.keys()))
+        scene_prompt   = SCENES[scene_name]
+        inject_failure = random.random() < FAILURE_RATE
+
+        with maybe_span("episode",
+                        **{"episode.id": episode_id,
+                           "episode.scene": scene_name,
+                           "model.version": MODEL_VERSION}) as ep_span:
+
+            # Step 1: Image-to-Video generation (D032-C: documented endpoint)
+            t2i_result = call_image_to_video(scene_name, scene_prompt)
+
+            # Step 2: Action Policy prediction
+            if inject_failure:
+                # Injected failure: use bad action chunk from pool
+                pool = load_action_pool()
+                entry = pool.get(scene_name, {})
+                policy_result = {
+                    "status": "injected-failure",
+                    "action_chunk": entry.get("bad", []),
+                    "chunk_size": len(entry.get("bad", [])),
+                    "smoothness": _action_smoothness(entry.get("bad", [])),
+                    "domain_name": entry.get("domain_name", "umi"),
+                    "latency_ms": 0,
+                    "has_frame": True,
+                }
+            else:
+                policy_result = call_action_policy(scene_name, scene_prompt)
+
+            # Build episode record
+            gen_ok       = t2i_result.get("status") == "ok"
+            policy_ok    = policy_result.get("status") == "ok"
+            smoothness   = policy_result.get("smoothness", 0.0)
+            has_failure  = inject_failure
+
+            episode = {
+                "episode_id":        episode_id,
+                "timestamp":         time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "scene":             scene_name,
+                "scene_description": scene_prompt,
+                "frame_path":        f"{scene_name}.jpg",
+                "model_version":     MODEL_VERSION,
+                "has_failure":       has_failure,
+                # Generation quality signals (I2V, D032-C)
+                "generation": {
+                    "status":       t2i_result.get("status", "error"),
+                    "image_size":   t2i_result.get("image_size_bytes", 0),
+                    "latency_ms":   t2i_result.get("latency_ms", 0),
+                    "error":        t2i_result.get("error", ""),
+                    "type":         t2i_result.get("type", "i2v"),
+                },
+                # Action policy signals
+                "policy": {
+                    "status":       policy_result.get("status", "error"),
+                    "chunk_size":   policy_result.get("chunk_size", 0),
+                    "smoothness":   smoothness,
+                    "domain_name":  policy_result.get("domain_name", ""),
+                    "latency_ms":   policy_result.get("latency_ms", 0),
+                    "error":        policy_result.get("error", ""),
+                },
+                # Combined quality score (used by curator)
+                "gen_ok":            gen_ok,
+                "policy_ok":         policy_ok,
+                "avg_smoothness":    smoothness,
+                # Action chunk for Forward Dynamics dream step
+                "dream_action_chunk": policy_result.get("action_chunk", []),
+                "dream_domain":       policy_result.get("domain_name", "umi"),
+            }
+
+            if ep_span:
+                ep_span.set_attribute("episode.gen_ok", gen_ok)
+                ep_span.set_attribute("episode.policy_ok", policy_ok)
+                ep_span.set_attribute("episode.smoothness", smoothness)
+                ep_span.set_attribute("episode.has_failure", has_failure)
+
+        EPISODE_DIR.mkdir(parents=True, exist_ok=True)
+        path = EPISODE_DIR / f"{episode_id}.json"
+        path.write_text(json.dumps(episode, indent=2))
+        print(
+            f"[robot-sim] Episode {episode_id}: scene={scene_name} "
+            f"gen={'ok' if gen_ok else 'FAIL'} "
+            f"policy={'ok' if policy_ok else policy_result.get('status','')} "
+            f"smoothness={smoothness:.4f} failure={has_failure}",
+            flush=True,
+        )
+        return episode
+
+    if __name__ == "__main__":
+        print(
+            f"[robot-sim] Starting -- Generator-native mode (D031/Option E)\n"
+            f"  vllm_url={VLLM_URL}\n"
+            f"  episodes_per_cycle={EPISODES_PER_CYCLE} failure_rate={FAILURE_RATE:.0%}\n"
+            f"  model_version={MODEL_VERSION}\n"
+            f"  frames_dir={FRAMES_DIR} action_pool={ACTION_POOL_FILE}",
+            flush=True,
+        )
+        while True:
+            try:
+                run_episode()
+            except Exception as e:
+                print(f"[robot-sim] Episode failed: {e}", flush=True)
+            time.sleep(COOLDOWN_S)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robot-sim
+  namespace: flywheel
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: robot-sim
+  template:
+    metadata:
+      labels:
+        app: robot-sim
+    spec:
+      containers:
+        - name: robot-sim
+          image: docker.io/library/python:3.12-slim
+          command:
+            - sh
+            - -c
+            - |
+              pip install -q opentelemetry-api opentelemetry-sdk \
+                opentelemetry-exporter-otlp-proto-http && \
+              python /app/robot_sim.py
+          env:
+            - name: VLLM_URL
+              value: "http://cosmos3-edge.vllm.svc:8000"
+            - name: EPISODES_PER_CYCLE
+              value: "5"
+            - name: FAILURE_RATE
+              value: "0.3"
+            - name: EPISODE_COOLDOWN_S
+              value: "15"
+            - name: MODEL_VERSION
+              value: "cosmos3-edge-v1"
+            - name: FRAMES_DIR
+              value: "/data/frames"
+            - name: ACTION_POOL_FILE
+              value: "/data/action_pool.json"
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://$(NODE_IP):4318"
+          volumeMounts:
+            - name: code
+              mountPath: /app
+              readOnly: true
+            - name: episodes
+              mountPath: /data/episodes
+            - name: frames
+              mountPath: /data/frames
+              readOnly: true
+            - name: action-pool
+              mountPath: /data/action_pool.json
+              readOnly: true
+      volumes:
+        - name: code
+          configMap:
+            name: robot-sim-code
+        - name: episodes
+          hostPath:
+            path: /var/lib/episodes
+        - name: frames
+          hostPath:
+            path: /var/lib/robot-sim/frames
+        - name: action-pool
+          hostPath:
+            path: /var/lib/robot-sim/action_pool.json

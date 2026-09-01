@@ -1,0 +1,157 @@
+# This project was developed with assistance from AI tools.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: curator-code
+  namespace: flywheel
+data:
+  curator.py: |
+    """On-device episode curator -- Generator quality scoring (D031 / Option E).
+
+    Scores episodes on GENERATOR OUTPUT QUALITY:
+    1. Was the Text-to-Image generation successful? (gen_ok)
+    2. Was the Action Policy prediction successful? (policy_ok)
+    3. Is the predicted action trajectory physically plausible? (smoothness)
+    4. Was this an injected failure? (always reject)
+
+    This is the curation signal for the Generator-native flywheel. High-score
+    episodes (model generated coherent images and predicted smooth action
+    trajectories) become training examples for Vision SFT. Low-score episodes
+    are rejected on-device and never reach the hub.
+    """
+    import json, os, time, pathlib
+
+    RAW_DIR              = pathlib.Path(os.environ.get("RAW_DIR",      "/data/episodes/raw"))
+    CURATED_DIR          = pathlib.Path(os.environ.get("CURATED_DIR",  "/data/episodes/curated"))
+    REJECTED_DIR         = pathlib.Path(os.environ.get("REJECTED_DIR", "/data/episodes/rejected"))
+    PASS_THRESHOLD       = float(os.environ.get("PASS_THRESHOLD",      "0.5"))
+    SMOOTHNESS_THRESHOLD = float(os.environ.get("SMOOTHNESS_THRESHOLD", "0.15"))
+
+    def score_episode(episode: dict) -> tuple[float, str]:
+        # Gate 0: injected failures
+        if episode.get("has_failure"):
+            return 0.0, "injected-failure"
+
+        score  = 1.0
+        parts  = []
+
+        # Gate 1: generation success
+        gen = episode.get("generation", {})
+        if gen.get("status") != "ok":
+            score -= 0.4
+            parts.append(f"gen-failed({gen.get('status','')})")
+        elif gen.get("image_size", 0) < 1000:
+            score -= 0.2
+            parts.append("gen-tiny-image")
+
+        # Gate 2: policy success
+        pol = episode.get("policy", {})
+        if pol.get("status") not in ("ok", "fallback"):
+            score -= 0.3
+            parts.append(f"policy-failed({pol.get('status','')})")
+
+        # Gate 3: action trajectory smoothness
+        smoothness = episode.get("avg_smoothness", pol.get("smoothness", 0.0))
+        if smoothness >= SMOOTHNESS_THRESHOLD:
+            excess    = smoothness - SMOOTHNESS_THRESHOLD
+            penalty   = min(0.3, excess * 2.0)
+            score    -= penalty
+            parts.append(f"jerky(s={smoothness:.4f})")
+
+        score = round(max(0.0, min(1.0, score)), 3)
+
+        if score >= PASS_THRESHOLD:
+            reason = (
+                f"clean (gen={gen.get('status','')} "
+                f"policy={pol.get('status','')} "
+                f"smoothness={smoothness:.4f})"
+            )
+        else:
+            reason = " ".join(parts) if parts else "low-quality"
+
+        return score, reason
+
+    if __name__ == "__main__":
+        print(
+            f"[curator] Starting -- Generator quality scoring (D031)\n"
+            f"  pass_threshold={PASS_THRESHOLD} "
+            f"smoothness_threshold={SMOOTHNESS_THRESHOLD}\n"
+            f"  watching {RAW_DIR}",
+            flush=True,
+        )
+        CURATED_DIR.mkdir(parents=True, exist_ok=True)
+        REJECTED_DIR.mkdir(parents=True, exist_ok=True)
+
+        while True:
+            for path in sorted(RAW_DIR.glob("*.json")):
+                try:
+                    episode = json.loads(path.read_text())
+                    score, reason = score_episode(episode)
+                    episode["curation_score"]   = score
+                    episode["curation_reason"]  = reason
+
+                    if score >= PASS_THRESHOLD:
+                        episode["curation_verdict"] = "pass"
+                        dest = CURATED_DIR / path.name
+                        dest.write_text(json.dumps(episode, indent=2))
+                        print(
+                            f"[curator] PASS  {episode['episode_id']} "
+                            f"score={score:.3f} ({reason})",
+                            flush=True,
+                        )
+                    else:
+                        episode["curation_verdict"] = "reject"
+                        dest = REJECTED_DIR / path.name
+                        dest.write_text(json.dumps(episode, indent=2))
+                        print(
+                            f"[curator] REJECT {episode['episode_id']} "
+                            f"score={score:.3f} ({reason})",
+                            flush=True,
+                        )
+                    path.unlink()
+                except Exception as e:
+                    print(f"[curator] Error processing {path.name}: {e}", flush=True)
+            time.sleep(3)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: curator
+  namespace: flywheel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: curator
+  template:
+    metadata:
+      labels:
+        app: curator
+    spec:
+      containers:
+        - name: curator
+          image: docker.io/library/python:3.12-slim
+          command: ["python", "/app/curator.py"]
+          env:
+            - name: PASS_THRESHOLD
+              value: "0.5"
+            # SMOOTHNESS_THRESHOLD: calibrated against real Cosmos3-Edge Action Policy
+            # output on 256x256 BridgeData2 frames. Base model predictions are in
+            # the 0.3-0.8 range; pre-loaded pool chunks were ~0.07-0.09 (artificially
+            # smooth). 1.0 allows most real predictions; injected failures (~1.2-1.4)
+            # are still caught. Fine-tuned model should produce lower values.
+            - name: SMOOTHNESS_THRESHOLD
+              value: "1.0"
+          volumeMounts:
+            - name: code
+              mountPath: /app
+              readOnly: true
+            - name: episodes
+              mountPath: /data/episodes
+      volumes:
+        - name: code
+          configMap:
+            name: curator-code
+        - name: episodes
+          hostPath:
+            path: /var/lib/episodes

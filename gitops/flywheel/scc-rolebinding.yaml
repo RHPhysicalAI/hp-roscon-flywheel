@@ -1,0 +1,27 @@
+# This project was developed with assistance from AI tools.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: flywheel-privileged-scc
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: flywheel
+roleRef:
+  kind: ClusterRole
+  name: system:openshift:scc:privileged
+  apiGroup: rbac.authorization.k8s.io
+---
+# dashboard SA: hostmount-anyuid for episode/dream/frame hostPath volumes
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: flywheel-dashboard-hostmount-scc
+subjects:
+  - kind: ServiceAccount
+    name: dashboard
+    namespace: flywheel
+roleRef:
+  kind: ClusterRole
+  name: system:openshift:scc:hostmount-anyuid
+  apiGroup: rbac.authorization.k8s.io
