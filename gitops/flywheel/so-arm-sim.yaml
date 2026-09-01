@@ -18,9 +18,7 @@ metadata:
   labels:
     app: so-arm-sim
 spec:
-  # Dashboard Start/Stop buttons scale 0↔1. Argo ignores replica diffs
-  # so the dashboard can control the flywheel without git fighting it.
-  replicas: 1
+  replicas: 0
   strategy:
     type: Recreate
   selector:
