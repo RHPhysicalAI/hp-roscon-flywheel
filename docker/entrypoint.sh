@@ -67,6 +67,13 @@ echo "[entrypoint] Starting episode emitter..."
 python3 /ws_pai/episode_emitter.py &
 EMITTER_PID=$!
 
+# Patch Rosetta params for CPU-only inference
+if [ "${POLICY_DEVICE:-cpu}" = "cpu" ]; then
+  sed -i 's/policy_device: "cuda"/policy_device: "cpu"/' \
+    /ws_pai/install/rosetta/share/rosetta/params/rosetta_client.yaml
+  echo "[entrypoint] Patched rosetta_client.yaml: policy_device=cpu"
+fi
+
 # 4. Start ACT policy inference via Rosetta (if enabled)
 INFERENCE_PID=""
 if [ "${RUN_INFERENCE:-true}" = "true" ]; then
