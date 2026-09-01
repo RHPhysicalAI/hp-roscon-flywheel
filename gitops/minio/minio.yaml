@@ -63,8 +63,7 @@ spec:
               memory: 1Gi
       volumes:
         - name: data
-          hostPath:
-            path: /var/lib/minio
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
