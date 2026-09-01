@@ -54,7 +54,7 @@ RUN source /opt/ros/"$ROS_DISTRO"/setup.bash \
 RUN find /usr/lib/python3/dist-packages -name '*.dist-info' -exec rm -rf {} + 2>/dev/null || true \
   && pip install --no-cache-dir --break-system-packages \
   torch torchvision torchaudio \
-  "lerobot[feetech,async]==0.5.1" \
+  "lerobot[async]==0.5.1" \
   "numpy>=2.0.0,<2.3" \
   "scipy>=1.11.0,<2" \
   && pip cache purge
