@@ -1717,12 +1717,12 @@ roleRef:
   name: dashboard-flywheel
   apiGroup: rbac.authorization.k8s.io
 ---
-# act-serving namespace: read Service selector to detect active policy version
+# Same namespace — read Service selector to detect active policy version
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: dashboard-vllm-reader
-  namespace: act-serving
+  namespace: flywheel
 rules:
   - apiGroups: [""]
     resources: ["services"]
@@ -1735,7 +1735,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: dashboard-vllm-reader
-  namespace: act-serving
+  namespace: flywheel
 subjects:
   - kind: ServiceAccount
     name: dashboard
@@ -1777,7 +1777,7 @@ spec:
             - name: FLYWHEEL_NS
               value: "flywheel"
             - name: VLLM_NS
-              value: "act-serving"
+              value: "flywheel"
             - name: TRIGGER_THRESHOLD
               value: "10"
             - name: FRAMES_DIR
