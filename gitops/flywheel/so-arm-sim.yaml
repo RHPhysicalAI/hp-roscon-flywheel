@@ -1,0 +1,61 @@
+# SO-ARM101 Gazebo sim — the flywheel's episode producer.
+#
+# Runs the SO-ARM101 robot arm in Gazebo (headless), with the zenoh router
+# and the episode-emitter adapter. Each rollout produces a curator-compatible
+# JSON in /data/episodes/raw/ for the flywheel pipeline.
+#
+# Replaces robot-sim.yaml from thor-testing (which was a Cosmos3 world-model
+# generator, not a physics sim).
+#
+# GPU: not required for the sim or episode emission. ACT inference needs GPU
+# for real-time but can run on CPU (slower). Training is a separate workload.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: so-arm-sim
+  namespace: flywheel
+  labels:
+    app: so-arm-sim
+spec:
+  # replicas=0 by default — scale to 1 via dashboard "Start Flywheel" or manually.
+  # Uses Recreate strategy because hostPath volumes can't be shared across pods.
+  replicas: 0
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: so-arm-sim
+  template:
+    metadata:
+      labels:
+        app: so-arm-sim
+    spec:
+      containers:
+        - name: so-arm-sim
+          image: quay.io/jary/soarm-flywheel:latest
+          env:
+            - name: MODEL_VERSION
+              value: "soarm-act-v1"
+            - name: SCENE
+              value: "place_cubes_on_tray"
+            - name: FAILURE_RATE
+              value: "0.1"
+            - name: EPISODE_TIMEOUT_S
+              value: "5.0"
+            - name: MCP_ENABLED
+              value: "false"
+          resources:
+            requests:
+              cpu: "2"
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          volumeMounts:
+            - name: episodes
+              mountPath: /data/episodes
+      volumes:
+        - name: episodes
+          hostPath:
+            path: /var/lib/episodes
