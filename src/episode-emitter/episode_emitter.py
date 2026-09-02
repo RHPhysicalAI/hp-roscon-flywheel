@@ -126,8 +126,33 @@ class EpisodeEmitter(Node):
         self._steps = 0
         self._prev_positions = None
         self._smoothness_deltas = []
+        self._peak_cubes = 0  # high-water mark for cubes on tray
         self._rollout_active = True
         self.get_logger().info(f"Episode started: {self._episode_id}")
+
+        # Start periodic cube-count polling in background
+        def _poll_cubes():
+            import subprocess, re
+            while self._rollout_active:
+                time.sleep(2.0)
+                try:
+                    result = subprocess.run(
+                        ["python3", "/ws_pai/task_eval.py"],
+                        capture_output=True, timeout=8, text=True,
+                    )
+                    m = re.search(r"cubes_placed=(\d+)/", result.stdout)
+                    if m:
+                        n = int(m.group(1))
+                        if n > self._peak_cubes:
+                            self._peak_cubes = n
+                            self.get_logger().info(
+                                f"Peak cubes updated: {n}/3")
+                except Exception:
+                    pass
+
+        import threading
+        t = threading.Thread(target=_poll_cubes, daemon=True)
+        t.start()
 
     def _on_joint_state(self, msg: JointState):
         """Track joint states for smoothness computation."""
