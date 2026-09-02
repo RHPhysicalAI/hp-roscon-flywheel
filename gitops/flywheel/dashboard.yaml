@@ -329,29 +329,6 @@ data:
     def api_status():
         return jsonify(status_snapshot())
 
-    @app.route("/api/camera/<cam>")
-    def camera_stream(cam):
-        """Proxy MJPEG stream from so-arm-sim camera bridge."""
-        import urllib.request
-        if cam not in ("wrist", "static"):
-            return ("unknown camera", 404)
-        url = f"http://so-arm-sim.flywheel.svc:8081/{cam}"
-        def generate():
-            try:
-                req = urllib.request.urlopen(url, timeout=60)
-                while True:
-                    chunk = req.read(65536)
-                    if not chunk:
-                        break
-                    yield chunk
-            except Exception:
-                pass
-        return Response(generate(),
-                        mimetype="multipart/x-mixed-replace; boundary=frame",
-                        headers={"Cache-Control": "no-cache, no-store",
-                                 "X-Accel-Buffering": "no",
-                                 "Connection": "keep-alive"})
-
     @app.route("/api/rollout/<path:name>")
     def serve_rollout(name):
         p = ROLLOUTS / name
@@ -1166,12 +1143,16 @@ data:
       document.getElementById('theme-dark').classList.toggle('active', t === 'dark');
     });
 
-    // ---- Camera feeds (proxied through dashboard to avoid mixed content) ----
+    // ---- Camera feeds (direct to camera bridge, same protocol) ---------------
     (function() {
+      // Both dashboard (30801) and camera bridge (30881) are HTTP NodePorts
+      // on the same host — no mixed content, no proxy needed.
+      const camHost = window.location.hostname;
+      const camBase = 'http://' + camHost + ':30881';
       const staticEl = document.getElementById('cam-static');
       const wristEl = document.getElementById('cam-wrist');
-      if (staticEl) staticEl.src = '/api/camera/static';
-      if (wristEl) wristEl.src = '/api/camera/wrist';
+      if (staticEl) staticEl.src = camBase + '/static';
+      if (wristEl) wristEl.src = camBase + '/wrist';
     })();
 
     // ---- State ---------------------------------------------------------------
