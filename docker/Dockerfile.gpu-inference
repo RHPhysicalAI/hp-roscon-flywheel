@@ -29,6 +29,7 @@ RUN apt-get update \
   git \
   build-essential \
   ros-${ROS_DISTRO}-rmw-zenoh-cpp \
+  python3-pip \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ---- Workspace: only Rosetta + interfaces (no Gazebo, no sim) ----
