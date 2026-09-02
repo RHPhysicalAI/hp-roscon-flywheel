@@ -231,6 +231,10 @@ data:
                     "curation_score":  e.get("curation_score", 0),
                     "curation_reason": e.get("curation_reason", ""),
                     "scene":           e.get("scene", ""),
+                    "rollout":         e.get("rollout", {}),
+                    "task_success":    e.get("task_success", False),
+                    "cubes_placed":    e.get("cubes_placed", 0),
+                    "avg_smoothness":  e.get("avg_smoothness", 0.0),
                     "ts":              e.get("_mtime", 0),
                 }
                 for e in _episode_log(30)
