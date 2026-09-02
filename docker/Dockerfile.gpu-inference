@@ -1,0 +1,82 @@
+# ACT Policy Inference — GPU container for the desktop host.
+#
+# Runs on the desktop (not in the SNO VM) with --gpus all to access the
+# RTX 5090. Connects to the sim in SNO via zenoh over the network.
+#
+# Build:
+#   docker buildx build -f docker/Dockerfile.gpu-inference -t act-inference:latest . --load
+#
+# Run:
+#   docker run --gpus all --network host \
+#     -e ZENOH_ROUTER=10.0.0.49:7447 \
+#     -v ~/.cache/huggingface:/root/.cache/huggingface \
+#     act-inference:latest
+
+ARG DISTRO=kilted
+FROM ros:${DISTRO}
+
+ENV DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-c"]
+
+# ---- ROS 2 build tooling + zenoh ----
+RUN apt-get update \
+  && apt-get upgrade -y \
+  && apt-get install -y --no-install-recommends \
+  ros-dev-tools \
+  python3-colcon-common-extensions \
+  python3-rosdep \
+  python3-vcstool \
+  git \
+  build-essential \
+  ros-${ROS_DISTRO}-rmw-zenoh-cpp \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# ---- Workspace: only Rosetta + interfaces (no Gazebo, no sim) ----
+RUN mkdir -p /ws_pai/src
+WORKDIR /ws_pai
+
+# Clone only rosetta and its interfaces
+RUN git clone --depth 1 https://github.com/ros-physical-ai/demos src/demos \
+  && git clone --depth 1 -b d43b960cfbc939ea4379d7b0f4e092750358bdbd https://github.com/iblnkn/rosetta.git src/rosetta || \
+     git clone --depth 1 https://github.com/iblnkn/rosetta.git src/rosetta \
+  && git clone --depth 1 https://github.com/iblnkn/rosetta_interfaces.git src/rosetta_interfaces \
+  && git clone --depth 1 https://github.com/iblnkn/lerobot-robot-rosetta.git src/lerobot-robot-rosetta
+
+# ---- Build Rosetta packages only ----
+RUN apt-get update \
+  && rosdep update \
+  && rosdep install --from-paths src/rosetta src/rosetta_interfaces src/lerobot-robot-rosetta src/demos/pai_data_collection \
+     --ignore-src --rosdistro "$ROS_DISTRO" -yir \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN source /opt/ros/"$ROS_DISTRO"/setup.bash \
+  && colcon build --packages-select rosetta rosetta_interfaces lerobot_robot_rosetta pai_data_collection \
+     --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+# ---- ML dependencies (GPU — RTX 5090 / CUDA 13.0) ----
+RUN find /usr/lib/python3/dist-packages -name '*.dist-info' -exec rm -rf {} + 2>/dev/null || true \
+  && pip install --no-cache-dir --break-system-packages \
+  torch==2.9.1+cu130 \
+  torchaudio==2.9.1+cu130 \
+  torchvision==0.24.1+cu130 \
+  --index-url https://download.pytorch.org/whl/cu130 \
+  && pip install --no-cache-dir --break-system-packages \
+  "lerobot[async]==0.5.1" \
+  "numpy>=2.0.0,<2.3" \
+  "scipy>=1.11.0,<2" \
+  && pip cache purge
+
+# ---- Cleanup ----
+RUN find /ws_pai -type d -name ".git" -exec rm -rf {} + 2>/dev/null || true
+
+# ---- Runtime ----
+ENV RMW_IMPLEMENTATION=rmw_zenoh_cpp
+
+# Patch Rosetta default device to cuda
+RUN sed -i 's/policy_device: "cuda"/policy_device: "cuda"/' \
+    /ws_pai/install/rosetta/share/rosetta/params/rosetta_client.yaml 2>/dev/null || true
+
+COPY docker/inference-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

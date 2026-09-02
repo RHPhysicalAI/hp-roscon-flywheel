@@ -46,24 +46,18 @@ RUN apt-get update \
 RUN source /opt/ros/"$ROS_DISTRO"/setup.bash \
   && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
 
-# ---- ML dependencies (LeRobot + PyTorch for ACT inference) ----
-# CPU-only PyTorch for now — GPU inference added when VFIO passthrough is set up.
-# scipy<2 required: LeRobot 0.5.x imports scipy.fftpack which SciPy 2.0 removed.
-# Debian-installed Python packages lack RECORD files, blocking pip upgrades.
-# Remove their .dist-info dirs so pip can freely install newer versions.
+# ---- Lightweight Python deps (no ML — inference runs externally) ----
 RUN find /usr/lib/python3/dist-packages -name '*.dist-info' -exec rm -rf {} + 2>/dev/null || true \
   && pip install --no-cache-dir --break-system-packages \
-  torch torchvision torchaudio \
-  "lerobot[async]==0.5.1" \
-  "numpy>=2.0.0,<2.3" \
-  "scipy>=1.11.0,<2" \
   opencv-python-headless \
   flask \
+  numpy \
   && pip cache purge
 
 # ---- Flywheel adapters ----
 COPY src/episode-emitter/episode_emitter.py /ws_pai/episode_emitter.py
 COPY src/camera-bridge/camera_bridge.py /ws_pai/camera_bridge.py
+COPY src/sim-reset/sim_reset.py /ws_pai/sim_reset.py
 
 # ---- Cleanup ----
 RUN find /ws_pai -type d -name ".git" -exec rm -rf {} + 2>/dev/null || true

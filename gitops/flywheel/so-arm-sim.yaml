@@ -1,14 +1,11 @@
 # SO-ARM101 Gazebo sim — the flywheel's episode producer.
 #
-# Runs the SO-ARM101 robot arm in Gazebo (headless), with the zenoh router
-# and the episode-emitter adapter. Each rollout produces a curator-compatible
-# JSON in /data/episodes/raw/ for the flywheel pipeline.
+# desktop-gpu-split mode: sim + cameras + episode emitter run in SNO.
+# ACT inference runs on the host GPU via a separate container connected
+# over zenoh (port 7447).
 #
-# Replaces robot-sim.yaml from thor-testing (which was a Cosmos3 world-model
-# generator, not a physics sim).
-#
-# GPU: not required for the sim or episode emission. ACT inference needs GPU
-# for real-time but can run on CPU (slower). Training is a separate workload.
+# Sim resets between episodes (cubes to start, arm to home) for genuine
+# independent trials.
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -42,26 +39,18 @@ spec:
             - name: EPISODE_TIMEOUT_S
               value: "30.0"
             - name: MAX_EPISODE_S
-              value: "60.0"
+              value: "30.0"
             - name: MIN_STEPS
               value: "10"
             - name: MCP_ENABLED
               value: "false"
-            - name: RUN_INFERENCE
-              value: "true"
-            - name: POLICY_PATH
-              value: "francocipollone/rospai_act_sim_arm101_place_cubes_on_tray"
-            - name: POLICY_DEVICE
-              value: "cpu"
-            - name: CUDA_VISIBLE_DEVICES
-              value: ""
-            - name: HF_HOME
-              value: "/data/hf-cache"
             - name: CAMERA_BRIDGE_PORT
               value: "8081"
           ports:
             - containerPort: 8081
               name: camera
+            - containerPort: 7447
+              name: zenoh
           resources:
             requests:
               cpu: "4"
@@ -72,15 +61,10 @@ spec:
           volumeMounts:
             - name: episodes
               mountPath: /data/episodes
-            - name: hf-cache
-              mountPath: /data/hf-cache
       volumes:
         - name: episodes
           hostPath:
             path: /var/lib/episodes
-        - name: hf-cache
-          hostPath:
-            path: /var/lib/hf-cache
 ---
 apiVersion: v1
 kind: Service
@@ -88,9 +72,14 @@ metadata:
   name: so-arm-sim
   namespace: flywheel
 spec:
+  type: NodePort
   selector:
     app: so-arm-sim
   ports:
     - name: camera
       port: 8081
       targetPort: 8081
+    - name: zenoh
+      port: 7447
+      targetPort: 7447
+      nodePort: 30747

@@ -164,7 +164,7 @@ class EpisodeEmitter(Node):
         return sum(self._smoothness_deltas) / len(self._smoothness_deltas)
 
     def _end_episode(self):
-        """Finalize episode and write curator JSON."""
+        """Finalize episode, write curator JSON, and reset sim for next attempt."""
         self._rollout_active = False
         duration = time.time() - self._episode_start
         task_success, cubes_placed = self._compute_task_success()
@@ -204,6 +204,18 @@ class EpisodeEmitter(Node):
             f"steps={self._steps} smooth={avg_smoothness:.4f} "
             f"cubes={cubes_placed} [{self._episodes_emitted} total]"
         )
+
+        # Reset sim for next episode (cubes back to start, arm to home)
+        self.get_logger().info("Resetting sim for next episode...")
+        try:
+            import subprocess
+            subprocess.run(
+                ["python3", "/ws_pai/sim_reset.py"],
+                timeout=15,
+                capture_output=True,
+            )
+        except Exception as e:
+            self.get_logger().warn(f"Sim reset failed: {e}")
 
         # Reset for next episode
         self._episode_id = None
