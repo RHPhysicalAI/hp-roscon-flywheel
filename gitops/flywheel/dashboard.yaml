@@ -1867,6 +1867,8 @@ kind: Route
 metadata:
   name: dashboard
   namespace: flywheel
+  annotations:
+    haproxy.router.openshift.io/timeout: 3600s
 spec:
   to:
     kind: Service
