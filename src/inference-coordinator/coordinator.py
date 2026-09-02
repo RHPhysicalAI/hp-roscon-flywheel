@@ -20,13 +20,16 @@ import time
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 
 from rosetta_interfaces.action import RunPolicy
 
 EPISODE_LEN = float(os.environ.get("EPISODE_LEN", "25"))
 PROMPT = os.environ.get("PROMPT", "place cubes on tray")
-SETTLE_S = float(os.environ.get("SETTLE_S", "2.0"))
+SETTLE_S = float(os.environ.get("SETTLE_S", "3.0"))
+HOME_TOLERANCE = float(os.environ.get("HOME_TOLERANCE", "0.15"))
+HOME_WAIT_MAX = float(os.environ.get("HOME_WAIT_MAX", "8.0"))
 
 
 class Coordinator(Node):
@@ -34,7 +37,12 @@ class Coordinator(Node):
         super().__init__("inference_coordinator")
         self._client = ActionClient(self, RunPolicy, "/run_policy")
         self._control_pub = self.create_publisher(String, "/flywheel/episode_control", 10)
+        self._latest_positions = None
+        self.create_subscription(JointState, "/joint_states", self._on_joints, 10)
         self.get_logger().info("Coordinator started")
+
+    def _on_joints(self, msg):
+        self._latest_positions = list(msg.position)
 
     def _signal(self, msg: str):
         m = String()
@@ -42,9 +50,25 @@ class Coordinator(Node):
         self._control_pub.publish(m)
         self.get_logger().info(f"Signaled: {msg}")
 
+    def _arm_at_home(self) -> bool:
+        if not self._latest_positions:
+            return False
+        # First 5 are arm joints (skip gripper)
+        return all(abs(p) <= HOME_TOLERANCE for p in self._latest_positions[:5])
+
+    def _wait_for_home(self):
+        """Block until the arm reaches home or HOME_WAIT_MAX elapses."""
+        deadline = time.time() + HOME_WAIT_MAX
+        while time.time() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.2)
+            if self._arm_at_home():
+                self.get_logger().info("Arm confirmed at home")
+                return
+        self.get_logger().warn("Arm did not reach home within timeout")
+
     def _reset(self):
         self.get_logger().info("Resetting sim (arm + cubes)...")
-        subprocess.run(["python3", "/ws_pai/sim_reset.py"], timeout=20)
+        subprocess.run(["python3", "/ws_pai/sim_reset.py"], timeout=25)
 
     def run_forever(self):
         self.get_logger().info("Waiting for action server...")
@@ -52,14 +76,17 @@ class Coordinator(Node):
         self.get_logger().info("Action server ready")
 
         while rclpy.ok():
-            # 1. Reset while policy is idle (no active goal)
+            # 1. Reset arm + cubes while no goal is active (policy stopped).
+            #    sim_reset homes the arm; then confirm it actually reached home
+            #    before starting the episode.
             self._reset()
-            time.sleep(SETTLE_S)
+            self._wait_for_home()
+            time.sleep(SETTLE_S)  # let cubes settle after placement
 
             # 2. Episode start
             self._signal("start")
 
-            # 3. Send goal
+            # 3. Send goal — policy drives the arm from a clean home state
             goal = RunPolicy.Goal()
             goal.prompt = PROMPT
             send_future = self._client.send_goal_async(goal)
@@ -68,17 +95,22 @@ class Coordinator(Node):
             if not handle or not handle.accepted:
                 self.get_logger().warn("Goal rejected — retrying next cycle")
                 self._signal("end")
+                time.sleep(2)
                 continue
 
-            # 4. Let the policy run for the window
-            time.sleep(EPISODE_LEN)
+            # 4. Policy attempt window
+            t_end = time.time() + EPISODE_LEN
+            while time.time() < t_end:
+                rclpy.spin_once(self, timeout_sec=0.2)
 
-            # 5. Cancel the goal — policy stops commanding
+            # 5. Cancel the goal and WAIT for confirmation — policy fully stops
             self.get_logger().info("Cancelling goal (end of window)...")
             cancel_future = handle.cancel_goal_async()
             rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=10)
+            time.sleep(1.0)  # let the last command drain
 
-            # 6. Episode end — emitter evaluates
+            # 6. Settle, then evaluate via the end signal
+            time.sleep(SETTLE_S)
             self._signal("end")
             time.sleep(1.0)
 
