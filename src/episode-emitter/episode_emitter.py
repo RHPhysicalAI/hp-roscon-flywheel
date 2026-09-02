@@ -24,7 +24,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Float64MultiArray
+from std_msgs.msg import Float64MultiArray, String
 
 RAW_DIR = Path(os.environ.get("RAW_DIR", "/data/episodes/raw"))
 # When running on the host (not in SNO), POST episodes to the curator receiver
@@ -67,7 +67,7 @@ class EpisodeEmitter(Node):
             JointState, "/joint_states", self._on_joint_state, qos
         )
 
-        # Subscribe to action commands (detect when policy is sending commands)
+        # Subscribe to action commands (for safety-net timeout tracking)
         self.create_subscription(
             Float64MultiArray,
             "/forward_position_controller/commands",
@@ -75,13 +75,34 @@ class EpisodeEmitter(Node):
             qos,
         )
 
-        # Timer to check for episode timeout
+        # Subscribe to episode control signals from the inference coordinator.
+        # The inference container publishes "start" / "end" on this topic to
+        # drive the episode lifecycle explicitly (no timers, no fighting).
+        self.create_subscription(
+            String,
+            "/flywheel/episode_control",
+            self._on_control,
+            qos,
+        )
+
+        # Safety net: force-end an episode that runs way too long (policy hung)
         self.create_timer(1.0, self._check_timeout)
 
         self.get_logger().info(
             f"Episode emitter started — model={MODEL_VERSION} "
-            f"scene={SCENE} failure_rate={FAILURE_RATE}"
+            f"scene={SCENE} failure_rate={FAILURE_RATE} "
+            f"(signal-driven via /flywheel/episode_control)"
         )
+
+    def _on_control(self, msg: String):
+        """Handle episode start/end signals from the inference coordinator."""
+        cmd = msg.data.strip()
+        if cmd == "start":
+            if not self._rollout_active:
+                self._start_episode()
+        elif cmd == "end":
+            if self._rollout_active:
+                self._end_episode()
 
     def _start_episode(self):
         """Begin tracking a new episode."""
@@ -112,18 +133,16 @@ class EpisodeEmitter(Node):
         self._steps += 1
 
     def _on_command(self, msg: Float64MultiArray):
-        """Detect rollout activity from policy commands."""
-        now = time.time()
-        if not self._rollout_active:
-            self._start_episode()
-        self._last_command_time = now
+        """Track command activity for the safety-net timeout only."""
+        self._last_command_time = time.time()
 
     def _check_timeout(self):
-        """End episode if idle too long or max duration reached."""
+        """Safety net: force-end an episode only if it exceeds the hard cap
+        (policy hung). Normal episode boundaries come from control signals."""
         if not self._rollout_active:
             return
         now = time.time()
-        # Max duration — force-end long-running episodes
+        # Hard safety cap — force-end runaway episodes
         if self._episode_start and (now - self._episode_start) > MAX_EPISODE_S:
             self.get_logger().info(
                 f"Episode {self._episode_id[:8]} hit max duration ({MAX_EPISODE_S}s)")
@@ -216,19 +235,8 @@ class EpisodeEmitter(Node):
             f"cubes={cubes_placed} [{self._episodes_emitted} total]"
         )
 
-        # Reset sim for next episode (cubes back to start, arm to home)
-        self.get_logger().info("Resetting sim for next episode...")
-        try:
-            import subprocess
-            subprocess.run(
-                ["python3", "/ws_pai/sim_reset.py"],
-                timeout=15,
-                capture_output=True,
-            )
-        except Exception as e:
-            self.get_logger().warn(f"Sim reset failed: {e}")
-
-        # Reset for next episode
+        # Sim reset is handled by the inference coordinator between episodes.
+        # Reset local state for the next episode.
         self._episode_id = None
         self._last_command_time = None
 

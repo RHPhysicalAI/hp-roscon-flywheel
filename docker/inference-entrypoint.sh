@@ -71,13 +71,29 @@ ROSETTA_PID=$!
 echo "[inference] Waiting for policy server..."
 sleep 15
 
-# Continuous rollout loop
-echo "[inference] Starting continuous rollout loop..."
-while true; do
-  echo "[inference] Sending RunPolicy goal..."
-  ros2 action send_goal /run_policy rosetta_interfaces/action/RunPolicy \
-    "{prompt: 'place cubes on tray'}" --feedback 2>&1 | tail -5
+# Coordinated rollout loop:
+#   1. reset sim (cubes to start, arm to home) — between episodes only
+#   2. signal episode start
+#   3. run policy to completion
+#   4. signal episode end (emitter finalizes + evaluates task)
+ROLLOUT_TIMEOUT=${ROLLOUT_TIMEOUT:-25}
+echo "[inference] Starting coordinated rollout loop (timeout ${ROLLOUT_TIMEOUT}s/rollout)..."
 
-  echo "[inference] Rollout complete, waiting 3s before next..."
-  sleep 3
+while true; do
+  echo "[inference] Resetting sim for fresh attempt..."
+  python3 /ws_pai/sim_reset.py 2>&1 | grep -v Warning || true
+  sleep 2
+
+  echo "[inference] Signaling episode start..."
+  ros2 topic pub --once /flywheel/episode_control std_msgs/msg/String "{data: start}" 2>&1 | tail -1
+
+  echo "[inference] Running policy (max ${ROLLOUT_TIMEOUT}s)..."
+  timeout ${ROLLOUT_TIMEOUT} ros2 action send_goal /run_policy \
+    rosetta_interfaces/action/RunPolicy \
+    "{prompt: 'place cubes on tray'}" 2>&1 | tail -3 || true
+
+  echo "[inference] Signaling episode end..."
+  ros2 topic pub --once /flywheel/episode_control std_msgs/msg/String "{data: end}" 2>&1 | tail -1
+
+  sleep 2
 done
