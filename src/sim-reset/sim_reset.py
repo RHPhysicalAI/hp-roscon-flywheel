@@ -74,34 +74,43 @@ def reset_cubes(randomize=False, rng=None):
 
 
 def reset_arm():
-    """Send arm to home position via ROS 2 topic publish."""
-    data = "{data: [" + ", ".join(str(v) for v in ARM_HOME) + "]}"
+    """Reset arm joints to home via Gazebo world reset (bypasses controller).
+
+    A full world reset returns arm joints AND cubes to their SDF initial
+    state without publishing to the controller command topic (which the
+    policy owns). Cubes are re-randomized afterward by reset_cubes().
+    """
     cmd = [
-        "ros2", "topic", "pub", "--once",
-        "/forward_position_controller/commands",
-        "std_msgs/msg/Float64MultiArray",
-        data,
+        "gz", "service",
+        "-s", "/world/pai_world/control",
+        "--reqtype", "gz.msgs.WorldControl",
+        "--reptype", "gz.msgs.Boolean",
+        "--timeout", "3000",
+        "--req", "reset: {all: true}",
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=10)
     if result.returncode != 0:
-        print(f"[sim-reset] WARNING: arm home failed: {result.stderr.decode()}", flush=True)
+        print(f"[sim-reset] WARNING: world reset failed: {result.stderr.decode()}", flush=True)
 
 
-def reset_sim(reset_arm_home=False, randomize=None):
-    """Reset cubes to start. Optionally send arm home and/or randomize positions.
+def reset_sim(reset_arm_home=True, randomize=None):
+    """Reset arm to home (via world reset) and reposition cubes for a fresh attempt.
 
-    By default we do NOT send the arm home — the policy controls the arm and
-    an explicit home command can conflict with the Rosetta action server's
-    state. Just reposition the cubes for a fresh attempt.
+    Sequence:
+      1. World reset — arm joints and cubes return to SDF initial state
+      2. Re-place cubes (optionally randomized) on top of the reset
+
+    The world reset is done through Gazebo, not the controller command topic,
+    so it doesn't fight the continuously-running policy.
     """
     if randomize is None:
         randomize = os.environ.get("RANDOMIZE_CUBES", "false").lower() == "true"
     mode = "randomized" if randomize else "nominal"
-    print(f"[sim-reset] Resetting cubes ({mode})...", flush=True)
+    print(f"[sim-reset] Resetting sim ({mode} cubes)...", flush=True)
     if reset_arm_home:
-        reset_arm()
-        time.sleep(1.0)
-    reset_cubes(randomize=randomize)
+        reset_arm()      # world reset: arm home + cubes nominal
+        time.sleep(1.5)  # let physics settle after reset
+    reset_cubes(randomize=randomize)  # re-place cubes (randomized if enabled)
     time.sleep(0.5)
     print("[sim-reset] Sim reset complete", flush=True)
 
