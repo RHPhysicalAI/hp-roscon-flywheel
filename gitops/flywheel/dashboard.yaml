@@ -1325,9 +1325,6 @@ data:
 
       // Flywheel running
       const fw = s.flywheel_running;
-      document.getElementById('btn-start').classList.toggle('hidden', fw);
-      document.getElementById('btn-stop').classList.toggle('hidden', !fw);
-      document.getElementById('flywheel-status').classList.toggle('hidden', !fw);
       document.getElementById('sb-fw').textContent = fw ? 'running' : 'idle';
 
       // Dreamer
@@ -1668,22 +1665,7 @@ data:
       if (b) b.disabled = loading;
     }
 
-    async function controlFlywheel(action) {
-      const btn = action === 'start' ? 'btn-start' : 'btn-stop';
-      setLoading(btn, true);
-      try {
-        const r = await fetch('/api/control/flywheel', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({action})
-        });
-        const d = await r.json();
-        showToast(action === 'start' ? 'Flywheel started' : 'Flywheel stopped',
-                  action === 'start' ? 'toast-green' : '');
-      } finally {
-        setLoading(btn, false);
-      }
-    }
+    // controlFlywheel removed — sim runs continuously, no Start/Stop needed
 
     async function controlDreamer(action, model_version) {
       const btnId = action === 'start'
