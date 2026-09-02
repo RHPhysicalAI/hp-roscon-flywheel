@@ -67,8 +67,37 @@ class Coordinator(Node):
         self.get_logger().warn("Arm did not reach home within timeout")
 
     def _reset(self):
-        self.get_logger().info("Resetting sim (arm + cubes)...")
-        subprocess.run(["python3", "/ws_pai/sim_reset.py"], timeout=25)
+        """Full world reset + controller reactivation + cube randomization.
+
+        World reset returns everything to SDF initial state (arm joints,
+        cubes, physics). Controllers deactivate on reset, so we re-activate
+        them. Then randomize cubes if configured.
+        """
+        self.get_logger().info("World reset...")
+        subprocess.run([
+            "gz", "service",
+            "-s", "/world/pai_world/control",
+            "--reqtype", "gz.msgs.WorldControl",
+            "--reptype", "gz.msgs.Boolean",
+            "--timeout", "5000",
+            "--req", "reset: {all: true}",
+        ], capture_output=True, timeout=10)
+
+        # Re-activate controllers (world reset deactivates them)
+        self.get_logger().info("Re-activating controllers...")
+        subprocess.run([
+            "ros2", "service", "call",
+            "/controller_manager/switch_controller",
+            "controller_manager_msgs/srv/SwitchController",
+            "{activate_controllers: [joint_state_broadcaster, forward_position_controller], strictness: 1, timeout: {sec: 30, nanosec: 0}}",
+        ], capture_output=True, timeout=35)
+
+        # Randomize cubes if configured (after world reset put them at nominal)
+        self.get_logger().info("Placing cubes...")
+        subprocess.run([
+            "python3", "/ws_pai/sim_reset.py",
+            "--cubes-only",
+        ], capture_output=True, timeout=15)
 
     def run_forever(self):
         self.get_logger().info("Waiting for action server...")
@@ -76,12 +105,10 @@ class Coordinator(Node):
         self.get_logger().info("Action server ready")
 
         while rclpy.ok():
-            # 1. Reset arm + cubes while no goal is active (policy stopped).
-            #    sim_reset homes the arm; then confirm it actually reached home
-            #    before starting the episode.
+            # 1. Full world reset + controller reactivation + cube placement.
+            #    No active goal, so no fighting.
             self._reset()
-            self._wait_for_home()
-            time.sleep(SETTLE_S)  # let cubes settle after placement
+            time.sleep(SETTLE_S)  # let physics settle after reset
 
             # 2. Episode start
             self._signal("start")

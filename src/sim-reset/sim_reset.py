@@ -161,4 +161,12 @@ def reset_sim(reset_arm_home=None, randomize=None):
 
 if __name__ == "__main__":
     randomize = "--random" in sys.argv or os.environ.get("RANDOMIZE_CUBES", "false").lower() == "true"
-    reset_sim(randomize=randomize)
+    cubes_only = "--cubes-only" in sys.argv
+    if cubes_only:
+        # Only reset cubes (world reset already handled arm/physics)
+        print("[sim-reset] Cubes only...", flush=True)
+        reset_cubes(randomize=randomize)
+        time.sleep(0.5)
+        print("[sim-reset] Done", flush=True)
+    else:
+        reset_sim(randomize=randomize)
