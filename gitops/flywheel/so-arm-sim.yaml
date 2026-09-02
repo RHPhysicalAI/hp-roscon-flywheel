@@ -40,7 +40,7 @@ spec:
             - name: FAILURE_RATE
               value: "0.1"
             - name: EPISODE_TIMEOUT_S
-              value: "5.0"
+              value: "30.0"
             - name: MCP_ENABLED
               value: "false"
             - name: RUN_INFERENCE
