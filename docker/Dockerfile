@@ -57,10 +57,13 @@ RUN find /usr/lib/python3/dist-packages -name '*.dist-info' -exec rm -rf {} + 2>
   "lerobot[async]==0.5.1" \
   "numpy>=2.0.0,<2.3" \
   "scipy>=1.11.0,<2" \
+  opencv-python-headless \
+  flask \
   && pip cache purge
 
-# ---- Episode emitter (flywheel adapter) ----
+# ---- Flywheel adapters ----
 COPY src/episode-emitter/episode_emitter.py /ws_pai/episode_emitter.py
+COPY src/camera-bridge/camera_bridge.py /ws_pai/camera_bridge.py
 
 # ---- Cleanup ----
 RUN find /ws_pai -type d -name ".git" -exec rm -rf {} + 2>/dev/null || true

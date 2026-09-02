@@ -62,7 +62,12 @@ else
   echo "[entrypoint] WARNING: controller activation may have failed — check logs"
 fi
 
-# 3. Start episode emitter
+# 3. Start camera bridge (MJPEG streams for dashboard)
+echo "[entrypoint] Starting camera bridge on port 8081..."
+python3 /ws_pai/camera_bridge.py &
+CAMERA_PID=$!
+
+# 4. Start episode emitter
 echo "[entrypoint] Starting episode emitter..."
 python3 /ws_pai/episode_emitter.py &
 EMITTER_PID=$!
@@ -92,14 +97,14 @@ else
   echo "[entrypoint] Inference disabled (RUN_INFERENCE=false)"
 fi
 
-echo "[entrypoint] All processes started: zenoh=$ZENOH_PID sim=$SIM_PID emitter=$EMITTER_PID inference=$INFERENCE_PID"
+echo "[entrypoint] All processes started: zenoh=$ZENOH_PID sim=$SIM_PID camera=$CAMERA_PID emitter=$EMITTER_PID inference=$INFERENCE_PID"
 
 # Wait for any process to exit, then stop all
 if [ -n "$INFERENCE_PID" ]; then
-  wait -n $ZENOH_PID $SIM_PID $EMITTER_PID $INFERENCE_PID
+  wait -n $ZENOH_PID $SIM_PID $CAMERA_PID $EMITTER_PID $INFERENCE_PID
 else
-  wait -n $ZENOH_PID $SIM_PID $EMITTER_PID
+  wait -n $ZENOH_PID $SIM_PID $CAMERA_PID $EMITTER_PID
 fi
 echo "[entrypoint] A process exited, shutting down..."
-kill $ZENOH_PID $SIM_PID $EMITTER_PID $INFERENCE_PID 2>/dev/null
+kill $ZENOH_PID $SIM_PID $CAMERA_PID $EMITTER_PID $INFERENCE_PID 2>/dev/null
 wait

@@ -53,6 +53,11 @@ spec:
               value: ""
             - name: HF_HOME
               value: "/data/hf-cache"
+            - name: CAMERA_BRIDGE_PORT
+              value: "8081"
+          ports:
+            - containerPort: 8081
+              name: camera
           resources:
             requests:
               cpu: "4"
@@ -72,3 +77,16 @@ spec:
         - name: hf-cache
           hostPath:
             path: /var/lib/hf-cache
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: so-arm-sim
+  namespace: flywheel
+spec:
+  selector:
+    app: so-arm-sim
+  ports:
+    - name: camera
+      port: 8081
+      targetPort: 8081

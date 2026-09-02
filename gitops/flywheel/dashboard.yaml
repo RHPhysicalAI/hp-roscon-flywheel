@@ -327,18 +327,26 @@ data:
             return ("not found", 404)
         return send_file(p, mimetype="image/jpeg")
 
-    @app.route("/api/generated-image")
-    def serve_generated_image():
-        """Serve the latest generated video clip (I2V) or image."""
-        # Try video first (D032-C: I2V replaces T2I)
-        vid = DATA / "episodes" / "latest_generated.mp4"
-        if vid.exists() and vid.stat().st_size > 100:
-            return send_file(vid, mimetype="video/mp4", conditional=True)
-        # Fallback to PNG if present (legacy T2I path)
-        img = DATA / "episodes" / "latest_generated.png"
-        if img.exists() and img.stat().st_size > 0:
-            return send_file(img, mimetype="image/png", conditional=True)
-        return ("not found", 404)
+    @app.route("/api/camera/<cam>")
+    def camera_stream(cam):
+        """Proxy MJPEG stream from so-arm-sim camera bridge."""
+        import urllib.request
+        if cam not in ("wrist", "static"):
+            return ("unknown camera", 404)
+        url = f"http://so-arm-sim.flywheel.svc:8081/{cam}"
+        def generate():
+            try:
+                req = urllib.request.urlopen(url, timeout=10)
+                while True:
+                    chunk = req.read(8192)
+                    if not chunk:
+                        break
+                    yield chunk
+            except Exception:
+                pass
+        return Response(generate(),
+                        mimetype="multipart/x-mixed-replace; boundary=frame",
+                        headers={"Cache-Control": "no-cache"})
 
     @app.route("/api/dream/<path:name>")
     def serve_dream(name):
@@ -909,26 +917,43 @@ data:
     <!-- ===================== MAIN GRID ===================== -->
     <div id="main">
 
-      <!-- SCENE -->
+      <!-- SIM CAMERAS -->
       <div class="card" id="scene-card">
         <div class="card-header">
-          <span class="card-title">Input Frame</span>
-          <span id="scene-tag" class="tag">waiting</span>
+          <span class="card-title">Sim Cameras</span>
+          <span id="scene-tag" class="tag">live</span>
         </div>
-        <div class="card-body">
-          <div id="scene-img-wrap">
-            <div id="scene-img-placeholder">
-              <span style="font-size:22px">&#128248;</span><br>
-              awaiting flywheel
+        <div class="card-body" style="display:flex;flex-direction:column;gap:8px">
+          <div>
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--txt2);margin-bottom:4px">
+              Static (overhead)
             </div>
-            <img id="scene-img" style="display:none" alt="scene frame">
+            <div style="width:100%;aspect-ratio:1;background:var(--card2);border-radius:4px;overflow:hidden;border:1px solid var(--border)">
+              <img id="cam-static" src="/api/camera/static" alt="static camera"
+                   style="width:100%;height:100%;object-fit:cover"
+                   onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
+              >
+              <div style="display:none;width:100%;height:100%;align-items:center;justify-content:center;color:var(--txt3);font-size:11px">
+                Waiting for sim...
+              </div>
+            </div>
           </div>
-          <div id="scene-name" style="font-size:14px;font-weight:600;margin-bottom:6px">--</div>
-          <div id="scene-prompt" style="font-size:11px;color:var(--txt2);font-style:italic;line-height:1.5;margin-bottom:8px">
-            Scene prompt will appear here...
+          <div>
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--txt2);margin-bottom:4px">
+              Wrist
+            </div>
+            <div style="width:100%;aspect-ratio:1;background:var(--card2);border-radius:4px;overflow:hidden;border:1px solid var(--border)">
+              <img id="cam-wrist" src="/api/camera/wrist" alt="wrist camera"
+                   style="width:100%;height:100%;object-fit:cover"
+                   onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
+              >
+              <div style="display:none;width:100%;height:100%;align-items:center;justify-content:center;color:var(--txt3);font-size:11px">
+                Waiting for sim...
+              </div>
+            </div>
           </div>
-          <div class="annotation" style="margin-top:4px;font-size:10px">
-            SO-ARM101 camera frame from Gazebo sim (480&times;480).
+          <div class="annotation" style="font-size:10px">
+            Live feeds from SO-ARM101 Gazebo sim (480&times;480).
           </div>
         </div>
       </div>
