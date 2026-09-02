@@ -338,9 +338,9 @@ data:
         url = f"http://so-arm-sim.flywheel.svc:8081/{cam}"
         def generate():
             try:
-                req = urllib.request.urlopen(url, timeout=30)
+                req = urllib.request.urlopen(url, timeout=60)
                 while True:
-                    chunk = req.read(8192)
+                    chunk = req.read(65536)
                     if not chunk:
                         break
                     yield chunk
@@ -348,8 +348,9 @@ data:
                 pass
         return Response(generate(),
                         mimetype="multipart/x-mixed-replace; boundary=frame",
-                        headers={"Cache-Control": "no-cache",
-                                 "X-Accel-Buffering": "no"})
+                        headers={"Cache-Control": "no-cache, no-store",
+                                 "X-Accel-Buffering": "no",
+                                 "Connection": "keep-alive"})
 
     @app.route("/api/rollout/<path:name>")
     def serve_rollout(name):
@@ -1165,17 +1166,12 @@ data:
       document.getElementById('theme-dark').classList.toggle('active', t === 'dark');
     });
 
-    // ---- Camera feeds (direct to camera bridge NodePort, no proxy) ----------
+    // ---- Camera feeds (proxied through dashboard to avoid mixed content) ----
     (function() {
-      // Camera bridge is exposed on NodePort 30881 on the SNO VM.
-      // Determine the SNO host from the dashboard Route hostname.
-      // In production: use a dedicated camera Route or ingress.
-      const snoHost = '10.0.0.49';  // SNO VM IP — TODO: make configurable
-      const camBase = 'http://' + snoHost + ':30881';
       const staticEl = document.getElementById('cam-static');
       const wristEl = document.getElementById('cam-wrist');
-      if (staticEl) staticEl.src = camBase + '/static';
-      if (wristEl) wristEl.src = camBase + '/wrist';
+      if (staticEl) staticEl.src = '/api/camera/static';
+      if (wristEl) wristEl.src = '/api/camera/wrist';
     })();
 
     // ---- State ---------------------------------------------------------------
