@@ -171,7 +171,10 @@ data:
         # Extract Generator output from latest episode (D031 format)
         scene = frame = curation_score = curation_reason = curation_verdict = None
         scene_description = None
-        generation = policy = None
+        generation = policy = rollout = None
+        task_success = None
+        cubes_placed = None
+        avg_smoothness = None
         if ep:
             scene            = ep.get("scene")
             scene_description = ep.get("scene_description")
@@ -181,6 +184,10 @@ data:
             curation_verdict = ep.get("curation_verdict") or ep.get("_verdict")
             generation       = ep.get("generation")
             policy           = ep.get("policy")
+            rollout          = ep.get("rollout")
+            task_success     = ep.get("task_success")
+            cubes_placed     = ep.get("cubes_placed")
+            avg_smoothness   = ep.get("avg_smoothness")
 
         return {
             "counts": {
@@ -205,6 +212,10 @@ data:
                 "frame":             frame,
                 "generation":        generation,
                 "policy":            policy,
+                "rollout":           rollout,
+                "task_success":      task_success,
+                "cubes_placed":      cubes_placed,
+                "avg_smoothness":    avg_smoothness,
                 "curation_score":    curation_score,
                 "curation_reason":   curation_reason,
                 "curation_verdict":  curation_verdict,
@@ -1334,14 +1345,14 @@ data:
 
       // Generator output -- only update DOM when the episode actually changes
       // (prevents blinking on the 3-second status poll when flywheel is stopped)
-      const genKey = JSON.stringify(lat.generation) + JSON.stringify(lat.policy) + (lat.curation_score||'');
-      if ((lat.generation || lat.policy) && genKey !== window._lastGenKey) {
+      const genKey = JSON.stringify(lat.curation_score) + (lat.curation_verdict||'') + (lat.scene||'');
+      if (lat.curation_score != null && genKey !== window._lastGenKey) {
         window._lastGenKey = genKey;
         document.getElementById('gen-empty').style.display = 'none';
         document.getElementById('gen-fields').style.display = 'block';
 
-        // Generated video clip
-        const gen = lat.generation || {};
+        // Rollout status (SO-ARM)
+        const gen = lat.generation || lat.rollout || {};
         const genOk = gen.status === 'ok';
         if (genOk) {
           const genVid = document.getElementById('gen-vid');
