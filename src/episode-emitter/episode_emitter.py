@@ -136,28 +136,19 @@ class EpisodeEmitter(Node):
             self._end_episode()
 
     def _compute_task_success(self) -> tuple[bool, int]:
-        """Evaluate task success.
+        """Evaluate task success from actual Gazebo cube positions.
 
-        In a full implementation, this would query Gazebo model states to check
-        cube positions relative to the tray. For now, we use a heuristic based
-        on episode length and smoothness — longer, smoother episodes correlate
-        with successful placements.
-
-        TODO: Replace with actual Gazebo model state queries once the sim
-        integration is complete (Phase 2.5).
+        Queries each cube's world pose and checks whether it's resting inside
+        the tray footprint. This is ground-truth, not a heuristic.
         """
-        # Heuristic: episodes with enough steps and reasonable smoothness
-        # are likely successful. This will be replaced with actual sim state
-        # queries.
         if self._steps < MIN_STEPS:
             return False, 0
-        avg_smooth = self._avg_smoothness()
-        # Very rough heuristic — refine with real data
-        if avg_smooth < 0.5 and self._steps > 100:
-            return True, 3  # assume all cubes placed
-        elif avg_smooth < 0.8 and self._steps > 75:
-            return True, 2
-        return False, 0
+        try:
+            import task_eval
+            return task_eval.evaluate_task()
+        except Exception as e:
+            self.get_logger().warn(f"Task eval failed, falling back: {e}")
+            return False, 0
 
     def _avg_smoothness(self) -> float:
         """Mean absolute joint-command delta across the episode."""

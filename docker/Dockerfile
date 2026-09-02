@@ -56,6 +56,7 @@ RUN find /usr/lib/python3/dist-packages -name '*.dist-info' -exec rm -rf {} + 2>
 
 # ---- Flywheel adapters ----
 COPY src/episode-emitter/episode_emitter.py /ws_pai/episode_emitter.py
+COPY src/episode-emitter/task_eval.py /ws_pai/task_eval.py
 COPY src/camera-bridge/camera_bridge.py /ws_pai/camera_bridge.py
 COPY src/sim-reset/sim_reset.py /ws_pai/sim_reset.py
 
