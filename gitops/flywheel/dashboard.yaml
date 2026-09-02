@@ -1165,11 +1165,13 @@ data:
       document.getElementById('theme-dark').classList.toggle('active', t === 'dark');
     });
 
-    // ---- Camera feeds (direct to camera bridge, no proxy) -------------------
+    // ---- Camera feeds (direct to camera bridge NodePort, no proxy) ----------
     (function() {
-      // Camera bridge Route: sim-cameras-flywheel.apps.sno-flywheel.local
-      const camHost = window.location.hostname.replace('dashboard-flywheel', 'sim-cameras-flywheel');
-      const camBase = window.location.protocol + '//' + camHost;
+      // Camera bridge is exposed on NodePort 30881 on the SNO VM.
+      // Determine the SNO host from the dashboard Route hostname.
+      // In production: use a dedicated camera Route or ingress.
+      const snoHost = '10.0.0.49';  // SNO VM IP — TODO: make configurable
+      const camBase = 'http://' + snoHost + ':30881';
       const staticEl = document.getElementById('cam-static');
       const wristEl = document.getElementById('cam-wrist');
       if (staticEl) staticEl.src = camBase + '/static';
