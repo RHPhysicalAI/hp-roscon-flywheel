@@ -71,8 +71,25 @@ ROSETTA_PID=$!
 echo "[inference] Waiting for policy server..."
 sleep 15
 
-# The Python coordinator drives clean episode phasing: reset (no active goal)
-# -> start -> send goal -> window -> cancel goal -> end. Cancelling between
-# episodes stops the policy commanding so resets don't fight it.
-echo "[inference] Starting Python coordinator..."
-python3 /ws_pai/coordinator.py
+# Baseline: one continuous RunPolicy goal drives the arm. Episodes are
+# windowed by wall clock. Only cubes are reset to nominal between episodes
+# (via the emitter side or left to the policy's own homing). No arm reset,
+# no goal cancellation — the proven-working configuration.
+EPISODE_LEN=${EPISODE_LEN:-25}
+
+echo "[inference] Sending continuous RunPolicy goal..."
+ros2 action send_goal /run_policy rosetta_interfaces/action/RunPolicy \
+  "{prompt: 'place cubes on tray'}" &
+sleep 5
+
+echo "[inference] Starting episode windowing loop (${EPISODE_LEN}s/episode)..."
+while true; do
+  # Reset cubes only (nominal). No arm reset — the policy homes itself on
+  # task completion.
+  RESET_ARM=false RANDOMIZE_CUBES=false python3 /ws_pai/sim_reset.py 2>&1 | grep -v Warning || true
+
+  ros2 topic pub --once /flywheel/episode_control std_msgs/msg/String "{data: start}" 2>&1 | tail -1
+  sleep ${EPISODE_LEN}
+  ros2 topic pub --once /flywheel/episode_control std_msgs/msg/String "{data: end}" 2>&1 | tail -1
+  sleep 1
+done
