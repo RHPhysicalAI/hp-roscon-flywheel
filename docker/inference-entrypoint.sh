@@ -15,8 +15,23 @@ echo "[inference] Policy: $POLICY_PATH"
 echo "[inference] Device: cuda"
 
 # Configure zenoh to connect to the remote router (sim pod in SNO)
-export ZENOH_ROUTER_CHECK_ATTEMPTS=30
-export RMW_ZENOH_ROUTER_CONFIG_URI=""
+# Create a zenoh session config that connects as a client to the remote router
+ZENOH_CFG="/tmp/zenoh_session.json5"
+cat > "$ZENOH_CFG" << EZCFG
+{
+  mode: "client",
+  connect: {
+    endpoints: ["tcp/${ZENOH_ROUTER}"]
+  }
+}
+EZCFG
+export ZENOH_SESSION_CONFIG_URI="$ZENOH_CFG"
+export RMW_ZENOH_CONFIG_FILE="$ZENOH_CFG"
+
+# Don't start a local router — we're connecting to the remote one
+export RMW_ZENOH_ROUTER_CHECK_ATTEMPTS=0
+
+echo "[inference] Zenoh config: connecting to tcp://${ZENOH_ROUTER}"
 
 # Wait for /joint_states to appear (sim is ready)
 echo "[inference] Waiting for sim topics via zenoh..."
