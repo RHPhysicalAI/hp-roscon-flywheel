@@ -71,31 +71,8 @@ ROSETTA_PID=$!
 echo "[inference] Waiting for policy server..."
 sleep 15
 
-# The RunPolicy action runs CONTINUOUSLY — one goal drives the arm the whole
-# time. We slice it into episodes by wall-clock windows. At each boundary we
-# reset: sustained home-publish (20Hz for 3s) drives the arm home even against
-# the policy's stream, then re-place cubes. No lifecycle churn.
-EPISODE_LEN=${EPISODE_LEN:-25}
-
-echo "[inference] Sending continuous RunPolicy goal..."
-ros2 action send_goal /run_policy rosetta_interfaces/action/RunPolicy \
-  "{prompt: 'place cubes on tray'}" &
-GOAL_PID=$!
-sleep 5
-
-echo "[inference] Starting episode windowing loop (${EPISODE_LEN}s/episode)..."
-while true; do
-  # Reset for next episode. RESET_ARM and RANDOMIZE_CUBES env control behavior.
-  echo "[inference] Episode boundary: resetting..."
-  python3 /ws_pai/sim_reset.py 2>&1 | grep -v Warning || true
-
-  # Signal episode start
-  ros2 topic pub --once /flywheel/episode_control std_msgs/msg/String "{data: start}" 2>&1 | tail -1
-
-  # Attempt window — policy drives the arm
-  sleep ${EPISODE_LEN}
-
-  # Signal episode end — emitter evaluates cube positions
-  ros2 topic pub --once /flywheel/episode_control std_msgs/msg/String "{data: end}" 2>&1 | tail -1
-  sleep 1
-done
+# The Python coordinator drives clean episode phasing: reset (no active goal)
+# -> start -> send goal -> window -> cancel goal -> end. Cancelling between
+# episodes stops the policy commanding so resets don't fight it.
+echo "[inference] Starting Python coordinator..."
+python3 /ws_pai/coordinator.py

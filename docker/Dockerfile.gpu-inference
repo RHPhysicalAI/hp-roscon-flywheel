@@ -73,6 +73,7 @@ RUN sed -i 's/policy_device: "cuda"/policy_device: "cuda"/' \
     /ws_pai/install/rosetta/share/rosetta/params/rosetta_client.yaml 2>/dev/null || true
 
 COPY src/sim-reset/sim_reset.py /ws_pai/sim_reset.py
+COPY src/inference-coordinator/coordinator.py /ws_pai/coordinator.py
 COPY docker/inference-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
