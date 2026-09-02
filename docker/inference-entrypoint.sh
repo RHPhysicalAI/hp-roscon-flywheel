@@ -58,8 +58,8 @@ print(f'[inference] Stripped contract written to $CONTRACT')
 "
 
 # Start Rosetta policy runner (includes action server + policy server)
-echo "[inference] Launching Rosetta policy runner with ACT on GPU..."
-ros2 launch rosetta policy_runner_launch.py \
+echo "[inference] Launching Rosetta client with ACT on GPU..."
+ros2 launch rosetta rosetta_client_launch.py \
   contract_path:=${CONTRACT} \
   pretrained_name_or_path:=${POLICY_PATH} \
   policy_type:=act \
