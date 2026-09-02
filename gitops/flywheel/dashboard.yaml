@@ -1143,12 +1143,12 @@ data:
       document.getElementById('theme-dark').classList.toggle('active', t === 'dark');
     });
 
-    // ---- Camera feeds (direct to camera bridge, same protocol) ---------------
+    // ---- Camera feeds (direct to camera bridge on host) ----------------------
     (function() {
-      // Both dashboard (30801) and camera bridge (30881) are HTTP NodePorts
-      // on the same host — no mixed content, no proxy needed.
-      const camHost = window.location.hostname;
-      const camBase = 'http://' + camHost + ':30881';
+      // Camera bridge runs on the desktop host (not in SNO) alongside the sim.
+      // TODO: make configurable via env/config instead of hardcoded.
+      const camHost = '10.0.0.48';
+      const camBase = 'http://' + camHost + ':8081';
       const staticEl = document.getElementById('cam-static');
       const wristEl = document.getElementById('cam-wrist');
       if (staticEl) staticEl.src = camBase + '/static';
