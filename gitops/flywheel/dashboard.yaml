@@ -769,7 +769,7 @@ data:
     .log-entry.reject{ border-left: 3px solid var(--red); }
     .log-main {
       display: grid;
-      grid-template-columns: 60px 70px 82px 80px 1fr;
+      grid-template-columns: 60px 70px 82px 80px 40px 1fr;
       gap: 8px; align-items: baseline;
       font-size: 11px;
     }
@@ -1474,8 +1474,10 @@ data:
           return 'Rollout error \u2014 sim crashed or produced incomplete episode';
         if (r.includes('truncated'))
           return 'Episode too short \u2014 rollout ended before meaningful data was collected';
-        if (r.includes('task-failed'))
-          return 'Task failed \u2014 arm did not successfully place cubes on tray';
+        if (r.includes('task-failed')) {
+          const c = ep.cubes_placed != null ? ep.cubes_placed : '?';
+          return `Task failed \u2014 ${c}/3 cubes placed`;
+        }
         if (r.includes('jerky'))
           return 'Predicted action trajectory is jerky \u2014 physically implausible, rejected';
         return 'Curation score below threshold \u2014 ' + r;
@@ -1510,21 +1512,24 @@ data:
     }
 
     // Build a single log-entry node (shared by renderLog + prependLogEntry).
-    function buildLogEntry(ep) {
-      const verdict = ep.verdict || ep._verdict || 'pass';
-      const score   = ep.curation_score || 0;
-      const ts      = ep.ts ? new Date(ep.ts * 1000).toLocaleTimeString() : '--';
-      const div = document.createElement('div');
-      div.className = 'log-entry ' + verdict;
-      div.innerHTML = `
-        <div class="log-main">
-          <span class="log-time">${ts}</span>
-          <span class="log-verdict ${verdict}">${verdict === 'pass' ? '&#10003; PASS' : '&#10007; REJECT'}</span>
-          <span class="log-id">${(ep.episode_id||'').substring(0,8)}</span>
-          <span class="log-score ${scoreClass(score)}">${score.toFixed(3)}</span>
-          <span class="log-scene">${(ep.scene||'').replace(/_/g,' ')}</span>
-        </div>
-        <div class="log-reason ${logAnnotationsOn ? 'show' : ''}">${reasonAnnotation(ep)}</div>`;
+     function buildLogEntry(ep) {
+       const verdict = ep.verdict || ep._verdict || 'pass';
+       const score   = ep.curation_score || 0;
+       const cubes   = ep.cubes_placed != null ? ep.cubes_placed : '?';
+       const ts      = ep.ts ? new Date(ep.ts * 1000).toLocaleTimeString() : '--';
+       const cubesCls = cubes === 3 ? 'score-good' : cubes >= 1 ? 'score-mid' : 'score-bad';
+       const div = document.createElement('div');
+       div.className = 'log-entry ' + verdict;
+       div.innerHTML = `
+         <div class="log-main">
+           <span class="log-time">${ts}</span>
+           <span class="log-verdict ${verdict}">${verdict === 'pass' ? '&#10003; PASS' : '&#10007; REJECT'}</span>
+           <span class="log-id">${(ep.episode_id||'').substring(0,8)}</span>
+           <span class="log-score ${scoreClass(score)}">${score.toFixed(3)}</span>
+           <span class="${cubesCls}" style="font-size:11px;font-weight:600">${cubes}/3</span>
+           <span class="log-scene">${(ep.scene||'').replace(/_/g,' ')}</span>
+         </div>
+         <div class="log-reason ${logAnnotationsOn ? 'show' : ''}">${reasonAnnotation(ep)}</div>`;
       div.style.cursor = 'pointer';
       div.addEventListener('click', () => {
         div.querySelector('.log-reason').classList.toggle('show');
@@ -1537,7 +1542,9 @@ data:
       if (logEmpty) logEmpty.style.display = 'none';
       const verdict = ep.verdict || ep._verdict || 'pass';
       const score   = ep.curation_score || 0;
+      const cubes   = ep.cubes_placed != null ? ep.cubes_placed : '?';
       const ts      = ep.ts ? new Date(ep.ts * 1000).toLocaleTimeString() : '--';
+      const cubesCls = cubes === 3 ? 'score-good' : cubes >= 1 ? 'score-mid' : 'score-bad';
 
       const div = document.createElement('div');
       div.className = 'log-entry ' + verdict;
@@ -1547,6 +1554,7 @@ data:
           <span class="log-verdict ${verdict}">${verdict === 'pass' ? '&#10003; PASS' : '&#10007; REJECT'}</span>
           <span class="log-id">${(ep.episode_id||'').substring(0,8)}</span>
           <span class="log-score ${scoreClass(score)}">${score.toFixed(3)}</span>
+          <span class="${cubesCls}" style="font-size:11px;font-weight:600">${cubes}/3</span>
           <span class="log-scene">${(ep.scene||'').replace(/_/g,' ')}</span>
         </div>
         <div class="log-reason ${logAnnotationsOn ? 'show' : ''}">${reasonAnnotation(ep)}</div>

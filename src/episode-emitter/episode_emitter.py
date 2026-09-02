@@ -219,8 +219,14 @@ class EpisodeEmitter(Node):
         """Finalize episode, write curator JSON, and reset sim for next attempt."""
         self._rollout_active = False
         duration = time.time() - self._episode_start
-        task_success, cubes_placed = self._compute_task_success()
+        _, snapshot_cubes = self._compute_task_success()
         avg_smoothness = self._avg_smoothness()
+
+        # Use peak cube count (tracked throughout the episode) if higher
+        # than end-of-episode snapshot. Captures partial successes that
+        # the snapshot misses (e.g. cube 1 placed then knocked off).
+        cubes_placed = max(self._peak_cubes, snapshot_cubes)
+        task_success = (cubes_placed == 3)
 
         # Failure injection for demo
         import random
