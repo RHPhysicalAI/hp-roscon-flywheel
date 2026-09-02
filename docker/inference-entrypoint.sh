@@ -71,32 +71,45 @@ ROSETTA_PID=$!
 echo "[inference] Waiting for policy server..."
 sleep 15
 
-# The RunPolicy action runs CONTINUOUSLY — one goal drives the arm forever.
-# We send it once, then slice the continuous rollout into episodes by
-# wall-clock windows, resetting cubes at each boundary.
+# Per-episode lifecycle: deactivate policy -> reset (arm home + cubes) ->
+# reactivate policy -> send goal -> run window -> cancel goal -> repeat.
+# Deactivating the Rosetta lifecycle node stops its command output so the
+# arm-home reset doesn't fight the policy.
 EPISODE_LEN=${EPISODE_LEN:-25}
-echo "[inference] Sending continuous RunPolicy goal (runs indefinitely)..."
 
-# Send the goal in the background — it never returns on its own
-ros2 action send_goal /run_policy rosetta_interfaces/action/RunPolicy \
-  "{prompt: 'place cubes on tray'}" &
-GOAL_PID=$!
-sleep 5
+deactivate_policy() {
+  ros2 lifecycle set /rosetta_client deactivate 2>&1 | tail -1 || true
+}
+activate_policy() {
+  ros2 lifecycle set /rosetta_client activate 2>&1 | tail -1 || true
+}
 
-echo "[inference] Starting episode windowing loop (${EPISODE_LEN}s/episode)..."
+echo "[inference] Starting episode loop (${EPISODE_LEN}s/episode)..."
 while true; do
-  # Reset cubes to start (policy keeps running — arm will react to new cube positions)
-  echo "[inference] New episode: resetting cubes..."
+  # 1. Pause policy so it stops commanding the arm
+  echo "[inference] Deactivating policy for reset..."
+  deactivate_policy
+  sleep 1
+
+  # 2. Reset: arm to home (sustained publish) + cubes (randomized)
+  echo "[inference] Resetting arm + cubes..."
   python3 /ws_pai/sim_reset.py 2>&1 | grep -v Warning || true
   sleep 1
 
-  # Signal episode start
+  # 3. Resume policy
+  echo "[inference] Reactivating policy..."
+  activate_policy
+  sleep 2
+
+  # 4. Signal episode start
   ros2 topic pub --once /flywheel/episode_control std_msgs/msg/String "{data: start}" 2>&1 | tail -1
 
-  # Let the policy attempt the task for this window
-  sleep ${EPISODE_LEN}
+  # 5. Send RunPolicy goal, let it drive the arm for the window
+  timeout ${EPISODE_LEN} ros2 action send_goal /run_policy \
+    rosetta_interfaces/action/RunPolicy \
+    "{prompt: 'place cubes on tray'}" 2>&1 | tail -2 || true
 
-  # Signal episode end — emitter evaluates cube positions now
+  # 6. Signal episode end — emitter evaluates cube positions
   ros2 topic pub --once /flywheel/episode_control std_msgs/msg/String "{data: end}" 2>&1 | tail -1
   sleep 1
 done
