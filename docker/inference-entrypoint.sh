@@ -43,13 +43,9 @@ for i in $(seq 1 60); do
   sleep 2
 done
 
-# Patch Rosetta to use cuda
-sed -i 's/policy_device: "cuda"/policy_device: "cuda"/' \
-  /ws_pai/install/rosetta/share/rosetta/params/rosetta_client.yaml 2>/dev/null || true
-
-# Start Rosetta client (includes action server + policy server)
-echo "[inference] Launching Rosetta client with ACT policy on GPU..."
-ros2 launch rosetta rosetta_client_launch.py \
+# Start Rosetta policy runner (includes action server + policy server)
+echo "[inference] Launching Rosetta policy runner with ACT on GPU..."
+ros2 launch rosetta policy_runner_launch.py \
   contract_path:=$(ros2 pkg prefix pai_data_collection)/share/pai_data_collection/config/rosetta/so_arm101.yaml \
   pretrained_name_or_path:=${POLICY_PATH} \
   policy_type:=act \
