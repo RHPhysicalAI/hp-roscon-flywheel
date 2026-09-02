@@ -43,10 +43,24 @@ for i in $(seq 1 60); do
   sleep 2
 done
 
+# Strip recording/max_duration_s from contract (policy runner doesn't accept them)
+CONTRACT_SRC=$(ros2 pkg prefix pai_data_collection)/share/pai_data_collection/config/rosetta/so_arm101.yaml
+CONTRACT=/tmp/so_arm101_inference.yaml
+python3 -c "
+import yaml, sys
+with open('$CONTRACT_SRC') as f:
+    c = yaml.safe_load(f)
+for k in ['max_duration_s', 'recording']:
+    c.pop(k, None)
+with open('$CONTRACT', 'w') as f:
+    yaml.dump(c, f)
+print(f'[inference] Stripped contract written to $CONTRACT')
+"
+
 # Start Rosetta policy runner (includes action server + policy server)
 echo "[inference] Launching Rosetta policy runner with ACT on GPU..."
 ros2 launch rosetta policy_runner_launch.py \
-  contract_path:=$(ros2 pkg prefix pai_data_collection)/share/pai_data_collection/config/rosetta/so_arm101.yaml \
+  contract_path:=${CONTRACT} \
   pretrained_name_or_path:=${POLICY_PATH} \
   policy_type:=act \
   policy_device:=cuda \
