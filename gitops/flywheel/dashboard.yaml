@@ -1221,13 +1221,40 @@ data:
     let logEntries      = [];
     const MAX_LOG       = 30;
 
-    // ---- SSE ----------------------------------------------------------------
+    // ---- SSE + polling fallback ---------------------------------------------
+    let sseConnected = false;
     const evtSource = new EventSource('/api/events');
 
     evtSource.addEventListener('status', e => {
+      sseConnected = true;
       const s = JSON.parse(e.data);
       applyStatus(s);
     });
+
+    // Polling fallback — if SSE doesn't connect within 5s, poll every 3s
+    setTimeout(() => {
+      if (!sseConnected) {
+        console.log('[dashboard] SSE not connected, starting polling fallback');
+        setInterval(async () => {
+          try {
+            const r = await fetch('/api/status');
+            const s = await r.json();
+            applyStatus(s);
+            if (s.log) renderLog(s.log);
+          } catch(e) {}
+        }, 3000);
+      }
+    }, 5000);
+
+    // Also do one immediate fetch on page load
+    (async () => {
+      try {
+        const r = await fetch('/api/status');
+        const s = await r.json();
+        applyStatus(s);
+        if (s.log) renderLog(s.log);
+      } catch(e) { console.log('[dashboard] Initial fetch failed:', e); }
+    })();
 
     // The curation log is driven authoritatively by the 'status' event's
     // s.log list (rebuilt via renderLog in applyStatus), which is reliable
