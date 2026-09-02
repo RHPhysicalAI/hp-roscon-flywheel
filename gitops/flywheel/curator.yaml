@@ -52,16 +52,16 @@ data:
         # Gate 1: episode completeness
         rollout = episode.get("rollout", {})
         if rollout.get("status") != "ok":
-            score -= 0.4
-            parts.append(f"rollout-error({rollout.get('status', 'unknown')})")
-        elif rollout.get("steps", 0) < 10:
-            score -= 0.3
-            parts.append(f"truncated({rollout.get('steps', 0)} steps)")
+            return 0.0, f"rollout-error({rollout.get('status', 'unknown')})"
+        if rollout.get("steps", 0) < 10:
+            return 0.0, f"truncated({rollout.get('steps', 0)} steps)"
 
-        # Gate 2: task success (primary signal)
+        # Gate 2: task success — HARD GATE.
+        # Only successful task completions become training data. A failed
+        # placement is useless (or harmful) as an imitation-learning example.
         if not episode.get("task_success", False):
-            score -= 0.4
-            parts.append("task-failed")
+            cubes = episode.get("cubes_placed", 0)
+            return 0.0, f"task-failed ({cubes}/3 cubes placed)"
 
         # Gate 3: trajectory smoothness (ACT quality signal)
         # Lower smoothness = smoother motion = better policy output.
