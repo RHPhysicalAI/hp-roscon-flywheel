@@ -1296,7 +1296,11 @@ data:
 
       // Generator output -- only update DOM when the episode actually changes
       // (prevents blinking on the 3-second status poll when flywheel is stopped)
-      const genKey = JSON.stringify(lat.curation_score) + (lat.curation_verdict||'') + (lat.scene||'');
+      // Key on the actual episode content so every new episode updates the
+      // boxes — including rollout steps/duration which change every episode
+      // even when score/verdict/scene repeat.
+      const genKey = JSON.stringify(lat.rollout) + JSON.stringify(lat.curation_score)
+                   + (lat.task_success) + (lat.cubes_placed) + (lat.avg_smoothness);
       if (lat.curation_score != null && genKey !== window._lastGenKey) {
         window._lastGenKey = genKey;
         document.getElementById('gen-empty').style.display = 'none';
