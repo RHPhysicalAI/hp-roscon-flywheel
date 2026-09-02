@@ -27,6 +27,9 @@ CUBE_POSES = [
 # Randomization: perturb x,y within this radius (m) and yaw within this range
 RANDOM_RADIUS = float(os.environ.get("RANDOM_RADIUS", "0.04"))
 RANDOM_YAW_DEG = float(os.environ.get("RANDOM_YAW_DEG", "180"))
+# Comma-separated cube names to randomize (empty = all). e.g. "cube_medium"
+# cube_medium is the GREEN cube.
+RANDOMIZE_ONLY = [c.strip() for c in os.environ.get("RANDOMIZE_ONLY", "").split(",") if c.strip()]
 
 
 def _randomize(x, y, rng):
@@ -51,7 +54,10 @@ def reset_cubes(randomize=False, rng=None):
         rng = random.Random()
     procs = []
     for name, x, y, z, qx, qy, qz, qw in CUBE_POSES:
-        if randomize:
+        # Randomize this cube if global randomize is on AND (no per-cube filter
+        # or this cube is in the filter list)
+        do_rand = randomize and (not RANDOMIZE_ONLY or name in RANDOMIZE_ONLY)
+        if do_rand:
             x, y = _randomize(x, y, rng)
             qx, qy, qz, qw = _random_yaw(rng)
         req = (
