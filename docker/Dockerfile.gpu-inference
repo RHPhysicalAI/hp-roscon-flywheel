@@ -32,27 +32,21 @@ RUN apt-get update \
   python3-pip \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ---- Workspace: only Rosetta + interfaces (no Gazebo, no sim) ----
+# ---- Full upstream workspace (same versions as sim image) ----
 RUN mkdir -p /ws_pai/src
 WORKDIR /ws_pai
 
-# Clone only rosetta and its interfaces
-RUN git clone --depth 1 https://github.com/ros-physical-ai/demos src/demos \
-  && git clone --depth 1 -b d43b960cfbc939ea4379d7b0f4e092750358bdbd https://github.com/iblnkn/rosetta.git src/rosetta || \
-     git clone --depth 1 https://github.com/iblnkn/rosetta.git src/rosetta \
-  && git clone --depth 1 https://github.com/iblnkn/rosetta_interfaces.git src/rosetta_interfaces \
-  && git clone --depth 1 https://github.com/iblnkn/lerobot-robot-rosetta.git src/lerobot-robot-rosetta
+RUN git clone --depth 1 https://github.com/ros-physical-ai/demos src/demos
 
-# ---- Build Rosetta packages only ----
+RUN vcs import src < src/demos/pai.repos --recursive
+
 RUN apt-get update \
   && rosdep update \
-  && rosdep install --from-paths src/rosetta src/rosetta_interfaces src/lerobot-robot-rosetta src/demos/pai_data_collection \
-     --ignore-src --rosdistro "$ROS_DISTRO" -yir --skip-keys="ament_python" \
+  && rosdep install --from-paths src --ignore-src --rosdistro "$ROS_DISTRO" -yir \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN source /opt/ros/"$ROS_DISTRO"/setup.bash \
-  && colcon build --packages-select rosetta rosetta_interfaces lerobot_robot_rosetta pai_data_collection \
-     --cmake-args -DCMAKE_BUILD_TYPE=Release
+  && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
 
 # ---- ML dependencies (GPU — RTX 5090 / CUDA 13.0) ----
 # Wipe dist-info but preserve pip itself, then install ML stack
