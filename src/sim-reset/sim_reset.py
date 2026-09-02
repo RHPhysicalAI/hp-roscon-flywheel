@@ -73,24 +73,27 @@ def reset_cubes(randomize=False, rng=None):
             print(f"[sim-reset] WARNING: failed to reset {name} (exit {rc})", flush=True)
 
 
-def reset_arm():
-    """Reset arm joints to home via Gazebo world reset (bypasses controller).
+def reset_arm(duration=3, rate=20):
+    """Return arm to home by publishing home commands at `rate` Hz for
+    `duration` seconds — the same approach the upstream demo uses.
 
-    A full world reset returns arm joints AND cubes to their SDF initial
-    state without publishing to the controller command topic (which the
-    policy owns). Cubes are re-randomized afterward by reset_cubes().
+    Sustained publishing (not a single message) reliably drives the arm home
+    through the controller, overriding whatever the policy last commanded.
+    This runs at the episode boundary when we've stopped scoring the policy.
     """
+    data = ("{layout: {dim: [{label: joint, size: 6, stride: 1}]}, "
+            "data: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}")
     cmd = [
-        "gz", "service",
-        "-s", "/world/pai_world/control",
-        "--reqtype", "gz.msgs.WorldControl",
-        "--reptype", "gz.msgs.Boolean",
-        "--timeout", "3000",
-        "--req", "reset: {all: true}",
+        "ros2", "topic", "pub",
+        "/forward_position_controller/commands",
+        "std_msgs/msg/Float64MultiArray",
+        data,
+        "--rate", str(rate),
     ]
-    result = subprocess.run(cmd, capture_output=True, timeout=10)
-    if result.returncode != 0:
-        print(f"[sim-reset] WARNING: world reset failed: {result.stderr.decode()}", flush=True)
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=duration + 2)
+    except subprocess.TimeoutExpired:
+        pass  # expected — the pub runs until timeout
 
 
 def reset_sim(reset_arm_home=True, randomize=None):
