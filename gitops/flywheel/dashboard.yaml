@@ -895,15 +895,9 @@ data:
       </div>
 
       <div id="controls">
-        <div id="flywheel-status" class="hidden running-indicator">
+        <div id="flywheel-status" class="running-indicator">
           <div class="dot-pulse"></div> Flywheel running
         </div>
-        <button class="btn btn-green" id="btn-start" onclick="controlFlywheel('start')">
-          &#9654; Start Flywheel
-        </button>
-        <button class="btn btn-red hidden" id="btn-stop" onclick="controlFlywheel('stop')">
-          &#9632; Stop Flywheel
-        </button>
         <button class="btn btn-gray btn-sm" id="btn-clear" onclick="controlClear()">
           &#10226; Clear Data
         </button>

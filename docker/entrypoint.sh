@@ -93,6 +93,21 @@ if [ "${RUN_INFERENCE:-true}" = "true" ]; then
     &
   INFERENCE_PID=$!
   echo "[entrypoint] Inference started, PID: $INFERENCE_PID"
+
+  # Wait for policy server to be ready, then auto-trigger rollout loop
+  echo "[entrypoint] Waiting for policy server, then auto-triggering rollouts..."
+  (
+    sleep 15
+    while true; do
+      echo "[entrypoint] Sending RunPolicy goal..."
+      ros2 action send_goal /run_policy rosetta_interfaces/action/RunPolicy \
+        "{prompt: 'place cubes on tray'}" 2>&1 | tail -3
+      echo "[entrypoint] Rollout finished, restarting in 5s..."
+      sleep 5
+    done
+  ) &
+  TRIGGER_PID=$!
+  echo "[entrypoint] Auto-trigger loop started, PID: $TRIGGER_PID"
 else
   echo "[entrypoint] Inference disabled (RUN_INFERENCE=false)"
 fi
