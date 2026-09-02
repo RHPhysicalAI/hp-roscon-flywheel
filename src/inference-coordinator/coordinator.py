@@ -67,46 +67,16 @@ class Coordinator(Node):
         self.get_logger().warn("Arm did not reach home within timeout")
 
     def _reset(self):
-        """Full world reset + controller reactivation + cube randomization.
+        """Reset cubes (and optionally arm) between episodes.
 
-        World reset returns everything to SDF initial state (arm joints,
-        cubes, physics). Controllers deactivate on reset, so we re-activate
-        them. Then randomize cubes if configured.
+        Does NOT do a world reset — that destroys the controller_manager.
+        Just repositions cubes via gz set_pose and optionally homes the arm.
         """
-        self.get_logger().info("World reset...")
-        subprocess.run([
-            "gz", "service",
-            "-s", "/world/pai_world/control",
-            "--reqtype", "gz.msgs.WorldControl",
-            "--reptype", "gz.msgs.Boolean",
-            "--timeout", "5000",
-            "--req", "reset: {all: true}",
-        ], capture_output=True, timeout=10)
-
-        # Re-activate controllers (world reset deactivates them).
-        # Retry — the controller_manager may need time to reinitialize.
-        self.get_logger().info("Re-activating controllers...")
-        for attempt in range(5):
-            time.sleep(3)
-            result = subprocess.run([
-                "ros2", "service", "call",
-                "/controller_manager/switch_controller",
-                "controller_manager_msgs/srv/SwitchController",
-                "{activate_controllers: [joint_state_broadcaster, forward_position_controller], strictness: 1, timeout: {sec: 30, nanosec: 0}}",
-            ], capture_output=True, timeout=40, text=True)
-            if "ok=True" in result.stdout:
-                self.get_logger().info("Controllers activated")
-                break
-            self.get_logger().warn(f"Controller activation attempt {attempt+1} failed, retrying...")
-        else:
-            self.get_logger().error("Failed to activate controllers after 5 attempts")
-
-        # Randomize cubes if configured (after world reset put them at nominal)
-        self.get_logger().info("Placing cubes...")
-        subprocess.run([
-            "python3", "/ws_pai/sim_reset.py",
-            "--cubes-only",
-        ], capture_output=True, timeout=15)
+        self.get_logger().info("Resetting cubes...")
+        subprocess.run(
+            ["python3", "/ws_pai/sim_reset.py"],
+            capture_output=True, timeout=20,
+        )
 
     def run_forever(self):
         self.get_logger().info("Waiting for action server...")
