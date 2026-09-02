@@ -62,13 +62,10 @@ data:
             "scene":            episode.get("scene", ""),
             "model_version":    episode.get("model_version", ""),
             "timestamp":        episode.get("timestamp", ""),
-            # Generator quality signals (D031 / Option E)
-            "gen_ok":           episode.get("gen_ok", False),
-            "policy_ok":        episode.get("policy_ok", False),
+            # Rollout quality signals
             "avg_smoothness":   episode.get("avg_smoothness", 0.0),
-            # Action chunk reference for Forward Dynamics dream step
-            "frame_path":       episode.get("frame_path", ""),
-            "dream_domain":     episode.get("dream_domain", "umi"),
+            "task_success":     episode.get("task_success", False),
+            "cubes_placed":     episode.get("cubes_placed", 0),
         }
         producer.send(KAFKA_TOPIC, value=manifest)
         producer.flush()

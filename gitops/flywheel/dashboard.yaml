@@ -50,11 +50,10 @@ data:
     EP_CUR        = DATA / "episodes" / "curated"
     EP_REJ        = DATA / "episodes" / "rejected"
     EP_SENT       = DATA / "episodes" / "sent"
-    DREAMS        = DATA / "dreams"
-    FRAMES        = pathlib.Path(os.environ.get("FRAMES_DIR", "/data/frames"))
+    ROLLOUTS      = DATA / "rollouts"
     HTML_FILE     = pathlib.Path(os.environ.get("HTML_FILE",  "/app/index.html"))
     FW_NS         = os.environ.get("FLYWHEEL_NS", "flywheel")
-    VLLM_NS       = os.environ.get("VLLM_NS",     "vllm")
+    ACT_NS        = os.environ.get("ACT_NS",      "flywheel")
     THRESHOLD     = int(os.environ.get("TRIGGER_THRESHOLD", "10"))
 
     # ---- K8s helpers ---------------------------------------------------------
@@ -115,7 +114,7 @@ data:
         if not api:
             return "soarm-act-v1"
         try:
-            svc = api.read_namespaced_service("act-policy", VLLM_NS)
+            svc = api.read_namespaced_service("act-policy", ACT_NS)
             color = (svc.spec.selector or {}).get("color", "blue")
             return "soarm-act-v2" if color == "green" else "soarm-act-v1"
         except Exception:
@@ -153,10 +152,10 @@ data:
         rows.sort(key=lambda e: e["_mtime"], reverse=True)
         return rows[:n]
 
-    def _dreams() -> dict:
-        if not DREAMS.exists():
+    def _rollouts() -> dict:
+        if not ROLLOUTS.exists():
             return {"v1": None, "v2": None}
-        mp4s = list(DREAMS.glob("*.mp4"))
+        mp4s = list(ROLLOUTS.glob("*.mp4"))
         v1 = sorted(f.name for f in mp4s if "-soarm-act-v1.mp4" in f.name)
         v2 = sorted(f.name for f in mp4s if "-soarm-act-v2.mp4" in f.name)
         return {"v1": v1[-1] if v1 else None, "v2": v2[-1] if v2 else None}
@@ -166,7 +165,7 @@ data:
         sent   = _count(EP_SENT)
         curated = _count(EP_CUR)
         mv     = get_model_version()
-        d      = _dreams()
+        d      = _rollouts()
 
         # Extract Generator output from latest episode (D031 format)
         scene = frame = curation_score = curation_reason = curation_verdict = None
@@ -203,7 +202,6 @@ data:
                 "triggered": sent >= THRESHOLD,
             },
             "flywheel_running": get_replicas(FW_NS, "so-arm-sim") > 0,
-            "dreamer_running":  get_replicas(FW_NS, "dreamer")   > 0,
             "model_version":    mv,
             "promoted":         mv == "soarm-act-v2",
             "latest": {
@@ -220,7 +218,7 @@ data:
                 "curation_reason":   curation_reason,
                 "curation_verdict":  curation_verdict,
             },
-            "dreams": d,
+            "rollouts": d,
             # Full recent-episode list (authoritative, mtime-sorted). The
             # frontend rebuilds the curation log from this every tick, so the
             # log is robust to the fast curated->sent file moves and to any
@@ -258,10 +256,10 @@ data:
                     _sse_queues.remove(q)
 
     _watcher_seen_ep:     set[str] = set()
-    _watcher_seen_dreams: set[str] = set()
+    _watcher_seen_rollouts: set[str] = set()
 
     def _watcher():
-        global _watcher_seen_ep, _watcher_seen_dreams
+        global _watcher_seen_ep, _watcher_seen_rollouts
         last_status = 0.0
         while True:
             time.sleep(1)
@@ -283,12 +281,12 @@ data:
                             })
                         except Exception:
                             pass
-            if DREAMS.exists():
-                for p in DREAMS.glob("*.mp4"):
-                    if p.name not in _watcher_seen_dreams:
-                        _watcher_seen_dreams.add(p.name)
+            if ROLLOUTS.exists():
+                for p in ROLLOUTS.glob("*.mp4"):
+                    if p.name not in _watcher_seen_rollouts:
+                        _watcher_seen_rollouts.add(p.name)
                         ver = "v2" if "-soarm-act-v2.mp4" in p.name else "v1"
-                        broadcast("dream", {"file": p.name, "version": ver, "ts": now})
+                        broadcast("rollout_video", {"file": p.name, "version": ver, "ts": now})
             if now - last_status >= 3:
                 last_status = now
                 try:
@@ -331,13 +329,6 @@ data:
     def api_status():
         return jsonify(status_snapshot())
 
-    @app.route("/api/frame/<path:name>")
-    def serve_frame(name):
-        p = FRAMES / name
-        if not p.exists():
-            return ("not found", 404)
-        return send_file(p, mimetype="image/jpeg")
-
     @app.route("/api/camera/<cam>")
     def camera_stream(cam):
         """Proxy MJPEG stream from so-arm-sim camera bridge."""
@@ -360,9 +351,9 @@ data:
                         headers={"Cache-Control": "no-cache",
                                  "X-Accel-Buffering": "no"})
 
-    @app.route("/api/dream/<path:name>")
-    def serve_dream(name):
-        p = DREAMS / name
+    @app.route("/api/rollout/<path:name>")
+    def serve_rollout(name):
+        p = ROLLOUTS / name
         if not p.exists():
             return ("not found", 404)
         return send_file(p, mimetype="video/mp4", conditional=True)
@@ -377,24 +368,9 @@ data:
         broadcast("status", status_snapshot())
         return jsonify({"ok": ok, "action": action})
 
-    @app.route("/api/control/dreamer", methods=["POST"])
-    def ctrl_dreamer():
-        data    = request.json or {}
-        action  = data.get("action", "start")
-        mv      = data.get("model_version", "soarm-act-v1")
-        ok = True
-        if action == "start":
-            ok = ok and set_env_var(FW_NS, "dreamer", "MODEL_VERSION", mv)
-            ok = ok and set_replicas(FW_NS, "dreamer", 1)
-        else:
-            ok = set_replicas(FW_NS, "dreamer", 0)
-        time.sleep(1)
-        broadcast("status", status_snapshot())
-        return jsonify({"ok": ok, "action": action, "model_version": mv})
-
     @app.route("/api/control/clear", methods=["POST"])
     def ctrl_clear():
-        global _watcher_seen_ep, _watcher_seen_dreams
+        global _watcher_seen_ep, _watcher_seen_rollouts
         cleared = 0
         for d in (EP_RAW, EP_CUR, EP_REJ, EP_SENT):
             if d.exists():
@@ -404,9 +380,9 @@ data:
                         cleared += 1
                     except Exception:
                         pass
-        # Also clear dream videos
-        if DREAMS.exists():
-            for p in DREAMS.glob("*.mp4"):
+        # Also clear rollout comparison videos
+        if ROLLOUTS.exists():
+            for p in ROLLOUTS.glob("*.mp4"):
                 try:
                     p.unlink()
                     cleared += 1
@@ -414,7 +390,7 @@ data:
                     pass
         # Reset watcher seen-sets so new episodes get broadcast
         _watcher_seen_ep    = set()
-        _watcher_seen_dreams = set()
+        _watcher_seen_rollouts = set()
         broadcast("clear", {"cleared": cleared})
         broadcast("status", status_snapshot())
         return jsonify({"ok": True, "cleared": cleared})
@@ -1064,13 +1040,7 @@ data:
       <div class="card" id="dream-card">
         <div class="card-header">
           <span class="card-title">2 &middot; Policy comparison &mdash; v1 (baseline) vs v2 (fine-tuned) rollout</span>
-          <!-- Live-dreamer status indicator: hidden on the pinned-playback path
-               (buttons call playPinnedDream, not the live dreamer). Backend
-               /api/control/dreamer is retained for the manual live path
-               (oc scale dreamer) documented in DEMO_RUNBOOK.md. -->
-          <div id="dream-dreamer-status" class="hidden running-indicator">
-            <div class="dot-pulse"></div> Dreamer running
-          </div>
+
         </div>
         <div id="dream-body">
           <div id="dream-annotation" class="annotation">
@@ -1100,12 +1070,7 @@ data:
                           onclick="toggleDream('v1')">
                     &#9654; Play v1
                   </button>
-                  <!-- Stop button only appears if the live dreamer is running
-                       (manual oc-scale path). Unused by the pinned buttons. -->
-                  <button class="btn btn-red btn-sm hidden" id="btn-dream-stop"
-                          onclick="controlDreamer('stop')">
-                    &#9632; Stop
-                  </button>
+
                 </div>
               </div>
             </div>
@@ -1261,14 +1226,11 @@ data:
       renderLog(eps);   // initial paint; renderLog sorts newest-first by ts
     });
 
-    evtSource.addEventListener('dream', e => {
-      // A live dreamer run (manual oc-scale path) produced a new file. Don't
-      // auto-play -- just make it the file the Play button will use, and tell
-      // the user it's ready to play.
+    evtSource.addEventListener('rollout_video', e => {
       const d = JSON.parse(e.data);
-      window._dreamFiles = window._dreamFiles || {};
-      window._dreamFiles[d.version] = d.file;
-      dreamLoaded[d.version] = null;   // force reload of the new file on next Play
+      window._rolloutFiles = window._rolloutFiles || {};
+      window._rolloutFiles[d.version] = d.file;
+      dreamLoaded[d.version] = null;
       showToast('Rollout ' + d.version + ' ready \u2014 press Play ' + d.version,
                 d.version === 'v2' ? 'toast-green' : 'toast-blue');
     });
@@ -1312,13 +1274,6 @@ data:
       // Flywheel running
       const fw = s.flywheel_running;
       document.getElementById('sb-fw').textContent = fw ? 'running' : 'idle';
-
-      // Dreamer
-      const dr = s.dreamer_running;
-      document.getElementById('dream-dreamer-status').classList.toggle('hidden', !dr);
-      document.getElementById('btn-dream-stop').classList.toggle('hidden', !dr);
-      document.getElementById('btn-dream-v1').disabled = dr;
-      document.getElementById('btn-dream-v2').disabled = dr;
 
       // Progress
       const t = s.trigger;
