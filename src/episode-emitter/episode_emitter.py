@@ -35,7 +35,9 @@ SCENE = os.environ.get("SCENE", "place_cubes_on_tray")
 # Episode boundary: if no new joint commands for this many seconds, episode ends
 EPISODE_TIMEOUT_S = float(os.environ.get("EPISODE_TIMEOUT_S", "5.0"))
 # Maximum episode duration — force-end after this many seconds
-MAX_EPISODE_S = float(os.environ.get("MAX_EPISODE_S", "60.0"))
+MAX_EPISODE_S = float(os.environ.get("MAX_EPISODE_S", "90.0"))
+# Minimum episode duration — ignore 'end' signals that arrive sooner (stale)
+MIN_EPISODE_S = float(os.environ.get("MIN_EPISODE_S", "10.0"))
 # Minimum steps for a valid episode
 MIN_STEPS = int(os.environ.get("MIN_STEPS", "10"))
 
@@ -76,13 +78,17 @@ class EpisodeEmitter(Node):
         )
 
         # Subscribe to episode control signals from the inference coordinator.
-        # The inference container publishes "start" / "end" on this topic to
-        # drive the episode lifecycle explicitly (no timers, no fighting).
+        # Depth-1 so stale start/end signals don't buffer and misfire.
+        control_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
         self.create_subscription(
             String,
             "/flywheel/episode_control",
             self._on_control,
-            qos,
+            control_qos,
         )
 
         # Safety net: force-end an episode that runs way too long (policy hung)
@@ -102,6 +108,15 @@ class EpisodeEmitter(Node):
                 self._start_episode()
         elif cmd == "end":
             if self._rollout_active:
+                # Debounce stale/queued 'end' signals: a real episode runs for
+                # the full window. Ignore an 'end' that arrives suspiciously
+                # soon after 'start' (leftover message from a prior cycle).
+                elapsed = time.time() - (self._episode_start or 0)
+                if elapsed < MIN_EPISODE_S:
+                    self.get_logger().warn(
+                        f"Ignoring early 'end' ({elapsed:.1f}s < {MIN_EPISODE_S}s) "
+                        f"— likely a stale signal")
+                    return
                 self._end_episode()
 
     def _start_episode(self):
