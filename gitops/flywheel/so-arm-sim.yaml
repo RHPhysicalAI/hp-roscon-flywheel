@@ -79,7 +79,25 @@ spec:
     - name: camera
       port: 8081
       targetPort: 8081
+      nodePort: 30881
     - name: zenoh
       port: 7447
       targetPort: 7447
       nodePort: 30747
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: sim-cameras
+  namespace: flywheel
+  annotations:
+    haproxy.router.openshift.io/timeout: 3600s
+spec:
+  to:
+    kind: Service
+    name: so-arm-sim
+  port:
+    targetPort: camera
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

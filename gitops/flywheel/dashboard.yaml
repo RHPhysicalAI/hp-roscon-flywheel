@@ -911,7 +911,7 @@ data:
               Static (overhead)
             </div>
             <div style="width:100%;aspect-ratio:1;background:var(--card2);border-radius:4px;overflow:hidden;border:1px solid var(--border)">
-              <img id="cam-static" src="/api/camera/static" alt="static camera"
+              <img id="cam-static" alt="static camera"
                    style="width:100%;height:100%;object-fit:cover"
                    onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
               >
@@ -925,7 +925,7 @@ data:
               Wrist
             </div>
             <div style="width:100%;aspect-ratio:1;background:var(--card2);border-radius:4px;overflow:hidden;border:1px solid var(--border)">
-              <img id="cam-wrist" src="/api/camera/wrist" alt="wrist camera"
+              <img id="cam-wrist" alt="wrist camera"
                    style="width:100%;height:100%;object-fit:cover"
                    onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
               >
@@ -1164,6 +1164,17 @@ data:
       document.getElementById('theme-light').classList.toggle('active', t === 'light');
       document.getElementById('theme-dark').classList.toggle('active', t === 'dark');
     });
+
+    // ---- Camera feeds (direct to camera bridge, no proxy) -------------------
+    (function() {
+      // Camera bridge Route: sim-cameras-flywheel.apps.sno-flywheel.local
+      const camHost = window.location.hostname.replace('dashboard-flywheel', 'sim-cameras-flywheel');
+      const camBase = window.location.protocol + '//' + camHost;
+      const staticEl = document.getElementById('cam-static');
+      const wristEl = document.getElementById('cam-wrist');
+      if (staticEl) staticEl.src = camBase + '/static';
+      if (wristEl) wristEl.src = camBase + '/wrist';
+    })();
 
     // ---- State ---------------------------------------------------------------
     // annotations always visible (toggle removed)
