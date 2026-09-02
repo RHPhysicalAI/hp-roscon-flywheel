@@ -108,7 +108,9 @@ def arm_is_home() -> bool:
         return False  # can't tell — reset to be safe
 
 
-def reset_arm(duration=3, rate=20):
+def reset_arm(duration=None, rate=20):
+    if duration is None:
+        duration = float(os.environ.get("HOME_PUBLISH_S", "6"))
     """Return arm to home — but only if it's not already home.
 
     Sustained home-publish at `rate` Hz for `duration` seconds (upstream
