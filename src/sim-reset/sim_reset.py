@@ -96,7 +96,7 @@ def reset_arm(duration=3, rate=20):
         pass  # expected — the pub runs until timeout
 
 
-def reset_sim(reset_arm_home=True, randomize=None):
+def reset_sim(reset_arm_home=None, randomize=None):
     """Reset arm to home (via world reset) and reposition cubes for a fresh attempt.
 
     Sequence:
@@ -108,6 +108,8 @@ def reset_sim(reset_arm_home=True, randomize=None):
     """
     if randomize is None:
         randomize = os.environ.get("RANDOMIZE_CUBES", "false").lower() == "true"
+    if reset_arm_home is None:
+        reset_arm_home = os.environ.get("RESET_ARM", "true").lower() == "true"
     mode = "randomized" if randomize else "nominal"
     print(f"[sim-reset] Resetting sim ({mode} cubes)...", flush=True)
     if reset_arm_home:

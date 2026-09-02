@@ -85,12 +85,11 @@ sleep 5
 
 echo "[inference] Starting episode windowing loop (${EPISODE_LEN}s/episode)..."
 while true; do
-  # Reset arm to home + cubes. The sustained home-publish briefly overrides
-  # the policy stream to home the arm; then the policy resumes for the attempt.
-  echo "[inference] Episode boundary: resetting arm + cubes..."
+  # Reset for next episode. RESET_ARM and RANDOMIZE_CUBES env control behavior.
+  echo "[inference] Episode boundary: resetting..."
   python3 /ws_pai/sim_reset.py 2>&1 | grep -v Warning || true
 
-  # Signal episode start (after reset, arm is home, cubes placed)
+  # Signal episode start
   ros2 topic pub --once /flywheel/episode_control std_msgs/msg/String "{data: start}" 2>&1 | tail -1
 
   # Attempt window — policy drives the arm
