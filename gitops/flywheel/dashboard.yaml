@@ -1353,18 +1353,10 @@ data:
 
       // Latest scene
       const lat = s.latest || {};
-      if (lat.scene) {
-        const sceneKey = lat.frame || (lat.scene + '.jpg');
-        const img = document.getElementById('scene-img');
-        const ph  = document.getElementById('scene-img-placeholder');
-        img.src = '/api/frame/' + sceneKey + '?t=' + Date.now();
-        img.style.display = 'block';
-        ph.style.display  = 'none';
-        document.getElementById('scene-name').textContent = lat.scene.replace(/_/g,' ');
-        document.getElementById('scene-tag').textContent  = lat.scene;
-        if (lat.scene_description) {
-          document.getElementById('scene-prompt').textContent = '"' + lat.scene_description + '"';
-        }
+      // Scene tag update (cameras replace the old static frame panel)
+      const sceneTag = document.getElementById('scene-tag');
+      if (sceneTag && lat.scene) {
+        sceneTag.textContent = lat.scene;
       }
 
       // Generator output -- only update DOM when the episode actually changes
@@ -1625,7 +1617,8 @@ data:
     }
 
     function prependLogEntry(ep) {
-      document.getElementById('log-empty').style.display = 'none';
+      const logEmpty = document.getElementById('log-empty');
+      if (logEmpty) logEmpty.style.display = 'none';
       const verdict = ep.verdict || ep._verdict || 'pass';
       const score   = ep.curation_score || 0;
       const ts      = ep.ts ? new Date(ep.ts * 1000).toLocaleTimeString() : '--';
