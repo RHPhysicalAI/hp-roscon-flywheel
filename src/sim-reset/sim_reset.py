@@ -10,6 +10,7 @@ diversity — different starting configs help the policy generalize.
 
 import math
 import os
+import re
 import random
 import subprocess
 import sys
@@ -73,14 +74,44 @@ def reset_cubes(randomize=False, rng=None):
             print(f"[sim-reset] WARNING: failed to reset {name} (exit {rc})", flush=True)
 
 
-def reset_arm(duration=3, rate=20):
-    """Return arm to home by publishing home commands at `rate` Hz for
-    `duration` seconds — the same approach the upstream demo uses.
+# If every joint is within this many radians of home (0), the arm is
+# considered already at rest and we skip the reset.
+HOME_TOLERANCE = float(os.environ.get("HOME_TOLERANCE", "0.15"))
 
-    Sustained publishing (not a single message) reliably drives the arm home
-    through the controller, overriding whatever the policy last commanded.
-    This runs at the episode boundary when we've stopped scoring the policy.
+
+def arm_is_home() -> bool:
+    """Check current joint positions. True if all joints are near home (0).
+
+    The policy returns the arm to rest when it completes the task, so on
+    successful episodes the arm is already home and no reset is needed.
+    On failed episodes the arm is left mid-reach and does need homing.
     """
+    try:
+        result = subprocess.run(
+            ["ros2", "topic", "echo", "--once", "--field", "position",
+             "/joint_states"],
+            capture_output=True, timeout=8, text=True,
+        )
+        # Output is a list like: [0.01, -0.02, 0.0, ...]
+        nums = re.findall(r"[-\d.eE]+", result.stdout)
+        positions = [float(n) for n in nums if n not in ("", ".", "-")]
+        if not positions:
+            return False  # can't tell — reset to be safe
+        return all(abs(p) <= HOME_TOLERANCE for p in positions[:5])  # arm joints (skip gripper)
+    except Exception:
+        return False  # can't tell — reset to be safe
+
+
+def reset_arm(duration=3, rate=20):
+    """Return arm to home — but only if it's not already home.
+
+    Sustained home-publish at `rate` Hz for `duration` seconds (upstream
+    approach). Skipped entirely if the arm is already at rest (success case).
+    """
+    if arm_is_home():
+        print("[sim-reset] Arm already home — skipping arm reset", flush=True)
+        return
+    print("[sim-reset] Arm not home — returning to rest...", flush=True)
     data = ("{layout: {dim: [{label: joint, size: 6, stride: 1}]}, "
             "data: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}")
     cmd = [
