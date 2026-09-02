@@ -83,14 +83,23 @@ class Coordinator(Node):
             "--req", "reset: {all: true}",
         ], capture_output=True, timeout=10)
 
-        # Re-activate controllers (world reset deactivates them)
+        # Re-activate controllers (world reset deactivates them).
+        # Retry — the controller_manager may need time to reinitialize.
         self.get_logger().info("Re-activating controllers...")
-        subprocess.run([
-            "ros2", "service", "call",
-            "/controller_manager/switch_controller",
-            "controller_manager_msgs/srv/SwitchController",
-            "{activate_controllers: [joint_state_broadcaster, forward_position_controller], strictness: 1, timeout: {sec: 30, nanosec: 0}}",
-        ], capture_output=True, timeout=35)
+        for attempt in range(5):
+            time.sleep(3)
+            result = subprocess.run([
+                "ros2", "service", "call",
+                "/controller_manager/switch_controller",
+                "controller_manager_msgs/srv/SwitchController",
+                "{activate_controllers: [joint_state_broadcaster, forward_position_controller], strictness: 1, timeout: {sec: 30, nanosec: 0}}",
+            ], capture_output=True, timeout=40, text=True)
+            if "ok=True" in result.stdout:
+                self.get_logger().info("Controllers activated")
+                break
+            self.get_logger().warn(f"Controller activation attempt {attempt+1} failed, retrying...")
+        else:
+            self.get_logger().error("Failed to activate controllers after 5 attempts")
 
         # Randomize cubes if configured (after world reset put them at nominal)
         self.get_logger().info("Placing cubes...")
