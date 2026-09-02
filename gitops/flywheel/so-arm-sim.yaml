@@ -15,7 +15,8 @@ metadata:
   labels:
     app: so-arm-sim
 spec:
-  replicas: 1
+  # Sim runs on host in desktop-gpu-split mode, not in SNO
+  replicas: 0
   strategy:
     type: Recreate
   selector:

@@ -87,6 +87,37 @@ data:
 
         return score, reason
 
+    # ---- HTTP receiver for remote episode submission ----
+    def start_receiver(port=8082):
+        """Accept POSTed episode JSON from remote emitters (host-based sim)."""
+        from http.server import HTTPServer, BaseHTTPRequestHandler
+        import threading
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a): pass
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                try:
+                    ep = json.loads(body)
+                    eid = ep.get("episode_id", "unknown")
+                    out = RAW_DIR / f"{eid}.json"
+                    out.write_text(json.dumps(ep, indent=2))
+                    print(f"[curator-receiver] Received episode {eid}", flush=True)
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b"ok")
+                except Exception as e:
+                    print(f"[curator-receiver] Error: {e}", flush=True)
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write(str(e).encode())
+
+        server = HTTPServer(("0.0.0.0", port), Handler)
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        print(f"[curator-receiver] Listening on port {port}", flush=True)
+
     if __name__ == "__main__":
         print(
             f"[curator] Starting — SO-ARM101 task-performance scoring\n"
@@ -97,6 +128,9 @@ data:
         )
         CURATED_DIR.mkdir(parents=True, exist_ok=True)
         REJECTED_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Start HTTP receiver for remote episode ingestion
+        start_receiver(int(os.environ.get("RECEIVER_PORT", "8082")))
 
         while True:
             for path in sorted(RAW_DIR.glob("*.json")):
@@ -151,11 +185,13 @@ spec:
           env:
             - name: PASS_THRESHOLD
               value: "0.5"
-            # SMOOTHNESS_THRESHOLD: will be calibrated against real ACT policy
-            # output on SO-ARM101 joint trajectories. Start permissive (0.15),
-            # tighten after observing real rollout distributions.
             - name: SMOOTHNESS_THRESHOLD
               value: "0.15"
+            - name: RECEIVER_PORT
+              value: "8082"
+          ports:
+            - containerPort: 8082
+              name: receiver
           volumeMounts:
             - name: code
               mountPath: /app
@@ -169,3 +205,18 @@ spec:
         - name: episodes
           hostPath:
             path: /var/lib/episodes
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: curator
+  namespace: flywheel
+spec:
+  type: NodePort
+  selector:
+    app: curator
+  ports:
+    - name: receiver
+      port: 8082
+      targetPort: 8082
+      nodePort: 30802

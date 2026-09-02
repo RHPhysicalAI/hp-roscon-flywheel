@@ -27,6 +27,8 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 
 RAW_DIR = Path(os.environ.get("RAW_DIR", "/data/episodes/raw"))
+# When running on the host (not in SNO), POST episodes to the curator receiver
+CURATOR_URL = os.environ.get("CURATOR_URL", "")  # e.g. http://10.0.0.49:30802/episode
 MODEL_VERSION = os.environ.get("MODEL_VERSION", "soarm-act-v1")
 FAILURE_RATE = float(os.environ.get("FAILURE_RATE", "0.1"))  # fraction of episodes to inject as failures
 SCENE = os.environ.get("SCENE", "place_cubes_on_tray")
@@ -193,9 +195,27 @@ class EpisodeEmitter(Node):
             "rosbag_path": f"rosbags/{self._episode_id}.mcap",
         }
 
-        # Write to raw dir for curator
-        out_path = RAW_DIR / f"{self._episode_id}.json"
-        out_path.write_text(json.dumps(episode, indent=2))
+        # Deliver to curator — local file or remote POST
+        if CURATOR_URL:
+            try:
+                import urllib.request
+                req = urllib.request.Request(
+                    CURATOR_URL,
+                    data=json.dumps(episode).encode(),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                urllib.request.urlopen(req, timeout=5)
+            except Exception as e:
+                self.get_logger().warn(f"POST to curator failed: {e}")
+                # Fallback: write locally
+                RAW_DIR.mkdir(parents=True, exist_ok=True)
+                out_path = RAW_DIR / f"{self._episode_id}.json"
+                out_path.write_text(json.dumps(episode, indent=2))
+        else:
+            RAW_DIR.mkdir(parents=True, exist_ok=True)
+            out_path = RAW_DIR / f"{self._episode_id}.json"
+            out_path.write_text(json.dumps(episode, indent=2))
         self._episodes_emitted += 1
 
         verdict = "INJECTED-FAIL" if has_failure else ("SUCCESS" if task_success else "FAIL")
