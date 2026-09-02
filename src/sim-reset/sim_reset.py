@@ -8,6 +8,9 @@ Can optionally randomize cube starting positions (--random) for training
 diversity — different starting configs help the policy generalize.
 """
 
+import math
+import os
+import random
 import subprocess
 import sys
 import time
@@ -20,14 +23,36 @@ CUBE_POSES = [
     ("cube_large",  0.12,  0.20, 0.41, 0.0, 0.0, -0.3569493, 0.9341238),
 ]
 
+# Randomization: perturb x,y within this radius (m) and yaw within this range
+RANDOM_RADIUS = float(os.environ.get("RANDOM_RADIUS", "0.04"))
+RANDOM_YAW_DEG = float(os.environ.get("RANDOM_YAW_DEG", "180"))
+
+
+def _randomize(x, y, rng):
+    """Sample new (x,y) uniformly in a disk of RANDOM_RADIUS around nominal."""
+    r = RANDOM_RADIUS * math.sqrt(rng.random())
+    theta = 2.0 * math.pi * rng.random()
+    return x + r * math.cos(theta), y + r * math.sin(theta)
+
+
+def _random_yaw(rng):
+    """Sample a z-axis quaternion within RANDOM_YAW_DEG total sweep."""
+    phi = math.radians(rng.uniform(-RANDOM_YAW_DEG / 2, RANDOM_YAW_DEG / 2))
+    return 0.0, 0.0, math.sin(phi / 2), math.cos(phi / 2)
+
 # Arm home position — all 6 joints at 0.0
 ARM_HOME = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
 
-def reset_cubes():
-    """Reset all cubes to nominal positions via gz service."""
+def reset_cubes(randomize=False, rng=None):
+    """Reset cubes to nominal positions, optionally randomized, via gz service."""
+    if randomize and rng is None:
+        rng = random.Random()
     procs = []
     for name, x, y, z, qx, qy, qz, qw in CUBE_POSES:
+        if randomize:
+            x, y = _randomize(x, y, rng)
+            qx, qy, qz, qw = _random_yaw(rng)
         req = (
             f"name: '{name}', "
             f"position: {{x: {x}, y: {y}, z: {z}}}, "
@@ -62,21 +87,25 @@ def reset_arm():
         print(f"[sim-reset] WARNING: arm home failed: {result.stderr.decode()}", flush=True)
 
 
-def reset_sim(reset_arm_home=False):
-    """Reset cubes to start. Optionally send arm home.
+def reset_sim(reset_arm_home=False, randomize=None):
+    """Reset cubes to start. Optionally send arm home and/or randomize positions.
 
     By default we do NOT send the arm home — the policy controls the arm and
     an explicit home command can conflict with the Rosetta action server's
     state. Just reposition the cubes for a fresh attempt.
     """
-    print("[sim-reset] Resetting cubes...", flush=True)
+    if randomize is None:
+        randomize = os.environ.get("RANDOMIZE_CUBES", "false").lower() == "true"
+    mode = "randomized" if randomize else "nominal"
+    print(f"[sim-reset] Resetting cubes ({mode})...", flush=True)
     if reset_arm_home:
         reset_arm()
         time.sleep(1.0)
-    reset_cubes()
+    reset_cubes(randomize=randomize)
     time.sleep(0.5)
     print("[sim-reset] Sim reset complete", flush=True)
 
 
 if __name__ == "__main__":
-    reset_sim()
+    randomize = "--random" in sys.argv or os.environ.get("RANDOMIZE_CUBES", "false").lower() == "true"
+    reset_sim(randomize=randomize)
