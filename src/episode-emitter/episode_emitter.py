@@ -32,8 +32,10 @@ FAILURE_RATE = float(os.environ.get("FAILURE_RATE", "0.1"))  # fraction of episo
 SCENE = os.environ.get("SCENE", "place_cubes_on_tray")
 # Episode boundary: if no new joint commands for this many seconds, episode ends
 EPISODE_TIMEOUT_S = float(os.environ.get("EPISODE_TIMEOUT_S", "5.0"))
+# Maximum episode duration — force-end after this many seconds
+MAX_EPISODE_S = float(os.environ.get("MAX_EPISODE_S", "60.0"))
 # Minimum steps for a valid episode
-MIN_STEPS = int(os.environ.get("MIN_STEPS", "50"))
+MIN_STEPS = int(os.environ.get("MIN_STEPS", "10"))
 
 
 class EpisodeEmitter(Node):
@@ -115,12 +117,20 @@ class EpisodeEmitter(Node):
         self._last_command_time = now
 
     def _check_timeout(self):
-        """End episode if no commands received for EPISODE_TIMEOUT_S."""
+        """End episode if idle too long or max duration reached."""
         if not self._rollout_active:
             return
+        now = time.time()
+        # Max duration — force-end long-running episodes
+        if self._episode_start and (now - self._episode_start) > MAX_EPISODE_S:
+            self.get_logger().info(
+                f"Episode {self._episode_id[:8]} hit max duration ({MAX_EPISODE_S}s)")
+            self._end_episode()
+            return
+        # Idle timeout — end if no commands received
         if self._last_command_time is None:
             return
-        if time.time() - self._last_command_time > EPISODE_TIMEOUT_S:
+        if now - self._last_command_time > EPISODE_TIMEOUT_S:
             self._end_episode()
 
     def _compute_task_success(self) -> tuple[bool, int]:

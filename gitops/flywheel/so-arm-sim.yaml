@@ -41,6 +41,10 @@ spec:
               value: "0.1"
             - name: EPISODE_TIMEOUT_S
               value: "30.0"
+            - name: MAX_EPISODE_S
+              value: "60.0"
+            - name: MIN_STEPS
+              value: "10"
             - name: MCP_ENABLED
               value: "false"
             - name: RUN_INFERENCE
