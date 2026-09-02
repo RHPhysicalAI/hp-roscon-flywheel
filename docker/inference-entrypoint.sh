@@ -71,29 +71,32 @@ ROSETTA_PID=$!
 echo "[inference] Waiting for policy server..."
 sleep 15
 
-# Coordinated rollout loop:
-#   1. reset sim (cubes to start, arm to home) — between episodes only
-#   2. signal episode start
-#   3. run policy to completion
-#   4. signal episode end (emitter finalizes + evaluates task)
-ROLLOUT_TIMEOUT=${ROLLOUT_TIMEOUT:-25}
-echo "[inference] Starting coordinated rollout loop (timeout ${ROLLOUT_TIMEOUT}s/rollout)..."
+# The RunPolicy action runs CONTINUOUSLY — one goal drives the arm forever.
+# We send it once, then slice the continuous rollout into episodes by
+# wall-clock windows, resetting cubes at each boundary.
+EPISODE_LEN=${EPISODE_LEN:-25}
+echo "[inference] Sending continuous RunPolicy goal (runs indefinitely)..."
 
+# Send the goal in the background — it never returns on its own
+ros2 action send_goal /run_policy rosetta_interfaces/action/RunPolicy \
+  "{prompt: 'place cubes on tray'}" &
+GOAL_PID=$!
+sleep 5
+
+echo "[inference] Starting episode windowing loop (${EPISODE_LEN}s/episode)..."
 while true; do
-  echo "[inference] Resetting sim for fresh attempt..."
+  # Reset cubes to start (policy keeps running — arm will react to new cube positions)
+  echo "[inference] New episode: resetting cubes..."
   python3 /ws_pai/sim_reset.py 2>&1 | grep -v Warning || true
-  sleep 2
+  sleep 1
 
-  echo "[inference] Signaling episode start..."
+  # Signal episode start
   ros2 topic pub --once /flywheel/episode_control std_msgs/msg/String "{data: start}" 2>&1 | tail -1
 
-  echo "[inference] Running policy (max ${ROLLOUT_TIMEOUT}s)..."
-  timeout ${ROLLOUT_TIMEOUT} ros2 action send_goal /run_policy \
-    rosetta_interfaces/action/RunPolicy \
-    "{prompt: 'place cubes on tray'}" 2>&1 | tail -3 || true
+  # Let the policy attempt the task for this window
+  sleep ${EPISODE_LEN}
 
-  echo "[inference] Signaling episode end..."
+  # Signal episode end — emitter evaluates cube positions now
   ros2 topic pub --once /flywheel/episode_control std_msgs/msg/String "{data: end}" 2>&1 | tail -1
-
-  sleep 2
+  sleep 1
 done

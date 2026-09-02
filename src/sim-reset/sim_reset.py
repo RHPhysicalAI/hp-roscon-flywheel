@@ -62,13 +62,19 @@ def reset_arm():
         print(f"[sim-reset] WARNING: arm home failed: {result.stderr.decode()}", flush=True)
 
 
-def reset_sim():
-    """Full sim reset: arm to home, wait, then reset cubes."""
-    print("[sim-reset] Resetting sim...", flush=True)
-    reset_arm()
-    time.sleep(1.0)  # let arm settle
+def reset_sim(reset_arm_home=False):
+    """Reset cubes to start. Optionally send arm home.
+
+    By default we do NOT send the arm home — the policy controls the arm and
+    an explicit home command can conflict with the Rosetta action server's
+    state. Just reposition the cubes for a fresh attempt.
+    """
+    print("[sim-reset] Resetting cubes...", flush=True)
+    if reset_arm_home:
+        reset_arm()
+        time.sleep(1.0)
     reset_cubes()
-    time.sleep(0.5)  # let cubes settle
+    time.sleep(0.5)
     print("[sim-reset] Sim reset complete", flush=True)
 
 
