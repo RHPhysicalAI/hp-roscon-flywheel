@@ -30,6 +30,13 @@ PROMPT = os.environ.get("PROMPT", "place cubes on tray")
 SETTLE_S = float(os.environ.get("SETTLE_S", "3.0"))
 HOME_TOLERANCE = float(os.environ.get("HOME_TOLERANCE", "0.15"))
 HOME_WAIT_MAX = float(os.environ.get("HOME_WAIT_MAX", "8.0"))
+# Early-stop: end an episode once the task is complete and the arm has settled,
+# rather than waiting out the full window. "Settled" means the arm has stopped
+# moving (not a fixed home pose) — detected from joint-position stability.
+EARLY_STOP = os.environ.get("EARLY_STOP", "true").lower() == "true"
+REST_EPS = float(os.environ.get("REST_EPS", "0.01"))       # max per-sample joint delta (rad) counted as "still"
+REST_HOLD_S = float(os.environ.get("REST_HOLD_S", "2.0"))  # how long the arm must stay still
+EARLY_MIN_S = float(os.environ.get("EARLY_MIN_S", "5.0"))  # earliest an episode may end
 
 
 class Coordinator(Node):
@@ -78,6 +85,16 @@ class Coordinator(Node):
             capture_output=True, timeout=20,
         )
 
+    def _task_complete(self) -> bool:
+        """True if all three cubes are on the tray (ground-truth cube poses)."""
+        try:
+            import task_eval
+            success, _ = task_eval.evaluate_task()
+            return success
+        except Exception as e:
+            self.get_logger().warn(f"Task-complete check failed: {e}")
+            return False
+
     def run_forever(self):
         self.get_logger().info("Waiting for action server...")
         self._client.wait_for_server()
@@ -104,10 +121,43 @@ class Coordinator(Node):
                 time.sleep(2)
                 continue
 
-            # 4. Policy attempt window
+            # 4. Policy attempt window — ends early once the task is complete
+            #    and the arm has settled, so good runs don't wait out the clock.
             t_end = time.time() + EPISODE_LEN
+            window_start = time.time()
+            prev_pos = None
+            rest_since = None
             while time.time() < t_end:
                 rclpy.spin_once(self, timeout_sec=0.2)
+                now = time.time()
+                # Track when the arm last moved (rest = motion stopped, not a
+                # specific joint pose — home is not all-zeros).
+                if self._latest_positions:
+                    if prev_pos and len(prev_pos) == len(self._latest_positions):
+                        moved = max(
+                            abs(a - b)
+                            for a, b in zip(self._latest_positions[:5], prev_pos[:5])
+                        )
+                        if moved > REST_EPS:
+                            rest_since = None
+                        elif rest_since is None:
+                            rest_since = now
+                    prev_pos = list(self._latest_positions)
+                # Only run the (costly) cube check once the arm has held still
+                # past the window floor.
+                if (
+                    EARLY_STOP
+                    and rest_since is not None
+                    and now - window_start >= EARLY_MIN_S
+                    and now - rest_since >= REST_HOLD_S
+                ):
+                    if self._task_complete():
+                        self.get_logger().info(
+                            "Early stop: 3/3 cubes placed and arm settled")
+                        break
+                    # Arm idle but task not done (e.g. stuck) — re-arm the timer
+                    # so we recheck later instead of hammering the pose query.
+                    rest_since = now
 
             # 5. Cancel the goal and WAIT for confirmation — policy fully stops
             self.get_logger().info("Cancelling goal (end of window)...")
