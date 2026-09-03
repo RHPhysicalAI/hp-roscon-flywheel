@@ -208,3 +208,191 @@ as TimeSeriesQuery panels or by installing a standalone Perses with the trace pl
 **Desktop IP:** 10.0.0.48. **SNO VM IP:** 10.0.0.49.
 **Not yet deployed:** robot-sim (replaced by SO-ARM in Phase 2), dreamer (needs GPU/Cosmos3),
 vllm-cosmos3 blue/green (replaced by ACT serving in Phase 3), RHTAS/sigstore (Phase 3).
+
+---
+
+## D013 — Desktop GPU split: sim in SNO, ACT inference on the host GPU
+
+**Date:** 2026-09-02
+**Context:** VFIO passthrough of the RTX 5090 into the SNO VM stays deferred (D001) — it makes
+the desktop headless and kills the active session. But Phase 2 needs the pre-trained ACT policy
+to actually drive the SO-ARM in the loop, which is GPU work. Passing the GPU through the cluster
+was the original plan for that; it's off the table for now.
+
+**Decision:** Split the workload across the box instead of passing the GPU into the VM:
+- **Sim in SNO** — Gazebo + SO-ARM101 runs CPU-only inside the cluster (`so-arm-sim.yaml`).
+- **ACT inference on the host** — the policy runs in a container directly on the host against
+  the RTX 5090 (`docker/Dockerfile.gpu-inference`, `inference-entrypoint.sh`), no cluster GPU.
+- **Wiring is zenoh cross-network** — the host inference container runs `rmw_zenoh` in **client
+  mode** connecting to the in-cluster zenoh router (`docker/zenoh-connect.json5`). This is the
+  bridge that lets host-GPU inference and in-cluster sim share ROS 2 topics across the VM boundary.
+
+**Host-side components** (all under `src/`, run on the desktop, not in the cluster):
+- `episode-emitter/` — watches rollouts, builds curator-contract episode JSON, and **POSTs to a
+  curator HTTP receiver** (sim moved to host, so the old hostPath handoff was replaced with HTTP).
+  `task_eval.py` does real task-success detection from Gazebo cube poses.
+- `inference-coordinator/coordinator.py` — phases episodes cleanly: cancels the policy goal between
+  episodes and waits for confirmation so episode boundaries aren't ragged. Inference drives the
+  episode cadence; sim and inference no longer fight over lifecycle.
+- `sim-reset/sim_reset.py` — resets between episodes. **Cubes-only reset** (randomized cube
+  positions) — a full Gazebo world reset was tried and reverted because it kills the ros2_control
+  controllers and they don't reliably reactivate.
+- `camera-bridge/camera_bridge.py` — MJPEG stream of the sim for the browser (HTTP-only host
+  bridge; TLS/proxy paths caused mixed-content and buffering problems).
+
+**Curator changes:** task success is now a **hard gate**, not a scoring penalty (`04b2756`).
+Cube count is tracked as the **peak** reached during an episode (arm can knock a placed cube off),
+and every curation-log row shows `X/3`.
+
+**Status:** this is the active work on branch `desktop-gpu-split` (~40 commits ahead of `main`,
+all 2026-09-02). Still iterating on clean episode boundaries and reliable cube-count reporting.
+This is Phase 2 (the producer) — it generates curated episodes; it does **not** train or promote
+anything. See the Phase 3 gap note below.
+
+**Revisit:** VFIO passthrough (D001) is still the eventual path for a single-box story on Fury,
+but the host-split is the pragmatic Phase 2 answer on the desktop and may well be what ships.
+
+---
+
+## D014 — Building a deliberately-imperfect v1 ACT baseline (the "sometimes succeed, sometimes fail" hunt)
+
+**Date:** 2026-09-03 (records work through the OpenCode session ending 2026-09-02 17:03)
+**Context:** The flywheel demo has to *show the robot getting better* — collect → curate → train
+→ promote → visibly improved. That requires a **v1 policy with a real quality gap** for v2 to
+close. The pre-trained upstream ACT policy from `ros-physical-ai/demos` is **too good for this**:
+it either places all three cubes cleanly or gets *catastrophically stuck* retrying one learned
+correction forever — a binary outcome, no natural mix of partial successes and diverse failures.
+
+**Approach:** Train our **own intentionally-undertrained ACT policy from scratch** on a small set
+of collected episodes, directly via LeRobot on the host RTX 5090 (not the KFP pipeline — that
+infra is still unbuilt). An undertrained policy fails *diversely* (overshoots, mis-times the
+grasp, drops the cube) which is the natural success/failure distribution the demo needs. We also
+offset the green cube (`cube_medium`, randomized ±2–3cm from nominal each episode via
+`RANDOMIZE_ONLY`) to add controlled difficulty.
+
+**Sweep so far** (episodes × train-steps; checkpoints live on the host, not in the repo):
+
+| Config | ~Epochs | Result |
+|---|---|---|
+| 5 ep × 500 steps | ~0.4 | loss 15.2 — nowhere near converged |
+| **5 ep × 5k steps** | **~4.5** | **loss 0.305 — closest to grasping (best so far)** |
+| 5 ep × 15k steps | ~13.5 | overfit — arm barely moves |
+| 10 ep × 10k steps | ~5 | better — approaches/jitters at the cube |
+| 20 ep × 10k steps | ~2.5 | all 0/3, managed the first cube once |
+| 30 ep × 10k steps | ~2.5 | mostly 0/3 — still can't grasp the first block |
+
+**Working theory:** the sweet spot needs **both** enough episodes (diversity) **and** enough
+epochs (~4.5 = convergence depth for precise grasps). More episodes at shallow depth (~2.5 epochs)
+never converges enough to execute the first grasp; too many epochs on few episodes overfits into a
+frozen arm.
+
+**Where we left off:** a **20 ep × 20k steps (~4.5 epochs, ~30 min)** run was kicked off right as
+the 2026-09-02 session ended — combining the best-converging epoch depth with more diversity. **Its
+result was never recorded.** First action on resume: check whether that checkpoint exists on the
+host and how it behaves (does it finally get a natural sometimes-succeed/sometimes-fail mix?).
+
+**Still unbuilt (real Phase 3):** no KFP/DSP training pipeline, no KServe/vLLM serving, no
+cosign/RHTAS, no promotion-PR mechanism in `gitops/`. Today's training is manual LeRobot runs to
+find the v1 baseline; the governed pipeline that *promotes* v1→v2 is the next build once we have a
+baseline policy that produces a workable success/failure distribution.
+
+> Supersedes an earlier draft of this decision that claimed "no training has been run" — that was
+> wrong. Manual LeRobot training runs were the entire focus of the 2026-09-01→02 session.
+
+---
+
+## D015 — Stay with ACT (imitation), don't pivot to reward-based RL; prove improvement via curated dataset size
+
+**Date:** 2026-09-03
+
+**Question raised:** Is the "weak ACT v1 → strong ACT v2" approach the right way to *prove
+improvement* for the demo, or should we pivot to reward-based RL (many sessions, a learning curve),
+or something easier?
+
+**Decision:** Stay with **ACT / behavior cloning via LeRobot**. Do **not** pivot to RL.
+
+**Rationale:**
+- The demo's value is the **governed pipeline** (curate → train → sign → GitOps-promote →
+  blue/green), not ML sophistication. The ML only has to produce a clear, reproducible, believable
+  "v1 → v2 improved" moment. ACT clears that bar at far lower risk.
+- **RL is the wrong pivot here:** contact-rich manipulation RL from scratch is sample-inefficient
+  and unstable (a multi-week research effort, not a demo build); a live learning curve is
+  stage-unreliable; and it **abandons the upstream-alignment credibility anchor** — the whole
+  anti-"vendor land-grab" story is aligning to `ros-physical-ai/demos`, which is ACT/LeRobot.
+  Pivoting to a bespoke RL stack makes it "Red Hat's weird thing" instead of governance added to
+  the community's thing.
+- The user's instinct that RL would be "another rabbit hole" is correct; it's a longer road to a
+  demo that's harder to run and off-message.
+
+**Honest caveat (the reframe):** As pursued so far, "v1→v2" is really *undertrained ACT →
+fully-trained ACT* — a **staged** before/after we construct, not organic self-bootstrapping. True
+self-bootstrapping (training a policy on its *own* curated rollouts) is genuinely weak for BC: a
+policy that fails generates mostly failures, so curating its own output yields thin, low-quality
+data exactly where it's weak, and BC can't exceed its demonstrations. So:
+
+- **Make the improvement axis the curated dataset SIZE, not training-step tuning.** v1 = ACT on a
+  small curated set; v2 = ACT on a larger curated set the flywheel accumulated. "More curated good
+  episodes → better policy" is a *true* BC property, honest, maps onto the flywheel story, and
+  shows as a clean success-rate-vs-dataset-size chart.
+- Training demonstrations must be **good** (the strong policy's successes, or the upstream teleop
+  set filtered through the curator) — not the weak policy's lucky rollouts.
+- Drop the "sometimes-succeed/sometimes-fail weak policy" balancing act as a *proof* requirement —
+  it was chasing demo aesthetics. The proof needs **two policies with a clear success-rate gap and
+  a working metric**, which we now have.
+
+**Concrete proof protocol (Phase 3):**
+1. **Metric (done today):** task success = 3/3 cubes on tray, via the fixed scorer. Also log
+   partial-placement count and mean smoothness.
+2. **Eval harness:** run a fixed N (~50) episodes per policy under a **fixed, repeatable cube
+   layout set** (randomization off, or a fixed seed list) so comparisons are apples-to-apples.
+   Record success rate, partial rate, smoothness distribution.
+3. **Dataset ladder:** build curated training sets of increasing size from good demonstrations
+   (upstream 60-demo corpus, and/or strong-policy rollouts the curator passed): e.g. {5, 10, 20,
+   40} episodes. **Hold epochs ≈ constant** (~5 epochs; scale `--steps` with dataset size) so the
+   variable is *data*, not training length.
+4. **Train ACT** at each rung → v1 = smallest, v2 = largest.
+5. **Artifact:** success-rate vs dataset-size bar chart + before/after video (v1 fumbling, v2
+   clean) + smoothness distributions. This is the "you can see it get better" moment.
+6. **Governance wiring (still to build):** v2 checkpoint → cosign sign → KServe modelcar OCI →
+   GitOps promotion PR → blue/green swap. This is the actual product story the improvement showcases.
+
+---
+
+## D016 — Task-success scorer was blind; fixed via pose topic. Coordinator early-stop added.
+
+**Date:** 2026-09-03
+
+**Scorer bug (root cause + fix):** `task_eval.py` read cube poses via `gz model -m <cube> --pose`,
+which first resolves the world through the generic **`/gazebo/worlds` service. That service does not
+respond in this gz build (Kilted / gz-sim9)** — every query timed out, `get_cube_pose` returned
+`None`, and **every cube scored as not-placed → 0/3 always.** It went unnoticed because until a
+policy actually placed cubes (the 40×40 run), the broken scorer was never exercised against a real
+success. The world-scoped services/topics *do* respond. **Fix:** read poses directly from the
+`/world/pai_world/pose/info` topic (`gz topic -e`), parse `name`/`position` blocks. Tray footprint
+and `is_on_tray` thresholds unchanged. Verified live: peak-poll now logs real counts and episodes
+record `SUCCESS cubes=3`.
+
+**Early-stop (new coordinator feature):** the coordinator now ends an episode as soon as the task
+is complete (3/3 cubes) **and the arm has settled** — instead of waiting out the full `EPISODE_LEN`.
+"Settled" = joint-position motion below `REST_EPS` sustained for `REST_HOLD_S`, past an `EARLY_MIN_S`
+floor. **Rest is motion-based, not a fixed home pose — the SO-ARM rest pose is not all-zeros.** The
+costly cube check runs only once the arm has held still. Env-tunable (`EARLY_STOP`, `REST_EPS`,
+`REST_HOLD_S`, `EARLY_MIN_S`). Confirmed firing; good runs now end in ~1300–2000 steps instead of
+the full window.
+
+**Findings (observed, scorer now agreeing with the operator's eyes):**
+- **40ep×40k weak-v1** is directionally right: consistently **2/3**, reliably fails the third-block
+  grasp. Smooth, deliberate motion.
+- **Upstream known-good policy is robust to a 3 cm green-cube offset** — still lands 3/3.
+  Randomization at 3 cm alone will *not* manufacture a failure mix for the strong policy; need a
+  larger `RANDOM_RADIUS` or all-cube randomization to challenge it. (A weak policy is tripped much
+  sooner.)
+
+**⚠️ Deployment status — NOT yet permanent:** both fixes are running but **hot-patched**, not baked
+into images or committed:
+- `task_eval.py` → `docker cp`'d into the running `so-arm-sim` container.
+- `coordinator.py` + `task_eval.py` → bind-mounted into `act-inference` from `/home/jary/patches/`.
+A container rebuild-from-image or a `/tmp` wipe (host reboot) reverts them. **Follow-up:** commit
+both files, rebuild the sim image (`:sim-only`) and the `act-inference` image, and redeploy so the
+fixes persist. Also copy the kept weak checkpoints out of `/tmp/weak-training/` (root-owned;
+needs the operator's sudo) to persistent storage.

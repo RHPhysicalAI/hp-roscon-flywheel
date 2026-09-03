@@ -207,6 +207,15 @@ and promoted via GitOps.
 - [ ] v1 vs v2 improvement demonstrable
 - [ ] Full loop closes (sim -> curate -> train -> sign -> promote -> sim)
 
+> **Method note:** the v1->v2 improvement is proved via **curated dataset size** (small set vs
+> larger set, epochs held constant), not training-step tuning — and we stay on ACT rather than
+> pivoting to RL. Rationale and the concrete proof protocol: `DECISIONS.md` **D015**.
+>
+> **Phase 3+ option:** `BOOTSTRAP-LOOP.md` sketches a *genuinely* self-improving loop (privileged
+> MoveIt/IK expert generating frontier demonstrations from ground-truth cube poses). It also
+> documents the gap that blocks it today: the flywheel currently curates episode *metadata*, not
+> LeRobot-format training data.
+
 ---
 
 ## Phase 4 — Demo Hardening + Fury Prep
