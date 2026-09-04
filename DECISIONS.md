@@ -762,3 +762,25 @@ teacher-before/after. The dataset-size angle survives as a bonus (fine-tune on 1
 superseded by this protocol; the from-scratch v1 (0/3) is kept as a documented negative result. The
 1st Phase 3 exit criterion ("v1 vs v2 improvement demonstrable on the fixed eval set") is unchanged
 in wording and now means the *right* thing.
+
+**Round 1 — v1 baseline measured (2026-09-04, N=50, seeds 1000–1049, radius 0.03):** success
+**74% (37/50)**, mean cubes 2.54, histogram 0/1/2/3 = 0/10/3/37, mean smoothness 0.0048.
+
+- **Higher than the 38% loop estimate — and that gap is real, not noise.** The eval homes the arm
+  every episode (`RESET_ARM=true`); the production loop runs `RESET_ARM=false` (cubes-only reset), so
+  after a failure the next episode starts with the arm mid-reach and failures cascade. 38% is the
+  loop's *operational* rate; 74% is the teacher's *clean-start* rate for this condition and is the
+  honest v1 baseline. (Worth remembering when the loop's curated/rejected ratio is read as a
+  success rate — it understates the policy.)
+- **Failure mode is the right one.** 10 of the 13 failures are 1/3: the first cube is placed and the
+  *randomized* green cube is fumbled. That is precisely the behavior success-filtered fine-tuning
+  targets — v1 "fumbles" rather than face-plants.
+- **Headroom ≈ 26 points.** Binomial SE at p=0.74, N=50 is ≈ 6%, so a ≥12-point gain is ~2σ on the
+  rate alone; the **per-seed paired comparison** (same scene, v1 → v2) is the primary read because
+  it removes scene difficulty from the variance. If round 1's gain is inside noise, round 2 should
+  widen the condition (e.g. `RANDOM_RADIUS=0.04`) to open the gap rather than train longer.
+- **Negative result kept for the record:** the from-scratch 5-episode policy (D020 ladder rung 1)
+  scored 0/3 on 30 of 31 evaluated seeds (one 1/3), smoothness ≈ 0.0015 — a timid arm that never
+  grasps. Same harness, same seeds. That is what "trained by the teacher from scratch on 5
+  episodes" looks like, and why D021 replaced it.
+
