@@ -820,3 +820,27 @@ identical 50 seeds):**
 
 *Not recommended:* declaring victory on round 1. The number is real but it isn't proof yet.
 
+**Round 2 plan (operator-decided 2026-09-04) — the fine-tune ladder, then close the loop:**
+- **Two questions, two experiments.** (A) *the ladder*: fine-tune the **original** teacher on
+  {20, 40, 80, 160} of its curated successes, each rung from the teacher's weights, epochs held
+  constant — one variable (data quantity), clean chart. (B) *the self-improving loop*: promote the
+  best rung, blue/green-swap it into the loop (Phase 3 step 5), let **it** collect, fine-tune v3 from
+  its weights on the union corpus — that is step 7, "close the loop". A isolates the data effect; B
+  shows compounding. In B two things change per round (collector *and* corpus), so A is what makes
+  the data claim attributable. Sequence: **A first** (the loop is collecting the teacher corpus now),
+  then B as the remaining Phase 3 build.
+- **Top rung 160.** Collection target: 160 curated teacher successes at radius 0.03.
+- **`RESET_ARM=true` on the collection loop** (was `false` — cubes-only reset). Homing the arm each
+  episode roughly doubles the success rate (38% → ~74%, D021 baseline note) so collection is ~2×
+  faster, and training episodes start the way eval episodes do. The ~70 already collected under
+  cubes-only reset stay in the corpus: they are successes-only (valid demonstrations either way; the
+  mid-reach starts are if anything more diverse). Rollback container: `act-inference-prereset-bak`.
+- **Nested, regime-balanced rungs via seeded shuffle** (`~/rung_plan.py`): rung N = the first N of a
+  seeded shuffle of the final 160, so 20 ⊂ 40 ⊂ 80 ⊂ 160 and every rung samples uniformly across
+  collection time. Chronological nesting was rejected because it would make small rungs = old
+  regime and large rungs = old+new, confounding size with regime. Round 1's 40-rung (80%) is a
+  preliminary point; the ladder retrains 40 from the fixed 160 set.
+- **Epochs constant at ~2** (`steps = round(0.25 × frames)`, batch 8), LR 1e-5, from teacher weights.
+- **Eval:** identical D020 harness for every rung (N=50, seeds 1000–1049); loop parked once for the
+  batch of four. If rung deltas sit inside N=50 noise, bump to N=100 for the top and bottom rungs.
+
