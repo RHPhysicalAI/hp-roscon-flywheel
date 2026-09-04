@@ -76,6 +76,8 @@ COPY src/sim-reset/sim_reset.py /ws_pai/sim_reset.py
 COPY src/inference-coordinator/coordinator.py /ws_pai/coordinator.py
 # coordinator's early-stop imports task_eval to confirm the task is complete
 COPY src/episode-emitter/task_eval.py /ws_pai/task_eval.py
+# dataset assembler: curated episodes -> LeRobot dataset (run as a batch job)
+COPY src/dataset-assembler/assemble_dataset.py /ws_pai/assemble_dataset.py
 COPY docker/inference-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
