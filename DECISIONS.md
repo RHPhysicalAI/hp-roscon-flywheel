@@ -521,3 +521,36 @@ under the exact names above; `act-inference` imports `rosbag2_py` and `lerobot` 
 in the inference entrypoint vs. a sidecar container; the host bag directory + how port_bags reads
 it; `port_bags` local-root vs. synthetic `repo_id` for `lerobot-train` (BUILD-PLAN open question);
 and rejected-episode bag retention (Phase 2.5 step 6). These are settled as those steps are built.
+
+**Verified end-to-end 2026-09-04 (steps 2–5 of Phase 2.5):**
+- **Step 2 — recording.** The recorder runs in the inference entrypoint (its own launched process,
+  full contract, bags to host-mounted `/data/bags` → `~/flywheel-data/bags`); the coordinator
+  drives it via the `RecordEpisode` action (resolved server name `/record_episode`). Captured real
+  episodes: e.g. a 37.5 s bag with 1083 wrist + 1083 static frames, 1787 `/joint_states`, 1664
+  `/forward_position_controller/commands` — a valid ~1.9 GiB MCAP (raw images) with the prompt in
+  `metadata.yaml`. `_stop_recording` waits for the action result so the bag is finalized before the
+  next episode.
+- **Step 3 — contract.** Coordinator publishes `bags/<name>` on `/flywheel/episode_dataset`; the
+  emitter stamps `dataset_path`. Confirmed in the curated JSON on the SNO node (curator preserves
+  the field, sync-agent uploads it to MinIO under `episodes-curated/<model_version>/`). Also fixed
+  the stale `MODEL_VERSION` on `so-arm-sim` → `upstream-act-teacher` (the teacher, per D015).
+- **Step 4 — assembler.** `src/dataset-assembler/assemble_dataset.py` selects curated
+  (pass + 3/3 + `dataset_path` + bag present) episodes, stages their bags, and runs
+  `rosetta.port_bags`. Ported 4 curated episodes → a valid LeRobot v2 dataset (fps 50, 6254 frames,
+  `observation.images.{wrist,static}` 480×480 video + `observation.state`[6] + `action`[6]). The
+  ~8 GiB of raw bags compressed to **18 MiB** via h264 (note: lerobot 0.5.1 rejects `libx264`; use
+  `h264`). port_bags uses the same contract decoders as inference, so recorded data is
+  schema-consistent with what the policy consumes.
+- **Step 5 — train + run.** `lerobot-train` (ACT, 5000 steps, cuda) on the flywheel-captured
+  dataset produced a complete checkpoint (206 MB `model.safetensors` + config + processors).
+  Mounted it into `act-inference` (`POLICY_PATH=/model`); the policy server loaded it
+  (`Policy type: act | path: /model | Device: cuda`) and drove the arm in the sim (manipulating
+  cubes). **"Trained on episodes the loop recorded, running in the sim" is now literally true.**
+  The v1 policy is deliberately small (4 episodes) — quality/size is Phase 3's dataset-size ladder.
+
+**Still lagging (Phase 2.5 step 6, not yet done):** the sync-agent uploads only the curated JSON —
+the recorded **bag data** does not yet land in MinIO, so "assemble from MinIO alone" isn't proven
+(the assembler read local curated JSONs + local bags). `MODEL_VERSION` lineage is correct for the
+teacher run, but swapping the served checkpoint (on `act-inference`) does not relabel the emitter
+(on `so-arm-sim`) — the label and the served policy are coupled only by operator convention.
+Rejected-episode bag retention is undecided; bags accumulate at ~2 GB each.

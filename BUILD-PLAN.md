@@ -19,7 +19,7 @@ Phase 3 closes it with governance; Phase 3+ makes the improvement autonomous.
 | 0 — Desktop foundation | **Done** (VFIO passthrough deferred) | D001–D006 |
 | 1 — Hub plane on SNO | **Done** | D007–D012 |
 | 2 — SO-ARM producer | **Done** | D013, D014, D016 |
-| 2.5 — Close the data loop | Not started | D017 |
+| 2.5 — Close the data loop | **In progress** — steps 1–5 done & verified; step 6 (MinIO data upload, lineage automation, retention) lagging | D017, D018 |
 | 3 — Training + close the loop | Not started | D015 |
 | 3+ — Bootstrap loop | Not started | `BOOTSTRAP-LOOP.md` |
 | 4 — Demo hardening + Fury prep | Not started | — |
@@ -125,11 +125,16 @@ of the episode contract (`THOR-TESTING-REUSE.md`) and is the prerequisite for bo
    assembled → `lerobot-train` trains on it → checkpoint loads in `act-inference`.
 
 ### Exit criteria
-- [ ] Every rollout produces a LeRobot-format episode referenced from its JSON record
-- [ ] Curated episode data (not just metadata) lands in MinIO with a manifest on Kafka
-- [ ] A training dataset can be assembled from MinIO curated episodes alone
-- [ ] `lerobot-train` trains a checkpoint from flywheel-captured data and it runs in the sim
-- [ ] `MODEL_VERSION` lineage is correct on every emitted episode
+- [x] Every rollout produces a recorded episode (per-episode MCAP bag) referenced from its JSON
+  record via `dataset_path`; curated bags port to LeRobot v2 on assembly (D018 steps 2–4)
+- [ ] Curated episode **data** (not just metadata) lands in MinIO with a manifest on Kafka —
+  *only the curated JSON reaches MinIO today; the bag data does not (step 6)*
+- [ ] A training dataset can be assembled from MinIO curated episodes alone — *assembled locally
+  (curated JSONs + local bags) and verified; MinIO-only source pending step 6*
+- [x] `lerobot-train` trains a checkpoint from flywheel-captured data and it runs in the sim
+  (ACT 5000 steps on 4 curated episodes → checkpoint loads in `act-inference`, drives the arm)
+- [ ] `MODEL_VERSION` lineage is correct on every emitted episode — *emitter label fixed to the
+  teacher; served-checkpoint swap does not yet auto-relabel the emitter (step 6)*
 
 ---
 
