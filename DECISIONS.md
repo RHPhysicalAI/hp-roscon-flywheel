@@ -619,3 +619,72 @@ provisioned 2026-09-04: external NodePorts 30900/30903, a `rejected-mirror` Cron
 **Consequence:** "we retrain on the curated episodes the loop recorded" is fully satisfied by the
 ported dataset in the hub. If a future method needs richer observations, re-port from the host bags
 (or, on Fury, from bags archived in a grown bucket) — no re-collection required.
+
+---
+
+## D020 — Eval harness: fixed seed list (randomization ON), self-contained in the coordinator
+
+**Date:** 2026-09-04
+
+**Context (Phase 3, step 1 — D015 proof protocol):** the "you can see it get better" claim needs a
+repeatable eval so v1…vk are compared apples-to-apples: a fixed N (~50) episodes per policy against a
+**fixed scene set**, recording success rate (3/3), partial-placement distribution, and mean
+smoothness. D015 sanctions either "randomization off, or a fixed seed list." The scorer
+(`task_eval.evaluate_task`) and the emitter already produce every metric; what was missing is a driver
+that runs a fixed N over repeatable scenes and aggregates, without feeding the training corpus.
+
+**Decision — fixed *seed list*, randomization ON (not a single nominal scene).**
+- `sim_reset.py` already randomizes the green cube (`cube_medium`) but seeds an *unseeded* `Random()`.
+  The coordinator now passes a per-episode seed `EVAL_SEED_BASE + i` into `sim_reset --seed`, drawing
+  the layout deterministically. Episode *i* of **every** policy evaluated at the same
+  `(EVAL_SEED_BASE, EVAL_EPISODES, randomization ranges)` sees the **identical** scene — so
+  success-rate deltas between checkpoints are attributable to the policy, not the luck of the draw.
+- **Why ON, not a single nominal layout:** our trained checkpoints (like the teacher, D016) solve the
+  one nominal layout trivially → success saturates at ~100% for every rung → **no curve**. A graded
+  scene set is what gives the success-rate-vs-dataset-size proof any resolution, and it's the only way
+  to get a real partial-placement/smoothness *distribution* out of the eval (one scene → N
+  near-identical outcomes). A fixed seed list keeps full repeatability while spanning difficulty.
+
+**Scene distribution (pinned starting config, all env-tunable and recorded per run):** match the
+training-data collection distribution so the eval measures *in-distribution* BC quality —
+`RANDOMIZE_CUBES=true`, `RANDOMIZE_ONLY=cube_medium`, `RANDOM_RADIUS=0.03`, `RANDOM_YAW_DEG=180`,
+`RESET_ARM=true` (home the arm each episode for an identical clean start), `EVAL_EPISODES=50`,
+`EVAL_SEED_BASE=1000`. Difficulty is calibrated empirically against the **first** checkpoint's spread:
+if the smallest rung already scores near 0% or near 100%, widen/narrow `RANDOM_RADIUS` (or add
+`cube_small`/`cube_large`) and re-run the whole ladder at the new pinned config. The eval config is
+written into every results file so a re-run is verifiably identical.
+
+**Harness placement — a self-contained eval mode in the coordinator (`act-inference`).** Selected by
+`EVAL_MODE=true`; runs `run_eval()` instead of `run_forever()`, then exits (batch job). It owns
+`/data` (host-mounted → `~/flywheel-data`, survives restart, on the GPU host where charts are made),
+already imports `task_eval` (the *same* cube metric as production — the headline success signal) and
+subscribes to `/joint_states` (smoothness, accumulated exactly as the emitter does). It writes
+`/data/eval/<model_version>.json` (per-episode rows + aggregate: success_rate, cubes_hist,
+mean_smoothness) and touches **no** curator / MinIO / Kafka:
+- eval scenes can therefore **never contaminate the training corpus** (and the assembler's
+  `--model-version` filter ignores the eval label even if an eval episode reaches the curator), and
+- the eval doesn't depend on the hub being healthy — it's a reproducible measurement, not a producer.
+The coordinator still publishes the eval `model_version` (latched) and signals `start`/`end`, so the
+emitter self-labels any eval episode it happens to see; the coordinator's `/data/eval` file is
+authoritative and complete regardless (fast early-stopped successes that trip the emitter's
+`MIN_EPISODE_S` debounce are still scored by the coordinator).
+
+**No recording during eval:** `run_eval` never calls the RecordEpisode action and pruning is moot —
+50 episodes × ~2 GB of bags per policy would be pointless (we don't train on eval scenes). Run the
+eval container with `RECORD=false` so the entrypoint skips launching the recorder too.
+
+**Operational shape:** to eval a policy, recreate `act-inference` with the checkpoint mounted at
+`/model` (`POLICY_PATH=/model`), `MODEL_VERSION=eval-<policy>`, `EVAL_MODE=true`, `RECORD=false`, and
+the pinned scene env. It runs N seeded episodes and writes `~/flywheel-data/eval/eval-<policy>.json`,
+then exits. Repeat per rung; the Phase 3 step-6 chart reads every `eval-*.json`.
+
+**Files:** `src/inference-coordinator/coordinator.py` (`EVAL_MODE` path: `run_eval`, `_policy_window`,
+`_write_eval_results`, seeded `_reset`, window-scoped smoothness accumulation) and
+`src/sim-reset/sim_reset.py` (`--seed` → deterministic layout). Baked into `act-inference:latest`.
+
+**Next (D015 step 3 — the dataset-size ladder):** assemble curated teacher sets of increasing size via
+the assembler's `--limit` ({5, 10, 20, 40} episodes as the corpus allows), train ACT at each rung with
+**epochs held ≈ constant** (steps scaled to `total_frames`: `steps = round(E · total_frames / batch)`,
+E and batch pinned, read `total_frames` from each rung's `meta/info.json`), then run this harness on
+each checkpoint. v1 = smallest rung, v2 = largest; the expected rising success-rate curve is the
+honest BC property (D015).

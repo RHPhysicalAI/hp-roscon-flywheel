@@ -135,7 +135,7 @@ def reset_arm(duration=None, rate=20):
         pass  # expected — the pub runs until timeout
 
 
-def reset_sim(reset_arm_home=None, randomize=None):
+def reset_sim(reset_arm_home=None, randomize=None, rng=None):
     """Reset arm to home (via world reset) and reposition cubes for a fresh attempt.
 
     Sequence:
@@ -144,6 +144,9 @@ def reset_sim(reset_arm_home=None, randomize=None):
 
     The world reset is done through Gazebo, not the controller command topic,
     so it doesn't fight the continuously-running policy.
+
+    `rng` is an optional seeded random.Random — pass one (eval harness) to make
+    the cube layout reproducible; None draws a fresh unseeded layout.
     """
     if randomize is None:
         randomize = os.environ.get("RANDOMIZE_CUBES", "false").lower() == "true"
@@ -154,19 +157,39 @@ def reset_sim(reset_arm_home=None, randomize=None):
     if reset_arm_home:
         reset_arm()      # world reset: arm home + cubes nominal
         time.sleep(1.5)  # let physics settle after reset
-    reset_cubes(randomize=randomize)  # re-place cubes (randomized if enabled)
+    reset_cubes(randomize=randomize, rng=rng)  # re-place cubes (randomized if enabled)
     time.sleep(0.5)
     print("[sim-reset] Sim reset complete", flush=True)
 
 
+def _parse_seed(argv):
+    """Return the int following --seed, or None. A seed means the caller wants a
+    deterministic, reproducible cube layout (the eval harness, D020)."""
+    if "--seed" in argv:
+        i = argv.index("--seed")
+        if i + 1 < len(argv):
+            return int(argv[i + 1])
+    return None
+
+
 if __name__ == "__main__":
-    randomize = "--random" in sys.argv or os.environ.get("RANDOMIZE_CUBES", "false").lower() == "true"
+    seed = _parse_seed(sys.argv)
+    # A seed implies eval: draw the scene deterministically from that seed. The
+    # randomization *ranges* still come from env (RANDOM_RADIUS / RANDOMIZE_ONLY /
+    # RANDOM_YAW_DEG), so every policy evaluated with the same seed base and ranges
+    # sees the identical layout sequence.
+    rng = random.Random(seed) if seed is not None else None
+    randomize = (
+        seed is not None
+        or "--random" in sys.argv
+        or os.environ.get("RANDOMIZE_CUBES", "false").lower() == "true"
+    )
     cubes_only = "--cubes-only" in sys.argv
     if cubes_only:
         # Only reset cubes (world reset already handled arm/physics)
         print("[sim-reset] Cubes only...", flush=True)
-        reset_cubes(randomize=randomize)
+        reset_cubes(randomize=randomize, rng=rng)
         time.sleep(0.5)
         print("[sim-reset] Done", flush=True)
     else:
-        reset_sim(randomize=randomize)
+        reset_sim(randomize=randomize, rng=rng)

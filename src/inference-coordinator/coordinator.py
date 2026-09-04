@@ -60,6 +60,19 @@ REST_EPS = float(os.environ.get("REST_EPS", "0.01"))       # max per-sample join
 REST_HOLD_S = float(os.environ.get("REST_HOLD_S", "2.0"))  # how long the arm must stay still
 EARLY_MIN_S = float(os.environ.get("EARLY_MIN_S", "5.0"))  # earliest an episode may end
 
+# --- Eval harness (Phase 3, D020) ---
+# Instead of the open-ended training loop, run a FIXED number of episodes over a
+# REPEATABLE, seeded scene set, collect per-episode success/cubes/smoothness, and
+# write an aggregate results file. Self-contained: no curator/MinIO/Kafka in the
+# path, so eval episodes never enter the training corpus and eval doesn't depend
+# on the hub. Every policy evaluated at the same (EVAL_SEED_BASE, EVAL_EPISODES,
+# randomization ranges) sees the identical scene sequence — apples-to-apples, so
+# success-rate differences between checkpoints are attributable to the policy.
+EVAL_MODE = os.environ.get("EVAL_MODE", "false").lower() == "true"
+EVAL_EPISODES = int(os.environ.get("EVAL_EPISODES", "50"))
+EVAL_SEED_BASE = int(os.environ.get("EVAL_SEED_BASE", "1000"))
+EVAL_RESULTS_DIR = os.environ.get("EVAL_RESULTS_DIR", "/data/eval")
+
 
 class Coordinator(Node):
     def __init__(self):
@@ -93,6 +106,12 @@ class Coordinator(Node):
             self._mv_pub.publish(m)
             self.get_logger().info(f"Published model_version: {MODEL_VERSION}")
         self._latest_positions = None
+        # Eval-only per-episode metric accumulators (D020). Inert in the training
+        # loop (_metrics_active stays False), so the running producer is unaffected.
+        self._metrics_active = False
+        self._sm_deltas = []          # per-sample mean |Δjoint| — mirrors the emitter
+        self._prev_metric_pos = None
+        self._step_count = 0          # /joint_states messages during the window
         self.create_subscription(JointState, "/joint_states", self._on_joints, 10)
         self.get_logger().info("Coordinator started")
 
@@ -185,7 +204,17 @@ class Coordinator(Node):
         self._last_bag_path = None
 
     def _on_joints(self, msg):
-        self._latest_positions = list(msg.position)
+        pos = list(msg.position)
+        # During an eval window, accumulate trajectory smoothness the same way the
+        # emitter does (mean absolute per-joint delta between consecutive samples,
+        # averaged over the episode) so the eval metric matches the produced one.
+        if self._metrics_active:
+            if self._prev_metric_pos and len(pos) == len(self._prev_metric_pos):
+                deltas = [abs(a - b) for a, b in zip(pos, self._prev_metric_pos)]
+                self._sm_deltas.append(sum(deltas) / len(deltas))
+            self._prev_metric_pos = pos
+            self._step_count += 1
+        self._latest_positions = pos
 
     def _signal(self, msg: str):
         m = String()
@@ -220,17 +249,22 @@ class Coordinator(Node):
                 return
         self.get_logger().warn("Arm did not reach home within timeout")
 
-    def _reset(self):
+    def _reset(self, seed=None):
         """Reset cubes (and optionally arm) between episodes.
 
         Does NOT do a world reset — that destroys the controller_manager.
         Just repositions cubes via gz set_pose and optionally homes the arm.
+
+        When `seed` is given (eval mode), the cube layout is drawn deterministically
+        from that seed, so episode i of every policy sees the identical scene (D020).
         """
-        self.get_logger().info("Resetting cubes...")
-        subprocess.run(
-            ["python3", "/ws_pai/sim_reset.py"],
-            capture_output=True, timeout=20,
-        )
+        self.get_logger().info(
+            "Resetting cubes..." if seed is None
+            else f"Resetting cubes (seed={seed})...")
+        cmd = ["python3", "/ws_pai/sim_reset.py"]
+        if seed is not None:
+            cmd += ["--seed", str(seed)]
+        subprocess.run(cmd, capture_output=True, timeout=30)
 
     def _task_complete(self) -> bool:
         """True if all three cubes are on the tray (ground-truth cube poses)."""
@@ -344,12 +378,187 @@ class Coordinator(Node):
             #    don't accumulate multi-GB bags on disk.
             self._prune_bag_if_rejected()
 
+    # ---- Eval harness (Phase 3, D020) ------------------------------------------
+
+    def _policy_window(self) -> bool:
+        """Drive the policy for one attempt window; return True if it early-stopped.
+
+        Same timing logic as run_forever's step 4, factored out for the eval path.
+        Early-stop ends a run once 3/3 cubes are placed and the arm has settled."""
+        t_end = time.time() + EPISODE_LEN
+        window_start = time.time()
+        prev_pos = None
+        rest_since = None
+        while time.time() < t_end:
+            rclpy.spin_once(self, timeout_sec=0.2)
+            now = time.time()
+            if self._latest_positions:
+                if prev_pos and len(prev_pos) == len(self._latest_positions):
+                    moved = max(
+                        abs(a - b)
+                        for a, b in zip(self._latest_positions[:5], prev_pos[:5])
+                    )
+                    if moved > REST_EPS:
+                        rest_since = None
+                    elif rest_since is None:
+                        rest_since = now
+                prev_pos = list(self._latest_positions)
+            if (
+                EARLY_STOP
+                and rest_since is not None
+                and now - window_start >= EARLY_MIN_S
+                and now - rest_since >= REST_HOLD_S
+            ):
+                if self._task_complete():
+                    self.get_logger().info("Early stop: 3/3 cubes placed and arm settled")
+                    return True
+                rest_since = now
+        return False
+
+    def run_eval(self):
+        """Run EVAL_EPISODES over a fixed, seeded scene set and write results.
+
+        No recording, no pruning, no curator — this is measurement only. Each
+        episode's scene is drawn from EVAL_SEED_BASE + i, so the sequence is
+        identical for every policy evaluated at the same config (apples-to-apples).
+        """
+        self.get_logger().info(
+            f"EVAL MODE — {EVAL_EPISODES} episodes, seed_base={EVAL_SEED_BASE}, "
+            f"model_version={MODEL_VERSION or '(emitter default)'}")
+        self.get_logger().info("Waiting for action server...")
+        self._client.wait_for_server()
+        self.get_logger().info("Action server ready")
+
+        results = []
+        for i in range(EVAL_EPISODES):
+            seed = EVAL_SEED_BASE + i
+            self.get_logger().info(f"[eval] episode {i + 1}/{EVAL_EPISODES} seed={seed}")
+
+            # 1. Deterministic scene + clean arm start.
+            self._reset(seed=seed)
+            time.sleep(SETTLE_S)
+
+            # 2. Begin metric capture for this episode.
+            self._sm_deltas = []
+            self._prev_metric_pos = None
+            self._step_count = 0
+            self._start_peak_poll()   # resets peak to 0, spawns the poll thread
+            self._metrics_active = True
+            ep_start = time.time()
+            self._signal("start")
+
+            # 3. Send goal + run the attempt window.
+            goal = RunPolicy.Goal()
+            goal.prompt = PROMPT
+            send_future = self._client.send_goal_async(goal)
+            rclpy.spin_until_future_complete(self, send_future, timeout_sec=10)
+            handle = send_future.result()
+            early = False
+            accepted = bool(handle and handle.accepted)
+            if not accepted:
+                self.get_logger().warn("[eval] goal rejected — episode recorded as aborted")
+            else:
+                early = self._policy_window()
+                cancel_future = handle.cancel_goal_async()
+                rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=10)
+                time.sleep(1.0)
+
+            # 4. Stop metrics, settle, then score from ground-truth cube poses.
+            self._metrics_active = False
+            self._stop_peak_poll()
+            time.sleep(SETTLE_S)
+            self._signal("end")
+            time.sleep(0.5)
+            try:
+                import task_eval
+                _, snapshot = task_eval.evaluate_task()
+            except Exception as e:
+                self.get_logger().warn(f"[eval] task eval failed: {e}")
+                snapshot = 0
+            # Peak vs. snapshot, mirroring the emitter (a cube placed then knocked
+            # off still counts) so the eval number matches the produced one.
+            cubes = max(self._peak_cubes, snapshot)
+            smooth = (round(sum(self._sm_deltas) / len(self._sm_deltas), 6)
+                      if self._sm_deltas else 0.0)
+            row = {
+                "index": i,
+                "seed": seed,
+                "cubes_placed": cubes,
+                "task_success": cubes >= CUBES_TARGET,
+                "steps": self._step_count,
+                "avg_smoothness": smooth,
+                "duration_s": round(time.time() - ep_start, 2),
+                "early_stopped": early,
+                "goal_accepted": accepted,
+            }
+            results.append(row)
+            self.get_logger().info(
+                f"[eval] ep {i} -> cubes={cubes}/{CUBES_TARGET} "
+                f"success={row['task_success']} steps={row['steps']} "
+                f"smooth={smooth}")
+
+        self._write_eval_results(results)
+
+    def _write_eval_results(self, results):
+        """Aggregate the per-episode rows and write a results JSON to
+        EVAL_RESULTS_DIR/<model_version>.json — the source for the Phase 3
+        success-rate-vs-dataset-size chart (step 6)."""
+        import json
+        n = len(results)
+        successes = sum(1 for r in results if r["task_success"])
+        hist = {str(k): sum(1 for r in results if r["cubes_placed"] == k)
+                for k in range(CUBES_TARGET + 1)}
+        sm_vals = [r["avg_smoothness"] for r in results if r["avg_smoothness"] > 0]
+        mean_sm = round(sum(sm_vals) / len(sm_vals), 6) if sm_vals else 0.0
+        mean_cubes = round(sum(r["cubes_placed"] for r in results) / n, 3) if n else 0.0
+        mv = MODEL_VERSION or "unversioned"
+        doc = {
+            "model_version": mv,
+            "policy_path": os.environ.get("POLICY_PATH", ""),
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "eval_config": {
+                "episodes": EVAL_EPISODES,
+                "seed_base": EVAL_SEED_BASE,
+                "scene": PROMPT,
+                "episode_len_s": EPISODE_LEN,
+                "early_stop": EARLY_STOP,
+                "cubes_target": CUBES_TARGET,
+                # The scene distribution (recorded so a re-run is verifiably identical).
+                "randomize_cubes": os.environ.get("RANDOMIZE_CUBES", "false"),
+                "randomize_only": os.environ.get("RANDOMIZE_ONLY", ""),
+                "random_radius": os.environ.get("RANDOM_RADIUS", ""),
+                "random_yaw_deg": os.environ.get("RANDOM_YAW_DEG", ""),
+            },
+            "aggregate": {
+                "n": n,
+                "successes": successes,
+                "success_rate": round(successes / n, 4) if n else 0.0,
+                "mean_cubes": mean_cubes,
+                "cubes_hist": hist,
+                "mean_smoothness": mean_sm,
+            },
+            "episodes": results,
+        }
+        os.makedirs(EVAL_RESULTS_DIR, exist_ok=True)
+        path = os.path.join(EVAL_RESULTS_DIR, f"{mv.replace('/', '_')}.json")
+        with open(path, "w") as f:
+            json.dump(doc, f, indent=2)
+        agg = doc["aggregate"]
+        self.get_logger().info(
+            f"[eval] DONE — {successes}/{n} success "
+            f"({agg['success_rate'] * 100:.1f}%), mean_cubes={mean_cubes}, "
+            f"cubes_hist={hist}, mean_smooth={mean_sm}")
+        self.get_logger().info(f"[eval] results -> {path}")
+
 
 def main():
     rclpy.init()
     node = Coordinator()
     try:
-        node.run_forever()
+        if EVAL_MODE:
+            node.run_eval()   # fixed-N seeded eval, then exit (batch job)
+        else:
+            node.run_forever()
     except KeyboardInterrupt:
         pass
     finally:
