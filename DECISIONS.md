@@ -396,3 +396,55 @@ A container rebuild-from-image or a `/tmp` wipe (host reboot) reverts them. **Fo
 both files, rebuild the sim image (`:sim-only`) and the `act-inference` image, and redeploy so the
 fixes persist. Also copy the kept weak checkpoints out of `/tmp/weak-training/` (root-owned;
 needs the operator's sudo) to persistent storage.
+
+> **Resolved 2026-09-03 (same day):** both fixes committed (`c9faf22`), `task_eval.py` added to the
+> GPU inference image (`abff9b1`), both images rebuilt, both containers recreated from images with
+> no bind-mounts, and the loop verified end-to-end (early-stop firing, real cube counts). The weak
+> checkpoints in `/tmp` remain a pending operator action.
+
+---
+
+## D017 — The flywheel moves scores, not training data; restore episode recording (Phase 2.5)
+
+**Date:** 2026-09-03
+
+**Finding:** the data plane as built curates **episode metadata only**. `episode_emitter.py` emits
+a JSON record — `task_success`, `cubes_placed`, `avg_smoothness`, `steps` — and the sync-agent
+ships that to MinIO/Kafka. No observation frames or action vectors are recorded anywhere. Every
+training run to date (D014) used the upstream HuggingFace corpus
+`francocipollone/rospai_sim_arm101_place_cubes_on_tray`, not anything the flywheel produced. The
+loop today is *sim → score → store score*.
+
+**This is a divergence from the design, not the design.** The episode contract in
+`THOR-TESTING-REUSE.md` already carries a `rosbag_path` field — *"relative path to the MCAP rosbag
+for training"* — and states that the full rollout data is stored separately for training while the
+JSON is the lightweight metadata the curator scores on. `PROJECT-BRIEF.md`'s architecture reads
+*"LeRobot ACT fine-tune on curated data … sim picks up v2 policy → better rollouts → loop closes."*
+`BUILD-PLAN.md` Phase 3 lists *"Input: curated episodes from MinIO."* The recording path was in
+the contract and the brief; the implementation dropped it, and it went unnoticed because the
+upstream corpus was always available to train on.
+
+**Why it matters:** without recording, the demo's central claim — "we retrain on the curated
+episodes" — is not true; the honest description would be "we score the sim and train on a
+third-party dataset." It also blocks every genuinely self-improving variant (`BOOTSTRAP-LOOP.md`),
+all of which need the loop's own episodes to be trainable.
+
+**Decision:** restore episode recording as a dedicated phase — **Phase 2.5, Close the Data Loop**
+(`BUILD-PLAN.md`) — before the governance work in Phase 3:
+- Record each rollout in **LeRobot format** (frames + joint states + actions), aligned to the
+  coordinator's `start`/`end` signals, reusing the upstream recorder (`pai_data_collection` /
+  Rosetta) rather than writing one.
+- Replace the never-populated `rosbag_path` with a populated `dataset_path`; keep the JSON metadata.
+- Sync-agent uploads the episode **data** alongside the curated JSON; the Kafka manifest carries
+  the data URI.
+- Add a **dataset assembler** that builds a training LeRobot dataset from curated shards in MinIO.
+- Make `MODEL_VERSION` reflect the running policy on every swap — lineage becomes load-bearing.
+
+**Consequence for D015:** the dataset-size ladder stands, but the dataset becomes
+**flywheel-captured curated episodes** (teacher = the upstream policy running in our sim, gated by
+the curator), not the HuggingFace corpus. The proof is then honest end-to-end: the loop recorded
+the data, the curator selected it, training consumed it.
+
+**Sequencing:** Phase 2.5 is a prerequisite for Phase 3 (real input) and Phase 3+ (autonomous
+frontier data). The plan is written without schedule constraints; the operator decides what to
+take on before Fury and what to defer.
