@@ -24,7 +24,7 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
 from sensor_msgs.msg import JointState
-from std_msgs.msg import String
+from std_msgs.msg import Float64MultiArray, MultiArrayDimension, String
 
 from rosetta_interfaces.action import RecordEpisode, RunPolicy
 
@@ -73,6 +73,29 @@ EVAL_EPISODES = int(os.environ.get("EVAL_EPISODES", "50"))
 EVAL_SEED_BASE = int(os.environ.get("EVAL_SEED_BASE", "1000"))
 EVAL_RESULTS_DIR = os.environ.get("EVAL_RESULTS_DIR", "/data/eval")
 
+# --- Failure recovery: return to the policy's OWN rest pose after a failed episode ---
+# A failed episode can leave the arm in a rough spot (e.g. the gripper parked over the
+# cube spawn), so the next episode starts badly and failures chain. Homing to all-zeros
+# (RESET_ARM) is NOT the fix: the SO-ARM rest pose is not zeros (D016), and from the
+# zero pose the policy produces no motion (out-of-distribution start — it broke the loop
+# when tried). Instead, learn the pose the policy naturally settles into after a
+# successful episode and drive back to THAT on failure: an in-distribution start, and
+# the gripper is clear of the spawn zone before the cubes are placed. Runs only after the
+# goal is cancelled and the bag is finalized, so nothing fights it and it is not recorded.
+RECOVER_ON_FAIL = os.environ.get("RECOVER_ON_FAIL", "true").lower() == "true"
+RECOVER_PUBLISH_S = float(os.environ.get("RECOVER_PUBLISH_S", "5.0"))
+RECOVER_RATE = float(os.environ.get("RECOVER_RATE", "20"))
+RECOVER_TOL = float(os.environ.get("RECOVER_TOL", "0.15"))  # rad; arm joints only
+# Joint order the forward_position_controller expects. /joint_states publishes joints
+# in a DIFFERENT (alphabetical) order, so commands are built by name, never by index.
+CTRL_JOINTS = [j.strip() for j in os.environ.get(
+    "CTRL_JOINTS",
+    "shoulder_pan_joint,shoulder_lift_joint,elbow_flex_joint,"
+    "wrist_flex_joint,wrist_roll_joint,gripper_joint").split(",") if j.strip()]
+GRIPPER_JOINT = os.environ.get("GRIPPER_JOINT", "gripper_joint")
+# Optional pin: comma-separated positions in CTRL_JOINTS order. Unset = learn it.
+_REST_POSE_ENV = os.environ.get("REST_POSE", "")
+
 
 class Coordinator(Node):
     def __init__(self):
@@ -106,6 +129,20 @@ class Coordinator(Node):
             self._mv_pub.publish(m)
             self.get_logger().info(f"Published model_version: {MODEL_VERSION}")
         self._latest_positions = None
+        self._latest_names = None
+        # Failure recovery state: the learned rest pose ({joint: pos}) and whether the
+        # last episode failed (drives the recovery at the top of the next cycle).
+        self._rest_pose = None
+        if _REST_POSE_ENV:
+            vals = [float(v) for v in _REST_POSE_ENV.split(",")]
+            if len(vals) == len(CTRL_JOINTS):
+                self._rest_pose = dict(zip(CTRL_JOINTS, vals))
+                self.get_logger().info(f"Rest pose pinned from REST_POSE: {self._rest_pose}")
+            else:
+                self.get_logger().warn("REST_POSE ignored: wrong length")
+        self._last_failed = False
+        self._cmd_pub = self.create_publisher(
+            Float64MultiArray, "/forward_position_controller/commands", 10)
         # Eval-only per-episode metric accumulators (D020). Inert in the training
         # loop (_metrics_active stays False), so the running producer is unaffected.
         self._metrics_active = False
@@ -205,6 +242,7 @@ class Coordinator(Node):
 
     def _on_joints(self, msg):
         pos = list(msg.position)
+        self._latest_names = list(msg.name)
         # During an eval window, accumulate trajectory smoothness the same way the
         # emitter does (mean absolute per-joint delta between consecutive samples,
         # averaged over the episode) so the eval metric matches the produced one.
@@ -232,6 +270,48 @@ class Coordinator(Node):
             m.data = ""
         self._dataset_pub.publish(m)
         self.get_logger().info(f"Dataset ref: '{m.data}'")
+
+    def _learn_rest_pose(self):
+        """Snapshot the arm's settled pose after a successful episode as the policy's
+        rest pose (by joint name). Called at early-stop, when the rest detector has
+        already confirmed the arm is still. Skipped if REST_POSE pins it."""
+        if _REST_POSE_ENV or not (self._latest_positions and self._latest_names):
+            return
+        pose = dict(zip(self._latest_names, self._latest_positions))
+        if any(j not in pose for j in CTRL_JOINTS):
+            self.get_logger().warn(f"Rest pose not learned: joints missing from /joint_states")
+            return
+        moved = (max(abs(pose[j] - self._rest_pose[j]) for j in CTRL_JOINTS)
+                 if self._rest_pose else None)
+        self._rest_pose = pose
+        if moved is None or moved > 0.05:
+            self.get_logger().info(
+                "Learned rest pose: " + ", ".join(f"{j}={pose[j]:.3f}" for j in CTRL_JOINTS))
+
+    def _recover_arm(self):
+        """After a failed episode, drive the arm back to the learned rest pose before
+        the cubes are reset. No goal is active here, so nothing fights the command."""
+        if not (RECOVER_ON_FAIL and self._last_failed and self._rest_pose):
+            return
+        msg = Float64MultiArray()
+        msg.layout.dim.append(
+            MultiArrayDimension(label="joint", size=len(CTRL_JOINTS), stride=1))
+        msg.data = [float(self._rest_pose[j]) for j in CTRL_JOINTS]
+        self.get_logger().info(
+            f"Recovering arm to rest pose after failed episode ({RECOVER_PUBLISH_S:.0f}s)...")
+        deadline = time.time() + RECOVER_PUBLISH_S
+        while time.time() < deadline:
+            self._cmd_pub.publish(msg)
+            rclpy.spin_once(self, timeout_sec=1.0 / RECOVER_RATE)
+        # Report how close we got (arm joints only; the gripper may rest on a cube).
+        if self._latest_positions and self._latest_names:
+            cur = dict(zip(self._latest_names, self._latest_positions))
+            err = max(abs(cur[j] - self._rest_pose[j])
+                      for j in CTRL_JOINTS if j != GRIPPER_JOINT and j in cur)
+            if err <= RECOVER_TOL:
+                self.get_logger().info(f"Arm recovered to rest pose (max err {err:.3f} rad)")
+            else:
+                self.get_logger().warn(f"Arm did not reach rest pose (max err {err:.3f} rad)")
 
     def _arm_at_home(self) -> bool:
         if not self._latest_positions:
@@ -291,6 +371,10 @@ class Coordinator(Node):
                     "Episode recorder not available — proceeding WITHOUT recording")
 
         while rclpy.ok():
+            # 0. If the last episode failed, return the arm to the policy's own rest
+            #    pose first, so the gripper is clear before cubes are placed and the
+            #    next episode starts in-distribution (no chained failures).
+            self._recover_arm()
             # 1. Full world reset + controller reactivation + cube placement.
             #    No active goal, so no fighting.
             self._reset()
@@ -315,6 +399,7 @@ class Coordinator(Node):
                 self._stop_peak_poll()
                 self._signal("end")
                 self._prune_bag_if_rejected()
+                self._last_failed = True
                 time.sleep(2)
                 continue
 
@@ -351,6 +436,7 @@ class Coordinator(Node):
                     if self._task_complete():
                         self.get_logger().info(
                             "Early stop: 3/3 cubes placed and arm settled")
+                        self._learn_rest_pose()  # settled after success = rest pose
                         break
                     # Arm idle but task not done (e.g. stuck) — re-arm the timer
                     # so we recheck later instead of hammering the pose query.
@@ -377,6 +463,8 @@ class Coordinator(Node):
             #    (peak cubes >= target); otherwise delete it so failed rollouts
             #    don't accumulate multi-GB bags on disk.
             self._prune_bag_if_rejected()
+            # 8. Remember the outcome so the next cycle can recover the arm if needed.
+            self._last_failed = self._peak_cubes < CUBES_TARGET
 
     # ---- Eval harness (Phase 3, D020) ------------------------------------------
 
