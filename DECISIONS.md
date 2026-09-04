@@ -846,6 +846,13 @@ identical 50 seeds):**
   > (not via `ros2 topic pub`), bootstrapped with `REST_POSE=0,…` (the spawn pose), refined by
   > the pose the policy settles into after a success, persisted to `/data/rest_pose.json`, and
   > run on startup too, so a restart into a rough spot self-heals and failures don't chain.
+  > **Verified live (2026-09-04):** first success → learned settled pose (shoulder_lift −1.73,
+  > elbow 1.46, wrist_flex 1.33 — a tucked pose, not zeros: D016 was about the *settled* pose);
+  > the next two failures (1/3, 2/3) each triggered a recovery that converged with max error
+  > **0.000 rad**. The zeros bootstrap pin did *not* converge on the first cycle (0.65 rad off in
+  > 5 s), so it is only a fallback. Operator tool `src/pose-ui/pose_ui.py` (host :8090) shows both
+  > cameras + live joints and can pin a chosen pose (`pinned: true`), which learning never
+  > overwrites (5cdb33b).
 - **Nested, regime-balanced rungs via seeded shuffle** (`~/rung_plan.py`): rung N = the first N of a
   seeded shuffle of the final 160, so 20 ⊂ 40 ⊂ 80 ⊂ 160 and every rung samples uniformly across
   collection time. Chronological nesting was rejected because it would make small rungs = old
