@@ -835,6 +835,13 @@ identical 50 seeds):**
   faster, and training episodes start the way eval episodes do. The ~70 already collected under
   cubes-only reset stay in the corpus: they are successes-only (valid demonstrations either way; the
   mid-reach starts are if anything more diverse). Rollback container: `act-inference-prereset-bak`.
+  > **REVERTED within ~15 min (2026-09-04).** In the running loop `RESET_ARM=true` produced 0 curated /
+  > 6 rejected and the operator saw the arm misbehave in Gazebo; the original container was restored
+  > (`RESET_ARM=false`, cubes-only reset). It had *not* misbehaved in the eval container (v1 = 74%),
+  > so the v1/v2 comparison stands, but the loop stays on cubes-only reset and collection stays at
+  > ~35%. The `RESET_ARM=true` container is parked as `act-inference-resetarm-bak` for diagnosis.
+  > Open question: why does homing-to-zeros (`ARM_HOME=[0]*6`; the SO-ARM rest pose is not
+  > all-zeros, D016) hurt the loop but not the eval — recorder interaction, or startup failures?
 - **Nested, regime-balanced rungs via seeded shuffle** (`~/rung_plan.py`): rung N = the first N of a
   seeded shuffle of the final 160, so 20 ⊂ 40 ⊂ 80 ⊂ 160 and every rung samples uniformly across
   collection time. Chronological nesting was rejected because it would make small rungs = old
