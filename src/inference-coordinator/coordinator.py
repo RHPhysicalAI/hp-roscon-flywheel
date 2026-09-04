@@ -93,8 +93,13 @@ CTRL_JOINTS = [j.strip() for j in os.environ.get(
     "shoulder_pan_joint,shoulder_lift_joint,elbow_flex_joint,"
     "wrist_flex_joint,wrist_roll_joint,gripper_joint").split(",") if j.strip()]
 GRIPPER_JOINT = os.environ.get("GRIPPER_JOINT", "gripper_joint")
-# Optional pin: comma-separated positions in CTRL_JOINTS order. Unset = learn it.
+# Optional bootstrap pin: comma-separated positions in CTRL_JOINTS order (e.g. the
+# arm's spawn pose). Lets recovery work before any success has been observed; the
+# learned pose (persisted to REST_POSE_FILE) takes precedence and refines it.
 _REST_POSE_ENV = os.environ.get("REST_POSE", "")
+# Learned poses persist here (host-mounted /data) so a restart doesn't have to wait
+# for a success to bootstrap recovery. A pin (REST_POSE) takes precedence.
+REST_POSE_FILE = os.environ.get("REST_POSE_FILE", "/data/rest_pose.json")
 
 
 class Coordinator(Node):
@@ -140,7 +145,15 @@ class Coordinator(Node):
                 self.get_logger().info(f"Rest pose pinned from REST_POSE: {self._rest_pose}")
             else:
                 self.get_logger().warn("REST_POSE ignored: wrong length")
-        self._last_failed = False
+        # A persisted LEARNED pose (the arm's actual settled pose) beats the env pin,
+        # which is only a bootstrap so recovery works before the first success.
+        learned = self._load_rest_pose()
+        if learned is not None:
+            self._rest_pose = learned
+        # A restart can land the arm anywhere (e.g. mid-episode when the previous
+        # container was stopped). If a rest pose is known, recover on the FIRST
+        # cycle too, not just after an observed failure.
+        self._last_failed = self._rest_pose is not None
         self._cmd_pub = self.create_publisher(
             Float64MultiArray, "/forward_position_controller/commands", 10)
         # Eval-only per-episode metric accumulators (D020). Inert in the training
@@ -271,11 +284,37 @@ class Coordinator(Node):
         self._dataset_pub.publish(m)
         self.get_logger().info(f"Dataset ref: '{m.data}'")
 
+    def _load_rest_pose(self):
+        """Load a previously learned rest pose from REST_POSE_FILE, or None."""
+        try:
+            import json
+            with open(REST_POSE_FILE) as f:
+                pose = json.load(f)
+            if all(j in pose for j in CTRL_JOINTS):
+                self.get_logger().info(
+                    "Rest pose loaded from file: "
+                    + ", ".join(f"{j}={pose[j]:.3f}" for j in CTRL_JOINTS))
+                return {j: float(pose[j]) for j in CTRL_JOINTS}
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            self.get_logger().warn(f"Rest pose file unreadable: {e}")
+        return None
+
+    def _save_rest_pose(self):
+        try:
+            import json
+            os.makedirs(os.path.dirname(REST_POSE_FILE), exist_ok=True)
+            with open(REST_POSE_FILE, "w") as f:
+                json.dump({j: self._rest_pose[j] for j in CTRL_JOINTS}, f, indent=1)
+        except Exception as e:
+            self.get_logger().warn(f"Rest pose not saved: {e}")
+
     def _learn_rest_pose(self):
         """Snapshot the arm's settled pose after a successful episode as the policy's
         rest pose (by joint name). Called at early-stop, when the rest detector has
         already confirmed the arm is still. Skipped if REST_POSE pins it."""
-        if _REST_POSE_ENV or not (self._latest_positions and self._latest_names):
+        if not (self._latest_positions and self._latest_names):
             return
         pose = dict(zip(self._latest_names, self._latest_positions))
         if any(j not in pose for j in CTRL_JOINTS):
@@ -287,6 +326,7 @@ class Coordinator(Node):
         if moved is None or moved > 0.05:
             self.get_logger().info(
                 "Learned rest pose: " + ", ".join(f"{j}={pose[j]:.3f}" for j in CTRL_JOINTS))
+            self._save_rest_pose()
 
     def _recover_arm(self):
         """After a failed episode, drive the arm back to the learned rest pose before
