@@ -23,10 +23,16 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 
-from rosetta_interfaces.action import RunPolicy
+from rosetta_interfaces.action import RecordEpisode, RunPolicy
 
 EPISODE_LEN = float(os.environ.get("EPISODE_LEN", "25"))
 PROMPT = os.environ.get("PROMPT", "place cubes on tray")
+# Record each rollout to a per-episode MCAP bag via the upstream Rosetta
+# episode_recorder (D018). The recorder runs as its own node (launched in the
+# entrypoint); the coordinator drives it with the RecordEpisode action so the
+# bag boundaries match the scored-episode boundaries exactly.
+RECORD = os.environ.get("RECORD", "true").lower() == "true"
+RECORD_WAIT_S = float(os.environ.get("RECORD_WAIT_S", "30.0"))
 SETTLE_S = float(os.environ.get("SETTLE_S", "3.0"))
 HOME_TOLERANCE = float(os.environ.get("HOME_TOLERANCE", "0.15"))
 HOME_WAIT_MAX = float(os.environ.get("HOME_WAIT_MAX", "8.0"))
@@ -43,10 +49,57 @@ class Coordinator(Node):
     def __init__(self):
         super().__init__("inference_coordinator")
         self._client = ActionClient(self, RunPolicy, "/run_policy")
+        self._rec_client = ActionClient(
+            self, RecordEpisode, "/episode_recorder/record_episode")
+        self._rec_handle = None
+        self._recording_available = False
+        self._last_bag_path = None
         self._control_pub = self.create_publisher(String, "/flywheel/episode_control", 10)
         self._latest_positions = None
         self.create_subscription(JointState, "/joint_states", self._on_joints, 10)
         self.get_logger().info("Coordinator started")
+
+    def _start_recording(self):
+        """Send a RecordEpisode goal so the recorder captures this rollout.
+
+        Best-effort: if the recorder isn't available, the loop still runs
+        (just without training data for that episode)."""
+        if not (RECORD and self._recording_available):
+            return
+        goal = RecordEpisode.Goal()
+        goal.prompt = PROMPT
+        send_future = self._rec_client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(self, send_future, timeout_sec=10)
+        handle = send_future.result()
+        if handle and handle.accepted:
+            self._rec_handle = handle
+            self.get_logger().info("Recording started")
+        else:
+            self._rec_handle = None
+            self.get_logger().warn("Record goal rejected — no bag for this episode")
+
+    def _stop_recording(self):
+        """Cancel the active recording and retrieve the finalized bag path.
+
+        Waits for the action *result* (not just the cancel ack) so the bag is
+        fully written before the next episode starts — this also avoids the
+        recorder rejecting the next start goal with 'already recording'."""
+        self._last_bag_path = None
+        if self._rec_handle is None:
+            return
+        result_future = self._rec_handle.get_result_async()
+        cancel_future = self._rec_handle.cancel_goal_async()
+        rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=10)
+        rclpy.spin_until_future_complete(self, result_future, timeout_sec=15)
+        wrapped = result_future.result()
+        if wrapped is not None:
+            res = wrapped.result
+            self._last_bag_path = res.bag_path or None
+            self.get_logger().info(
+                f"Recording stopped: bag={res.bag_path} msgs={res.messages_written}")
+        else:
+            self.get_logger().warn("Recording stop: no result (bag path unknown)")
+        self._rec_handle = None
 
     def _on_joints(self, msg):
         self._latest_positions = list(msg.position)
@@ -100,13 +153,24 @@ class Coordinator(Node):
         self._client.wait_for_server()
         self.get_logger().info("Action server ready")
 
+        if RECORD:
+            self.get_logger().info("Waiting for episode recorder action server...")
+            if self._rec_client.wait_for_server(timeout_sec=RECORD_WAIT_S):
+                self._recording_available = True
+                self.get_logger().info("Episode recorder ready — rollouts will be recorded")
+            else:
+                self.get_logger().warn(
+                    "Episode recorder not available — proceeding WITHOUT recording")
+
         while rclpy.ok():
             # 1. Full world reset + controller reactivation + cube placement.
             #    No active goal, so no fighting.
             self._reset()
             time.sleep(SETTLE_S)  # let physics settle after reset
 
-            # 2. Episode start
+            # 2. Episode start — begin recording, then signal, so the bag
+            #    captures the rollout from the first policy command.
+            self._start_recording()
             self._signal("start")
 
             # 3. Send goal — policy drives the arm from a clean home state
@@ -117,6 +181,7 @@ class Coordinator(Node):
             handle = send_future.result()
             if not handle or not handle.accepted:
                 self.get_logger().warn("Goal rejected — retrying next cycle")
+                self._stop_recording()
                 self._signal("end")
                 time.sleep(2)
                 continue
@@ -164,6 +229,10 @@ class Coordinator(Node):
             cancel_future = handle.cancel_goal_async()
             rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=10)
             time.sleep(1.0)  # let the last command drain
+
+            # 5b. Stop recording once the policy has stopped commanding, so the
+            #     bag holds the rollout (not the idle settle that follows).
+            self._stop_recording()
 
             # 6. Settle, then evaluate via the end signal
             time.sleep(SETTLE_S)

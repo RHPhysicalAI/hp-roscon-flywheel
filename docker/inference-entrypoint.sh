@@ -71,6 +71,26 @@ ROSETTA_PID=$!
 echo "[inference] Waiting for policy server..."
 sleep 15
 
+# Start the episode recorder (D018): records the contract topics (cameras,
+# joint states, actions) to a per-episode MCAP bag, driven by the coordinator's
+# RecordEpisode action. Uses the FULL contract — the recorder understands the
+# recording/fps keys that only the policy runner needed stripped. Bags go to
+# BAG_DIR, which should be a host-mounted volume so they survive container
+# recreation.
+RECORD=${RECORD:-true}
+BAG_DIR=${BAG_DIR:-/data/bags}
+if [ "$RECORD" = "true" ]; then
+  mkdir -p "$BAG_DIR"
+  echo "[inference] Starting episode recorder -> $BAG_DIR (contract: $CONTRACT_SRC)"
+  ros2 launch rosetta episode_recorder_launch.py \
+    contract_path:="${CONTRACT_SRC}" \
+    bag_base_dir:="${BAG_DIR}" \
+    &
+  RECORDER_PID=$!
+  echo "[inference] Waiting for recorder to configure+activate..."
+  sleep 10
+fi
+
 # Python coordinator drives clean episode phasing with confirmation waits:
 #   reset -> confirm arm home -> settle -> start -> send goal -> window ->
 #   cancel goal (wait) -> settle -> end (evaluate).
