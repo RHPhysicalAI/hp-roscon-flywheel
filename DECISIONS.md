@@ -573,3 +573,44 @@ the sync-agent runs in-cluster reading the node hostPath — the bag upload need
 `MODEL_VERSION` lineage is correct for the teacher run, but swapping the served checkpoint (on
 `act-inference`) does not relabel the emitter (on `so-arm-sim`) — coupled only by operator
 convention today.
+
+---
+
+## D019 — The hub stores the ported LeRobot dataset; raw bags stay on the host
+
+**Date:** 2026-09-04
+
+**Question (Phase 2.5 step 6):** the curated JSON reaches MinIO but the recorded frame data does
+not. In what form should curated *data* land in the hub, given the MinIO PVC is 50Gi and a raw
+MCAP bag is ~2Gi (≈400× the ported form)?
+
+**What full bags buy over the ported LeRobot dataset:** re-portability. The bag is the negative,
+the LeRobot dataset the print — `port_bags` is lossy and contract-locked (h264 video, resized to
+480×480, resampled to fps=50, joint *position only*, frozen to the current `so_arm101.yaml`). Keep
+the raw bag and you can re-port under a changed observation space (different resolution/fps, keep
+velocity/effort, new joint mapping) or replay it faithfully. For the project's actual method
+(ACT/LeRobot BC, D015) the ported form is exactly what training consumes — full bags add nothing
+to training; they are a hedge for schema change and the Phase 3+ bootstrap experiments.
+
+**Olga's dashboard does not change this.** Her read-only eval dashboard is metadata-only — it
+groups the episode JSON records (success rate, cube-count distribution, smoothness, side-by-side)
+by `model_version`, consuming `episodes-curated` + `episodes-rejected` (already in MinIO) and Kafka
+manifests. It needs neither raw bags nor the LeRobot dataset. (Her MinIO/Kafka access was already
+provisioned 2026-09-04: external NodePorts 30900/30903, a `rejected-mirror` CronJob, scoped
+`olga-readonly` creds.) So the raw-vs-ported choice is independent of her.
+
+**Decision (operator-approved):**
+- **The hub's canonical trainable artifact is the ported LeRobot dataset**, uploaded as a single
+  gzip tarball to `episodes-data/<model_version>/<repo_id>.tar.gz`. Small, directly trainable, fits
+  50Gi with room to spare (~4.5 MB/episode). The assembler's `--push-dataset` does this; its
+  `--from-minio` pulls the curated *selection* from `episodes-curated`, so the training-data
+  lifecycle is hub-centric — the only host dependency is the raw frames, by design.
+- **Raw curated bags stay on the desktop host** (1.8 TB, effectively free) as the re-porting hedge,
+  pruned to curated-only (D018).
+- **Archiving raw bags in the hub is deferred to Fury-prep.** It's the only thing that argues for
+  growing the PVC, and it matters only for the multi-machine story, not the single-box demo. The
+  operator doesn't mind growing the PVC when that time comes.
+
+**Consequence:** "we retrain on the curated episodes the loop recorded" is fully satisfied by the
+ported dataset in the hub. If a future method needs richer observations, re-port from the host bags
+(or, on Fury, from bags archived in a grown bucket) — no re-collection required.

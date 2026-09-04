@@ -136,8 +136,9 @@ of the episode contract (`THOR-TESTING-REUSE.md`) and is the prerequisite for bo
   (curated JSONs + local bags) and verified; MinIO-only source pending step 6*
 - [x] `lerobot-train` trains a checkpoint from flywheel-captured data and it runs in the sim
   (ACT 5000 steps on 4 curated episodes → checkpoint loads in `act-inference`, drives the arm)
-- [ ] `MODEL_VERSION` lineage is correct on every emitted episode — *emitter label fixed to the
-  teacher; served-checkpoint swap does not yet auto-relabel the emitter (step 6)*
+- [x] `MODEL_VERSION` lineage is correct on every emitted episode — the coordinator (co-located
+  with the served policy) publishes the label latched on `/flywheel/model_version`; the emitter
+  adopts it, so a checkpoint swap on `act-inference` alone re-labels every episode (verified)
 
 ---
 
