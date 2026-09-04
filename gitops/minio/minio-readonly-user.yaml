@@ -1,0 +1,98 @@
+# This project was developed with assistance from AI tools.
+#
+# Scoped read-only MinIO user for the eval dashboard (Olga, APPENG-6295).
+# GetObject/ListBucket only, on episodes-curated and episodes-rejected —
+# no write access, no access to other buckets, not the root account.
+# The Job is idempotent (mc admin user/policy commands are upsert-safe) so
+# Argo re-running it on selfHeal is harmless.
+#
+# Unlike the existing root MinIO credentials (gitops/flywheel/hub-credentials.yaml,
+# committed in plaintext), this Secret is applied directly to the cluster
+# (`oc apply`) and deliberately NOT committed to git — it's a freshly
+# generated, meaningfully-scoped credential, not a placeholder default.
+# It won't be pruned by Argo since Argo never manages a resource it didn't
+# sync in. Recreate it with:
+#   oc create secret generic minio-olga-readonly-credentials -n minio \
+#     --from-literal=access-key=olga-readonly \
+#     --from-literal=secret-key=<generated>
+# Hand the value to Olga out of band (Slack/DM), never in the Jira ticket.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: minio-olga-readonly-policy
+  namespace: minio
+data:
+  policy.json: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": ["s3:GetObject"],
+          "Resource": [
+            "arn:aws:s3:::episodes-curated/*",
+            "arn:aws:s3:::episodes-rejected/*"
+          ]
+        },
+        {
+          "Effect": "Allow",
+          "Action": ["s3:ListBucket"],
+          "Resource": [
+            "arn:aws:s3:::episodes-curated",
+            "arn:aws:s3:::episodes-rejected"
+          ]
+        }
+      ]
+    }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-olga-readonly-setup
+  namespace: minio
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: setup
+          image: quay.io/minio/mc:latest
+          command:
+            - sh
+            - -c
+            - |
+              mc alias set myminio http://minio.minio.svc:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+              mc admin user add myminio "$RO_ACCESS_KEY" "$RO_SECRET_KEY"
+              mc admin policy create myminio episodes-readonly /policy/policy.json
+              mc admin policy attach myminio episodes-readonly --user="$RO_ACCESS_KEY"
+              echo "[minio-olga-readonly-setup] done"
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: root-user
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: root-password
+            - name: RO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-olga-readonly-credentials
+                  key: access-key
+            - name: RO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-olga-readonly-credentials
+                  key: secret-key
+          volumeMounts:
+            - name: policy
+              mountPath: /policy
+              readOnly: true
+      volumes:
+        - name: policy
+          configMap:
+            name: minio-olga-readonly-policy

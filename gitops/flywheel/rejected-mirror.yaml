@@ -1,0 +1,107 @@
+# This project was developed with assistance from AI tools.
+#
+# Mirrors rejected episode records to MinIO so the eval dashboard (Olga,
+# APPENG-6295) can compute a real success rate. The curator writes rejected
+# records to hostPath /var/lib/episodes/rejected/ and never uploads them
+# (only curated records reach MinIO/Kafka today) — see THOR-TESTING-REUSE.md
+# "The integration seam". This job only reads that hostPath (readOnly mount)
+# and never touches curated/, sent/, or raw/ — no interaction with the
+# curator or sync-agent pipeline.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rejected-mirror-code
+  namespace: flywheel
+data:
+  rejected_mirror.py: |
+    """Rejected-mirror — copies rejected episode records to MinIO (read-only against the pipeline)."""
+    import json, os, pathlib
+
+    REJECTED_DIR = pathlib.Path(os.environ.get("REJECTED_DIR", "/data/episodes/rejected"))
+    S3_ENDPOINT = os.environ.get("S3_ENDPOINT")
+    S3_BUCKET = os.environ.get("S3_BUCKET", "episodes-rejected")
+    S3_ACCESS_KEY = os.environ.get("S3_ACCESS_KEY")
+    S3_SECRET_KEY = os.environ.get("S3_SECRET_KEY")
+
+    def get_s3_client():
+        import boto3
+        return boto3.client(
+            "s3",
+            endpoint_url=S3_ENDPOINT,
+            aws_access_key_id=S3_ACCESS_KEY,
+            aws_secret_access_key=S3_SECRET_KEY,
+        )
+
+    def ensure_bucket(s3):
+        try:
+            s3.head_bucket(Bucket=S3_BUCKET)
+        except Exception:
+            s3.create_bucket(Bucket=S3_BUCKET)
+            print(f"[rejected-mirror] Created bucket {S3_BUCKET}", flush=True)
+
+    if __name__ == "__main__":
+        s3 = get_s3_client()
+        ensure_bucket(s3)
+        uploaded = 0
+        for path in sorted(REJECTED_DIR.glob("*.json")):
+            episode = json.loads(path.read_text())
+            episode_id = episode["episode_id"]
+            s3_key = f"{episode.get('model_version', 'unknown')}/{episode_id}.json"
+            try:
+                s3.head_object(Bucket=S3_BUCKET, Key=s3_key)
+                continue  # already mirrored
+            except Exception:
+                pass
+            s3.put_object(Bucket=S3_BUCKET, Key=s3_key, Body=path.read_bytes(), ContentType="application/json")
+            uploaded += 1
+        print(f"[rejected-mirror] Mirrored {uploaded} new rejected record(s) to {S3_BUCKET}", flush=True)
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rejected-mirror
+  namespace: flywheel
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 180
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: rejected-mirror
+              image: docker.io/library/python:3.12-slim
+              command: ["sh", "-c", "pip install -q boto3 && python /app/rejected_mirror.py"]
+              env:
+                - name: S3_ENDPOINT
+                  value: "http://minio.minio.svc:9000"
+                - name: S3_BUCKET
+                  value: "episodes-rejected"
+                - name: S3_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: hub-credentials
+                      key: s3-access-key
+                - name: S3_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: hub-credentials
+                      key: s3-secret-key
+              volumeMounts:
+                - name: code
+                  mountPath: /app
+                  readOnly: true
+                - name: episodes
+                  mountPath: /data/episodes
+                  readOnly: true
+          volumes:
+            - name: code
+              configMap:
+                name: rejected-mirror-code
+            - name: episodes
+              hostPath:
+                path: /var/lib/episodes

@@ -9,15 +9,18 @@ data:
     node.id=1
     process.roles=broker,controller
     controller.quorum.voters=1@localhost:9093
-    listeners=PLAINTEXT://:9092,CONTROLLER://:9093
+    listeners=PLAINTEXT://:9092,EXTERNAL://:9094,CONTROLLER://:9093
     # Advertise by service name so MirrorMaker2 and other clients can resolve
     # the broker address. Without this, Kafka advertises the pod hostname
     # (e.g., edge-kafka-58fb74f65d-mnbd8) which is unresolvable because
     # edge-kafka is a Deployment, not a StatefulSet with a headless service.
-    advertised.listeners=PLAINTEXT://edge-kafka.flywheel.svc:9092
+    # EXTERNAL advertises the SNO node IP:nodePort — required so clients that
+    # connect from outside the cluster (e.g. over Tailscale) get back an
+    # address they can actually reach after the initial bootstrap handshake.
+    advertised.listeners=PLAINTEXT://edge-kafka.flywheel.svc:9092,EXTERNAL://10.0.0.49:30903
     inter.broker.listener.name=PLAINTEXT
     controller.listener.names=CONTROLLER
-    listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+    listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
     log.dirs=/var/lib/kafka/data
     num.partitions=3
     default.replication.factor=1
@@ -60,6 +63,8 @@ spec:
           ports:
             - containerPort: 9092
               name: plaintext
+            - containerPort: 9094
+              name: external
           volumeMounts:
             - name: config
               mountPath: /etc/kafka
@@ -93,3 +98,21 @@ spec:
     - name: plaintext
       port: 9092
       targetPort: 9092
+---
+# External access for the eval dashboard (Olga, APPENG-6295) over Tailscale.
+# Kept as a separate Service from the in-cluster ClusterIP one above so
+# in-cluster clients (curator, sync-agent) are unaffected.
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-kafka-external
+  namespace: flywheel
+spec:
+  type: NodePort
+  selector:
+    app: edge-kafka
+  ports:
+    - name: external
+      port: 9094
+      targetPort: 9094
+      nodePort: 30903
