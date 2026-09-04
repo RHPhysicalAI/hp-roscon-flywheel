@@ -688,3 +688,77 @@ the assembler's `--limit` ({5, 10, 20, 40} episodes as the corpus allows), train
 E and batch pinned, read `total_frames` from each rung's `meta/info.json`), then run this harness on
 each checkpoint. v1 = smallest rung, v2 = largest; the expected rising success-rate curve is the
 honest BC property (D015).
+
+> **Superseded the same day by D021.** The from-scratch ladder was started (40-ep dataset assembled,
+> rung 5 trained + partially evaluated) and abandoned: its v1 scored 0/3 on every evaluated seed with a
+> timid arm — a from-scratch network whose entire experience is 5 episodes. The harness, seed
+> mechanism, and pinned scene config above all stand; only the *subject* of the comparison changed.
+
+---
+
+## D021 — Self-improvement, not distillation: fine-tune the teacher on its own curated successes (revises D015)
+
+**Date:** 2026-09-04
+
+**The challenge (operator):** the flywheel's claim is that *the policy improves itself* — it runs, the
+curator keeps its good rollouts, we retrain **that policy** on them, it gets measurably better. The
+D015 ladder trains **fresh, random-init** ACT students on the teacher's demonstrations and shows
+success rising with dataset size. Framed honestly that is *distillation*: "the good policy trained a
+worse copy of itself, and with more data the copy gets closer to the original." Its v1 is a network
+that has seen 5 episodes and can't do the task (0/3, verified live). That is not the flywheel story,
+and it's a strange thing to put on stage. Why not do additional training on the **known-good policy**
+and compare before/after?
+
+**Where D015 over-reached.** D015 rejected self-improvement with: *"a policy that fails generates mostly
+failures, so curating its own output yields thin data exactly where it's weak, and BC can't exceed its
+demonstrations."* That is correct for a policy that **cannot** do the task (the weak-v1 world D015
+was written in — curating a ~0%-success policy's output gives nothing to learn from). It does **not**
+apply to a **capable** policy under a **harder condition**. Under one-random-cube (radius 0.03) the
+teacher succeeds **38%** of the time (68 curated / 110 rejected over 178 loop episodes, measured from
+MinIO). Curation is a *filter*, and filtering changes the distribution: the teacher's behavior contains
+both the actions that handle an offset cube and the actions that fumble it; keep only the successes and
+fine-tune, and the policy shifts toward the subset of its own behaviors that work on the hard cases.
+This is **self-imitation / rejection-sampling fine-tuning** (the STaR pattern: sample → filter by
+correctness → fine-tune on the filtered set → repeat). Its one precondition — *the base policy must
+sometimes succeed on the hard cases* — is met, with 68 proofs. D015 conflated the two regimes.
+
+**Decision (operator-approved):** the Phase 3 proof is **v1 = the teacher as shipped; v2 = the same
+policy fine-tuned on its own curated successes under randomization**, compared on the identical seeded
+eval (D020). Same weights lineage, measurably better on the exact condition it was weak on — that is
+self-improvement, and it is what governance promotes.
+
+**Protocol:**
+1. **Condition:** one-random-cube, `RANDOMIZE_ONLY=cube_medium`, `RANDOM_RADIUS=0.03`. Already
+   mid-range for the teacher (38%) — real headroom; no radius change. D020's pinned config holds,
+   with `EPISODE_LEN=60` (the production window the 38% was measured under).
+2. **v1 baseline:** eval the teacher with the D020 harness (N=50, seed_base 1000). Expect ≈38%.
+3. **Fine-tune:** `lerobot-train --policy.path=<teacher snapshot>` on the assembled curated dataset
+   (`flywheel-ladder`, 40 teacher successes; the corpus is now 68). Default ACT LR (1e-5), modest
+   steps (~2 epochs) — conservative, because the eval-gate is the safety net.
+4. **v2 eval:** identical harness, identical seeds. Compare success rate, cubes histogram, smoothness.
+5. **Promote** only on measured improvement → sign → GitOps PR → blue/green swap (Phase 3 steps 4–5).
+6. **Iterate (the strongest version):** run v2 in the loop, curate *its* successes, fine-tune → v3. A
+   rising curve across flywheel rounds is the literal "each turn of the wheel it gets better."
+
+**Honest risks, and what guards them:**
+- *Success bias toward easy offsets* — the teacher succeeds more on small offsets, so the curated set
+  under-represents the hardest scenes. One round improves within the range the successes cover, not
+  beyond it. The fix is iteration (step 6), which is even more the flywheel.
+- *Fine-tuning can degrade a strong policy* (overfit to a few dozen episodes, forget generality) if done
+  sloppily. Low LR, modest steps — and the **eval-gate refuses to promote a round that got worse**.
+  That is a feature of the governed-pipeline story, not a hole in the method.
+- *The gain must clear noise.* A few points at an 85% baseline would not resolve; at a 38% baseline
+  with N=50 it will. That is why the condition is pinned where the teacher is mid-range.
+- *Normalization stats on fine-tune* — loading a pretrained policy for training may recompute input
+  normalization from the new dataset. If v2 degrades unexpectedly, this is the first suspect.
+
+**What carries over untouched:** the seeded eval harness and scene mechanism (D020), the assembler and
+the 40-ep assembled dataset, the curated corpus in MinIO, training inside `act-inference`. The only
+change is that training **starts from the teacher's weights instead of random init**, and v1/v2 are
+teacher-before/after. The dataset-size angle survives as a bonus (fine-tune on 10 vs 40 successes →
+"more curated data, bigger gain") with the good policy as the subject.
+
+**Consequences:** BUILD-PLAN Phase 3 steps 2–3 ("dataset-size ladder", "v1 = smallest rung") are
+superseded by this protocol; the from-scratch v1 (0/3) is kept as a documented negative result. The
+1st Phase 3 exit criterion ("v1 vs v2 improvement demonstrable on the fixed eval set") is unchanged
+in wording and now means the *right* thing.
