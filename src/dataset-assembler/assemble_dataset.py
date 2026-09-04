@@ -116,9 +116,10 @@ def main() -> int:
                     help="Minimum cubes_placed to include (default 3 = full success)")
     ap.add_argument("--limit", type=int, default=0,
                     help="Cap the number of episodes (0 = all)")
-    ap.add_argument("--vcodec", type=str, default="libx264",
-                    help="Video codec passed to port_bags (default libx264 for "
-                         "fast, universally-decodable video)")
+    ap.add_argument("--vcodec", type=str, default="h264",
+                    help="Video codec passed to port_bags. lerobot 0.5.1 accepts "
+                         "h264 (CPU, default — universally pyav-decodable), "
+                         "h264_nvenc (GPU), hevc, or libsvtav1. NOT libx264.")
     ap.add_argument("--dry-run", action="store_true",
                     help="List the selected episodes and exit without porting")
     args = ap.parse_args()
