@@ -566,13 +566,18 @@ and rejected-episode bag retention (Phase 2.5 step 6). These are settled as thos
 - **MinIO persistence — already done.** MinIO is on a PVC (`minio-data`, RWO 50Gi), not emptyDir
   (D009 updated). 50Gi is fine for JSON + small ported datasets; size up before uploading raw bags.
 
-**Still lagging (Phase 2.5 step 6):** the sync-agent uploads only the curated JSON — the recorded
-**bag data** does not yet land in MinIO, so "assemble from MinIO alone" isn't proven (the assembler
-read local curated JSONs + local bags). Architectural wrinkle: bags are on the desktop host while
-the sync-agent runs in-cluster reading the node hostPath — the bag upload needs a host-side path.
-`MODEL_VERSION` lineage is correct for the teacher run, but swapping the served checkpoint (on
-`act-inference`) does not relabel the emitter (on `so-arm-sim`) — coupled only by operator
-convention today.
+**Step 6 completed (2026-09-04, later):**
+- **Curated data + manifest in the hub (D019).** The assembler's `--from-minio` pulls the curated
+  selection from `episodes-curated`, ports it, `--push-dataset` uploads the LeRobot dataset tarball
+  to `episodes-data/<model_version>/<repo_id>.tar.gz`, and it publishes a dataset manifest to the
+  `dataset-manifests` Kafka topic. All verified end-to-end. Raw bags stay on the host; raw-in-hub
+  is deferred to Fury (D019). Re-assembly is idempotent (clears the target dataset dir first —
+  `LeRobotDataset.create` refuses to overwrite).
+- **`MODEL_VERSION` lineage on swap.** The coordinator (co-located with the served policy)
+  publishes the label latched on `/flywheel/model_version`; the emitter adopts it over its own env
+  default. Verified: with the sim emitter's fallback set to `unstamped`, episodes were stamped
+  `upstream-act-teacher` from the coordinator — a checkpoint swap on `act-inference` alone now
+  re-labels every episode.
 
 ---
 

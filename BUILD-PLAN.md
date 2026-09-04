@@ -19,7 +19,7 @@ Phase 3 closes it with governance; Phase 3+ makes the improvement autonomous.
 | 0 — Desktop foundation | **Done** (VFIO passthrough deferred) | D001–D006 |
 | 1 — Hub plane on SNO | **Done** | D007–D012 |
 | 2 — SO-ARM producer | **Done** | D013, D014, D016 |
-| 2.5 — Close the data loop | **Effectively complete** — steps 1–6 done & verified; remainder is a dataset-level Kafka manifest + raw-in-hub (deferred to Fury, D019) | D017–D019 |
+| 2.5 — Close the data loop | **Complete** — steps 1–6 done & verified; only raw-in-hub archival remains, deferred to Fury (D019) | D017–D019 |
 | 3 — Training + close the loop | Not started | D015 |
 | 3+ — Bootstrap loop | Not started | `BOOTSTRAP-LOOP.md` |
 | 4 — Demo hardening + Fury prep | Not started | — |
@@ -130,10 +130,10 @@ of the episode contract (`THOR-TESTING-REUSE.md`) and is the prerequisite for bo
 ### Exit criteria
 - [x] Every rollout produces a recorded episode (per-episode MCAP bag) referenced from its JSON
   record via `dataset_path`; curated bags port to LeRobot v2 on assembly (D018 steps 2–4)
-- [x] Curated episode **data** lands in MinIO — the ported LeRobot dataset (the trainable form,
-  D019) is uploaded to `episodes-data/<model_version>/<repo_id>.tar.gz` (verified: a 31-episode,
-  102.8 MB tarball). Per-episode metadata manifests already flow to Kafka; a *dataset-level* Kafka
-  manifest is the one unbuilt sub-part.
+- [x] Curated episode **data** lands in MinIO **with a manifest on Kafka** — the ported LeRobot
+  dataset (the trainable form, D019) is uploaded to `episodes-data/<model_version>/<repo_id>.tar.gz`,
+  and the assembler publishes a dataset manifest (s3_uri, model_version, num_episodes/frames, fps,
+  size, episode_ids, timestamp) to the `dataset-manifests` topic. Both verified end-to-end.
 - [x] A training dataset can be assembled from MinIO curated episodes — `--from-minio` pulls the
   curated selection from `episodes-curated` and ports it (raw frames transit the host by design,
   D019). The result is the same LeRobot format proven trainable in step 5.
