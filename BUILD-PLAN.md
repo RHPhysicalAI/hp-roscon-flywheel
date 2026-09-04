@@ -150,9 +150,13 @@ of the episode contract (`THOR-TESTING-REUSE.md`) and is the prerequisite for bo
 **Goal:** the governed pipeline closes the loop on flywheel-captured data: assemble → train →
 eval-gate → package → sign → promote → blue/green swap, and v2 is demonstrably better than v1.
 
-Method decisions are recorded in **D015**: stay with ACT (no RL pivot), and prove improvement via
-**curated dataset size** with epochs held constant — a true behavior-cloning property, shown as
-success rate vs. dataset size.
+Method decisions: **D015** (stay with ACT, no RL pivot) and **D021** (revises D015's proof). The
+proof is **self-improvement**: v1 = the teacher policy as shipped, v2 = the *same* policy fine-tuned
+on its own curated successes under the one-random-cube condition, compared on the fixed seeded eval
+(D020). Under that condition the teacher succeeds ~38% — real headroom — and curation is a filter
+that shifts the policy toward the behaviors that work on the hard cases (self-imitation /
+rejection-sampling fine-tuning). The earlier from-scratch dataset-size ladder was tried and retired:
+it reads as distillation ("the good policy trained a worse copy of itself"), not the flywheel.
 
 1. **Generate the curated corpus through the flywheel.** Run the strong upstream policy in the
    sim under randomization; the curator gates its rollouts; Phase 2.5 records and stores them.
@@ -163,9 +167,11 @@ success rate vs. dataset size.
    (randomization off, or a fixed seed list). Record success rate (3/3), partial-placement
    distribution, and mean smoothness. The scorer and emitter already produce all of it.
 
-3. **Dataset-size ladder.** Assemble curated sets of increasing size (e.g. 5, 10, 20, 40
-   episodes). Train ACT at each rung with **epochs held constant** (scale `--steps` with dataset
-   size) so the only variable is how much curated data. v1 = smallest rung, v2 = largest.
+3. **Self-improvement round (D021).** Eval the teacher (v1). Fine-tune it from its own weights
+   (`lerobot-train --policy.path=<teacher>`) on the assembled curated successes; eval the result (v2)
+   with the identical seeds. Promote only on measured improvement. Iterate — run v2 in the loop,
+   curate *its* successes, fine-tune → v3 — for a rising curve across flywheel rounds. (The
+   dataset-size angle survives as a bonus: fine-tune on 10 vs 40 successes → bigger gain.)
 
 4. **KFP training pipeline** (shape from thor-testing, code new): assemble dataset → `lerobot-train`
    → eval-gate on success-rate improvement vs. the incumbent → package as a KServe modelcar with
