@@ -14,7 +14,9 @@ reset is clean, and the next episode starts from a known state.
 """
 
 import os
+import shutil
 import subprocess
+import threading
 import time
 
 import rclpy
@@ -33,6 +35,14 @@ PROMPT = os.environ.get("PROMPT", "place cubes on tray")
 # bag boundaries match the scored-episode boundaries exactly.
 RECORD = os.environ.get("RECORD", "true").lower() == "true"
 RECORD_WAIT_S = float(os.environ.get("RECORD_WAIT_S", "30.0"))
+# Persistence filtering: keep only bags for episodes that reached full success
+# (3/3 cubes) — the curator's hard gate. A failed rollout is not training data,
+# so its multi-GB bag is deleted at episode end instead of accumulating. Peak
+# cube count is tracked across the window (mirrors the emitter) so a cube placed
+# then knocked off still counts as a success, matching the curator's verdict.
+PRUNE_REJECTED = os.environ.get("PRUNE_REJECTED", "true").lower() == "true"
+BAG_DIR = os.environ.get("BAG_DIR", "/data/bags")
+CUBES_TARGET = int(os.environ.get("CUBES_TARGET", "3"))
 SETTLE_S = float(os.environ.get("SETTLE_S", "3.0"))
 HOME_TOLERANCE = float(os.environ.get("HOME_TOLERANCE", "0.15"))
 HOME_WAIT_MAX = float(os.environ.get("HOME_WAIT_MAX", "8.0"))
@@ -57,6 +67,8 @@ class Coordinator(Node):
         self._rec_handle = None
         self._recording_available = False
         self._last_bag_path = None
+        self._peak_cubes = 0
+        self._peak_poll_active = False
         self._control_pub = self.create_publisher(String, "/flywheel/episode_control", 10)
         # Tell the emitter which recorded bag belongs to the episode it's about
         # to finalize, so it can stamp dataset_path into the curator JSON (D018,
@@ -107,6 +119,52 @@ class Coordinator(Node):
         else:
             self.get_logger().warn("Recording stop: no result (bag path unknown)")
         self._rec_handle = None
+
+    def _start_peak_poll(self):
+        """Track the peak cube count across the episode (for the keep/prune
+        decision), mirroring the emitter so both agree with the curator."""
+        self._peak_cubes = 0
+        self._peak_poll_active = True
+
+        def poll():
+            import task_eval
+            while self._peak_poll_active:
+                time.sleep(2.5)
+                try:
+                    _, n = task_eval.evaluate_task()
+                    if n > self._peak_cubes:
+                        self._peak_cubes = n
+                except Exception:
+                    pass
+
+        threading.Thread(target=poll, daemon=True).start()
+
+    def _stop_peak_poll(self):
+        self._peak_poll_active = False
+
+    def _prune_bag_if_rejected(self):
+        """Delete the just-recorded bag unless the episode reached the cube
+        target. Keeps only training-worthy (curated) episodes on disk. Runs as
+        root inside the container, which owns BAG_DIR — no host sudo needed."""
+        if not (PRUNE_REJECTED and self._last_bag_path):
+            return
+        if self._peak_cubes >= CUBES_TARGET:
+            self.get_logger().info(
+                f"Kept bag ({self._peak_cubes}/{CUBES_TARGET}): {self._last_bag_path}")
+            return
+        try:
+            real = os.path.realpath(self._last_bag_path)
+            bag_root = os.path.realpath(BAG_DIR)
+            if os.path.commonpath([real, bag_root]) == bag_root and os.path.isdir(real):
+                shutil.rmtree(real, ignore_errors=True)
+                self.get_logger().info(
+                    f"Pruned rejected bag ({self._peak_cubes}/{CUBES_TARGET}): "
+                    f"{self._last_bag_path}")
+            else:
+                self.get_logger().warn(f"Refused to prune outside {BAG_DIR}: {real}")
+        except Exception as e:
+            self.get_logger().warn(f"Bag prune failed: {e}")
+        self._last_bag_path = None
 
     def _on_joints(self, msg):
         self._latest_positions = list(msg.position)
@@ -190,6 +248,7 @@ class Coordinator(Node):
             #    captures the rollout from the first policy command.
             self._start_recording()
             self._signal("start")
+            self._start_peak_poll()
 
             # 3. Send goal — policy drives the arm from a clean home state
             goal = RunPolicy.Goal()
@@ -201,7 +260,9 @@ class Coordinator(Node):
                 self.get_logger().warn("Goal rejected — retrying next cycle")
                 self._stop_recording()
                 self._publish_dataset()
+                self._stop_peak_poll()
                 self._signal("end")
+                self._prune_bag_if_rejected()
                 time.sleep(2)
                 continue
 
@@ -254,11 +315,16 @@ class Coordinator(Node):
             self._stop_recording()
             # 5c. Hand the emitter the bag ref for this episode before 'end'.
             self._publish_dataset()
+            self._stop_peak_poll()
 
             # 6. Settle, then evaluate via the end signal
             time.sleep(SETTLE_S)
             self._signal("end")
             time.sleep(1.0)
+            # 7. Persistence filter: keep the bag only if the episode succeeded
+            #    (peak cubes >= target); otherwise delete it so failed rollouts
+            #    don't accumulate multi-GB bags on disk.
+            self._prune_bag_if_rejected()
 
 
 def main():
