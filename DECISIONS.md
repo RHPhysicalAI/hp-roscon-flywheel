@@ -840,8 +840,12 @@ identical 50 seeds):**
   > (`RESET_ARM=false`, cubes-only reset). It had *not* misbehaved in the eval container (v1 = 74%),
   > so the v1/v2 comparison stands, but the loop stays on cubes-only reset and collection stays at
   > ~35%. The `RESET_ARM=true` container is parked as `act-inference-resetarm-bak` for diagnosis.
-  > Open question: why does homing-to-zeros (`ARM_HOME=[0]*6`; the SO-ARM rest pose is not
-  > all-zeros, D016) hurt the loop but not the eval — recorder interaction, or startup failures?
+  > Cause undiagnosed (operator's call). It is **not** "zeros is out-of-distribution": a fresh
+  > sim spawns the arm at all-zeros (measured), so zeros is a valid start. Resolution: the
+  > coordinator now does **rest-pose recovery on failure** (fec35b4, 5e93833) — publishes in-node
+  > (not via `ros2 topic pub`), bootstrapped with `REST_POSE=0,…` (the spawn pose), refined by
+  > the pose the policy settles into after a success, persisted to `/data/rest_pose.json`, and
+  > run on startup too, so a restart into a rough spot self-heals and failures don't chain.
 - **Nested, regime-balanced rungs via seeded shuffle** (`~/rung_plan.py`): rung N = the first N of a
   seeded shuffle of the final 160, so 20 ⊂ 40 ⊂ 80 ⊂ 160 and every rung samples uniformly across
   collection time. Chronological nesting was rejected because it would make small rungs = old

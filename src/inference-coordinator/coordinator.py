@@ -75,13 +75,15 @@ EVAL_RESULTS_DIR = os.environ.get("EVAL_RESULTS_DIR", "/data/eval")
 
 # --- Failure recovery: return to the policy's OWN rest pose after a failed episode ---
 # A failed episode can leave the arm in a rough spot (e.g. the gripper parked over the
-# cube spawn), so the next episode starts badly and failures chain. Homing to all-zeros
-# (RESET_ARM) is NOT the fix: the SO-ARM rest pose is not zeros (D016), and from the
-# zero pose the policy produces no motion (out-of-distribution start — it broke the loop
-# when tried). Instead, learn the pose the policy naturally settles into after a
-# successful episode and drive back to THAT on failure: an in-distribution start, and
-# the gripper is clear of the spawn zone before the cubes are placed. Runs only after the
-# goal is cancelled and the bag is finalized, so nothing fights it and it is not recorded.
+# cube spawn), so the next episode starts badly and failures chain. The arm SPAWNS at
+# all-zeros (measured on a fresh sim), so zeros is a valid in-distribution start and is
+# the bootstrap pin (REST_POSE); the pose the policy itself settles into after a success
+# (learned at early-stop, persisted) refines it — D016 notes the settled pose can differ
+# from zeros. Drive back to that pose on failure so the gripper is clear of the spawn
+# zone before the cubes are placed. (A RESET_ARM=true flip, which homes via sim_reset's
+# `ros2 topic pub` subprocess, broke the loop for reasons not diagnosed; this recovery
+# publishes in-node instead.) Runs only after the goal is cancelled and the bag is
+# finalized, so nothing fights it and it is not recorded.
 RECOVER_ON_FAIL = os.environ.get("RECOVER_ON_FAIL", "true").lower() == "true"
 RECOVER_PUBLISH_S = float(os.environ.get("RECOVER_PUBLISH_S", "5.0"))
 RECOVER_RATE = float(os.environ.get("RECOVER_RATE", "20"))
