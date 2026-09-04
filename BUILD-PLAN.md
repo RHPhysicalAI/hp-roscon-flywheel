@@ -118,8 +118,11 @@ of the episode contract (`THOR-TESTING-REUSE.md`) and is the prerequisite for bo
 5. **Model-version lineage.** `MODEL_VERSION` must reflect the policy actually running whenever
    `act-inference` is swapped. It is stale today (D016) and becomes load-bearing here.
 
-6. **Storage.** Size the MinIO bucket for per-episode video; move MinIO off emptyDir (D009) to a
-   PVC or labeled hostPath so the corpus persists.
+6. **Storage.** MinIO is already on a PVC (`minio-data`, 50Gi — D009 resolved), so the corpus
+   persists; size up before uploading raw bags. Bag retention is handled on the producer side:
+   the coordinator prunes a rollout's bag unless it reached 3/3, so only curated episodes persist
+   (D018 prune). *Still to do: ship the curated **bag data** (not just JSON) to MinIO — the bags
+   live on the host while the sync-agent runs in-cluster, so this needs a host-side upload path.*
 
 7. **Verify the loop end-to-end:** policy runs → episode recorded → curator passes it → uploaded →
    assembled → `lerobot-train` trains on it → checkpoint loads in `act-inference`.
@@ -279,7 +282,7 @@ belong here; retraining on the policy's own successes is not one of them (D015).
 | zenoh middleware across the VM boundary | 2 | Resolved — client mode to in-sim router (D013) |
 | `pai_data_collection` trigger interface — can it start/stop on our `episode_control` signals? | 2.5 | Resolved — it's a *contract*, not a recorder; `rosetta episode_recorder_node` records via a `RecordEpisode` action, `port_bags` → LeRobot (D018) |
 | LeRobot v2 shard layout and per-episode storage volume in MinIO | 2.5 | Open |
-| Retain frames for rejected episodes, or metadata only? | 2.5 | Open |
+| Retain frames for rejected episodes, or metadata only? | 2.5 | Resolved — metadata only: the coordinator prunes a rollout's bag at episode end unless it reached 3/3 (curated); rejected episodes keep their JSON, not their frames (D018, prune commit) |
 | Dataset assembler: `lerobot-train` local-root vs. a synthetic `repo_id` | 2.5 | Open |
 | Eval-gate threshold (success-rate delta) for promotion | 3 | Open |
 | Expert grasp planning: MoveIt vs. direct IK for the SO-ARM gripper | 3+ | Open |

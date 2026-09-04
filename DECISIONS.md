@@ -150,6 +150,12 @@ issue as D008). Switched to emptyDir for fast iteration.
 **Trade-off:** MinIO data is lost on pod restart. Acceptable for Phase 1 smoke testing. Switch
 to a PVC or properly-labeled hostPath when data persistence matters (Phase 2+).
 
+> **Resolved (observed 2026-09-04):** MinIO is now backed by a PVC — `minio-data` (RWO, 50Gi,
+> bound to `minio-pv`) in the `minio` namespace, provisioned since this decision. The episode
+> corpus now persists across pod restarts. The 50Gi sizing is fine for curated JSON + small
+> ported LeRobot datasets, but tight if raw MCAP bags (~2Gi each) are ever uploaded — size up
+> before wiring the bag-data upload (Phase 2.5 step 6).
+
 ---
 
 ## D010 — Phase 1 smoke test results
@@ -548,9 +554,22 @@ and rejected-episode bag retention (Phase 2.5 step 6). These are settled as thos
   cubes). **"Trained on episodes the loop recorded, running in the sim" is now literally true.**
   The v1 policy is deliberately small (4 episodes) — quality/size is Phase 3's dataset-size ladder.
 
-**Still lagging (Phase 2.5 step 6, not yet done):** the sync-agent uploads only the curated JSON —
-the recorded **bag data** does not yet land in MinIO, so "assemble from MinIO alone" isn't proven
-(the assembler read local curated JSONs + local bags). `MODEL_VERSION` lineage is correct for the
-teacher run, but swapping the served checkpoint (on `act-inference`) does not relabel the emitter
-(on `so-arm-sim`) — the label and the served policy are coupled only by operator convention.
-Rejected-episode bag retention is undecided; bags accumulate at ~2 GB each.
+**Step 6 progress (2026-09-04):**
+- **Rejected-bag retention — decided & implemented.** The coordinator tracks peak cubes per
+  episode (mirrors the emitter → agrees with the curator's `task_success` gate) and deletes the
+  just-recorded bag at episode end unless it reached 3/3. Only curated episodes persist; rejected
+  episodes keep their JSON, not their frames. Runs as root inside `act-inference` (owns
+  `/data/bags`). Env-gated (`PRUNE_REJECTED`, `CUBES_TARGET`). Backlog also cleaned (kept the 14
+  curated bags, deleted ~25 rejected/orphan bags, freed ~66 GB). Note: bags are **root-owned** on
+  the host (recorder runs as root), so host-user deletes silently fail — prune from inside the
+  container.
+- **MinIO persistence — already done.** MinIO is on a PVC (`minio-data`, RWO 50Gi), not emptyDir
+  (D009 updated). 50Gi is fine for JSON + small ported datasets; size up before uploading raw bags.
+
+**Still lagging (Phase 2.5 step 6):** the sync-agent uploads only the curated JSON — the recorded
+**bag data** does not yet land in MinIO, so "assemble from MinIO alone" isn't proven (the assembler
+read local curated JSONs + local bags). Architectural wrinkle: bags are on the desktop host while
+the sync-agent runs in-cluster reading the node hostPath — the bag upload needs a host-side path.
+`MODEL_VERSION` lineage is correct for the teacher run, but swapping the served checkpoint (on
+`act-inference`) does not relabel the emitter (on `so-arm-sim`) — coupled only by operator
+convention today.
