@@ -19,7 +19,7 @@ Phase 3 closes it with governance; Phase 3+ makes the improvement autonomous.
 | 0 — Desktop foundation | **Done** (VFIO passthrough deferred) | D001–D006 |
 | 1 — Hub plane on SNO | **Done** | D007–D012 |
 | 2 — SO-ARM producer | **Done** | D013, D014, D016 |
-| 2.5 — Close the data loop | **In progress** — steps 1–5 done & verified; step 6 (MinIO data upload, lineage automation, retention) lagging | D017, D018 |
+| 2.5 — Close the data loop | **Effectively complete** — steps 1–6 done & verified; remainder is a dataset-level Kafka manifest + raw-in-hub (deferred to Fury, D019) | D017–D019 |
 | 3 — Training + close the loop | Not started | D015 |
 | 3+ — Bootstrap loop | Not started | `BOOTSTRAP-LOOP.md` |
 | 4 — Demo hardening + Fury prep | Not started | — |
@@ -130,10 +130,13 @@ of the episode contract (`THOR-TESTING-REUSE.md`) and is the prerequisite for bo
 ### Exit criteria
 - [x] Every rollout produces a recorded episode (per-episode MCAP bag) referenced from its JSON
   record via `dataset_path`; curated bags port to LeRobot v2 on assembly (D018 steps 2–4)
-- [ ] Curated episode **data** (not just metadata) lands in MinIO with a manifest on Kafka —
-  *only the curated JSON reaches MinIO today; the bag data does not (step 6)*
-- [ ] A training dataset can be assembled from MinIO curated episodes alone — *assembled locally
-  (curated JSONs + local bags) and verified; MinIO-only source pending step 6*
+- [x] Curated episode **data** lands in MinIO — the ported LeRobot dataset (the trainable form,
+  D019) is uploaded to `episodes-data/<model_version>/<repo_id>.tar.gz` (verified: a 31-episode,
+  102.8 MB tarball). Per-episode metadata manifests already flow to Kafka; a *dataset-level* Kafka
+  manifest is the one unbuilt sub-part.
+- [x] A training dataset can be assembled from MinIO curated episodes — `--from-minio` pulls the
+  curated selection from `episodes-curated` and ports it (raw frames transit the host by design,
+  D019). The result is the same LeRobot format proven trainable in step 5.
 - [x] `lerobot-train` trains a checkpoint from flywheel-captured data and it runs in the sim
   (ACT 5000 steps on 4 curated episodes → checkpoint loads in `act-inference`, drives the arm)
 - [x] `MODEL_VERSION` lineage is correct on every emitted episode — the coordinator (co-located
@@ -282,9 +285,9 @@ belong here; retraining on the policy's own successes is not one of them (D015).
 | Gazebo streaming approach | 2 | Resolved — host MJPEG camera bridge |
 | zenoh middleware across the VM boundary | 2 | Resolved — client mode to in-sim router (D013) |
 | `pai_data_collection` trigger interface — can it start/stop on our `episode_control` signals? | 2.5 | Resolved — it's a *contract*, not a recorder; `rosetta episode_recorder_node` records via a `RecordEpisode` action, `port_bags` → LeRobot (D018) |
-| LeRobot v2 shard layout and per-episode storage volume in MinIO | 2.5 | Open |
+| LeRobot v2 shard layout and per-episode storage volume in MinIO | 2.5 | Resolved — hub stores the ported LeRobot dataset as one tarball (~4.5 MB/ep), not raw bags; raw bags stay on host (D019) |
 | Retain frames for rejected episodes, or metadata only? | 2.5 | Resolved — metadata only: the coordinator prunes a rollout's bag at episode end unless it reached 3/3 (curated); rejected episodes keep their JSON, not their frames (D018, prune commit) |
-| Dataset assembler: `lerobot-train` local-root vs. a synthetic `repo_id` | 2.5 | Open |
+| Dataset assembler: `lerobot-train` local-root vs. a synthetic `repo_id` | 2.5 | Resolved — local root via `port_bags --root`; `lerobot-train --dataset.root=<dir>` (D018) |
 | Eval-gate threshold (success-rate delta) for promotion | 3 | Open |
 | Expert grasp planning: MoveIt vs. direct IK for the SO-ARM gripper | 3+ | Open |
 | Curriculum schedule — what signal widens randomization | 3+ | Open |
