@@ -448,3 +448,76 @@ the data, the curator selected it, training consumed it.
 **Sequencing:** Phase 2.5 is a prerequisite for Phase 3 (real input) and Phase 3+ (autonomous
 frontier data). The plan is written without schedule constraints; the operator decides what to
 take on before Fury and what to defer.
+
+---
+
+## D018 — Wire the upstream Rosetta recorder (not a hand-rolled one); two-stage MCAP → LeRobot
+
+**Date:** 2026-09-04
+
+**Context (Phase 2.5, step 1 — recorder recon):** the loop records no training data (D017). The
+task was to map `pai_data_collection`'s interface and decide between wiring the upstream recorder
+or scripting our own (`ros2 bag record`). Reconnaissance of the running `so-arm-sim` /
+`act-inference` containers established the full upstream recording pipeline:
+
+- **`pai_data_collection` is a *contract*, not a recorder.** It ships one file that matters:
+  `config/rosetta/so_arm101.yaml` — a LeRobot recording spec mapping ROS topics → dataset
+  features: two cameras (`/wrist_camera/image_raw`, `/static_camera/image_raw`, resized 480×480),
+  `observation.state` from `/joint_states` (6 joints), `action` from
+  `/forward_position_controller/commands`, `fps: 50`, `rad2deg`, feature names matched to LeRobot
+  `so101_follower` for `lerobot-replay` compatibility, and `recording: {storage: mcap}`. No launch
+  files, no node. (This is the same contract the inference entrypoint feeds the policy runner after
+  stripping `recording`/`max_duration_s`, which the runner's loader rejects.)
+
+- **The recorder is `rosetta`'s `episode_recorder_node`** (`episode_recorder_launch.py`). A
+  lifecycle node (auto-configure + auto-activate) that loads the contract, subscribes to its
+  topics, and exposes **three start/stop interfaces**:
+  1. **`RecordEpisode` action** at `/episode_recorder/record_episode` (`{prompt}`) — start on goal
+     accept, stop on **cancel** or `default_max_duration` timeout; feedback carries
+     `seconds_remaining` + `messages_written`. Result carries `bag_path` + `messages_written`.
+  2. Service `~/start_recording` (`rosetta_interfaces/srv/StartRecording`, `{prompt}`) — non-action
+     start (for Foxglove clients).
+  3. Service `~/cancel_recording` (`std_srvs/srv/Trigger`) — stop the active recording.
+  Plus `~/delete_last_bag`. Output: **one MCAP rosbag directory per episode** at
+  `bag_base_dir/<sec>_<nsec>/` (+ `metadata.yaml`, prompt stored under `lerobot.operator_prompt`).
+  Default `bag_base_dir` is `/workspaces/rosetta_ws/datasets/bags`, `storage_id: mcap`.
+
+- **The MCAP → LeRobot converter is `rosetta.port_bags`.**
+  `python -m rosetta.port_bags --raw-dir <bags> --repo-id <name> --contract so_arm101.yaml` walks a
+  directory of bags and writes a **LeRobot v2 dataset** (parquet + video) using the *same* contract
+  decoders as live inference (so recorded data is guaranteed schema-consistent with what the policy
+  consumes). Supports sharding and `--push-to-hub`; can produce a local dataset root. This is
+  exactly the "dataset assembler" seam Phase 2.5 step 4 calls for.
+
+**Decision:** **Wire the upstream recorder** — do not script our own. Concretely:
+- Run `rosetta episode_recorder_node` with `contract_path` = the `pai_data_collection` `so_arm101.yaml`.
+- Drive it from the **inference coordinator** via the **`RecordEpisode` action**, aligned to the
+  existing episode lifecycle: send the record goal at episode `start` (right after the RunPolicy
+  goal), cancel it at episode `end` (alongside the RunPolicy cancel). This reuses the
+  `/flywheel/episode_control` phasing already in place — recording boundaries become exactly the
+  scored-episode boundaries. `default_max_duration` stays a safety cap only.
+- Convert curated episodes to a training LeRobot root with `rosetta.port_bags` (Phase 2.5 step 4).
+
+**Placement — host the recorder in `act-inference`:** verified that image already contains
+`rosbag2_py`, the `rosetta episode_recorder_node` executable, **and** `lerobot 0.5.1`, so one
+container can record *and* port *and* train. It also runs the coordinator that triggers recording,
+so the trigger is in-process-adjacent. Both host containers share the box with `--network host`, so
+the contract topics (incl. the two 480×480 image streams) are visible over loopback zenoh — no real
+network hop. Bags will be written to a **host-mounted volume** so they survive container recreation
+(the D016 hot-patch lesson: nothing load-bearing lives only inside an ephemeral container).
+
+**Why not script Rosetta / `ros2 bag record`:** the episode_recorder already does contract-driven
+topic selection, per-episode segmentation via the action, transient-local (`/tf_static`) buffering,
+sim-time `/clock` capture, and prompt metadata — and `port_bags` guarantees the recorded features
+decode identically to inference. A hand-rolled recorder would reimplement all of that and risk a
+train/serve schema skew. The upstream path is strictly better and is the credibility anchor (D015).
+
+**Verified live (not assumed):** `episode_recorder` is absent from the running node graph (so
+recording is genuinely off today, per D017); the contract's camera topics exist on the live graph
+under the exact names above; `act-inference` imports `rosbag2_py` and `lerobot` and lists the
+`episode_recorder_node` executable.
+
+**Open sub-decisions for the wiring steps (2–4):** whether to run the recorder as its own process
+in the inference entrypoint vs. a sidecar container; the host bag directory + how port_bags reads
+it; `port_bags` local-root vs. synthetic `repo_id` for `lerobot-train` (BUILD-PLAN open question);
+and rejected-episode bag retention (Phase 2.5 step 6). These are settled as those steps are built.

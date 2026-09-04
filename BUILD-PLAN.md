@@ -272,7 +272,7 @@ belong here; retraining on the policy's own successes is not one of them (D015).
 | SO-ARM episode data shape / success signal | 2 | Resolved — cube poses from `pose/info` (D016) |
 | Gazebo streaming approach | 2 | Resolved — host MJPEG camera bridge |
 | zenoh middleware across the VM boundary | 2 | Resolved — client mode to in-sim router (D013) |
-| `pai_data_collection` trigger interface — can it start/stop on our `episode_control` signals? | 2.5 | Open |
+| `pai_data_collection` trigger interface — can it start/stop on our `episode_control` signals? | 2.5 | Resolved — it's a *contract*, not a recorder; `rosetta episode_recorder_node` records via a `RecordEpisode` action, `port_bags` → LeRobot (D018) |
 | LeRobot v2 shard layout and per-episode storage volume in MinIO | 2.5 | Open |
 | Retain frames for rejected episodes, or metadata only? | 2.5 | Open |
 | Dataset assembler: `lerobot-train` local-root vs. a synthetic `repo_id` | 2.5 | Open |
