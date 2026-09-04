@@ -62,9 +62,11 @@ RUN find /usr/lib/python3/dist-packages -name '*.dist-info' ! -path '*pip*' -exe
   "scipy>=1.11.0,<2" \
   && pip3 cache purge
 
-# Separate layer (keeps the heavy torch/lerobot layer cached): S3 client for
-# the dataset assembler to push/pull curated data to/from MinIO.
-RUN pip3 install --no-cache-dir --break-system-packages boto3 && pip3 cache purge
+# Separate layer (keeps the heavy torch/lerobot layer cached): S3 + Kafka
+# clients for the dataset assembler to push/pull curated data to/from MinIO and
+# announce the ported dataset on Kafka.
+RUN pip3 install --no-cache-dir --break-system-packages boto3 kafka-python-ng \
+  && pip3 cache purge
 
 # ---- Cleanup ----
 RUN find /ws_pai -type d -name ".git" -exec rm -rf {} + 2>/dev/null || true

@@ -46,6 +46,8 @@ from pathlib import Path
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://10.0.0.49:30900")
 MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+# Kafka (external NodePort listener, PLAINTEXT). Used only for the dataset manifest.
+KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "10.0.0.49:30903")
 
 
 def _s3():
@@ -99,13 +101,28 @@ def push_dataset_to_minio(dataset_dir: Path, bucket: str, model_version: str,
     try:
         with tarfile.open(tar_path, "w:gz") as tar:
             tar.add(dataset_dir, arcname=repo_id)
-        size_mb = os.path.getsize(tar_path) / (1024 * 1024)
+        size_bytes = os.path.getsize(tar_path)
         s3.upload_file(tar_path, bucket, key)
     finally:
         os.unlink(tar_path)
     uri = f"s3://{bucket}/{key}"
-    print(f"[assembler] pushed dataset ({size_mb:.1f} MB) -> {uri}")
-    return uri
+    print(f"[assembler] pushed dataset ({size_bytes / 1e6:.1f} MB) -> {uri}")
+    return uri, size_bytes
+
+
+def publish_dataset_manifest(bootstrap: str, topic: str, manifest: dict) -> None:
+    """Announce the pushed dataset on Kafka, mirroring the sync-agent's
+    per-episode manifest. Consumers (e.g. a training trigger, the eval
+    dashboard) can discover a new trainable corpus without scanning MinIO."""
+    from kafka import KafkaProducer
+    p = KafkaProducer(
+        bootstrap_servers=bootstrap,
+        value_serializer=lambda v: json.dumps(v).encode(),
+    )
+    p.send(topic, value=manifest)
+    p.flush()
+    p.close()
+    print(f"[assembler] published dataset manifest -> {topic} @ {bootstrap}")
 
 
 def select_episodes(curated_dir: Path, bags_root: Path, min_cubes: int,
@@ -198,6 +215,8 @@ def main() -> int:
                     help="MinIO bucket holding curated episode JSONs (--from-minio)")
     ap.add_argument("--data-bucket", default="episodes-data",
                     help="MinIO bucket for the ported dataset tarball (--push-dataset)")
+    ap.add_argument("--dataset-topic", default="dataset-manifests",
+                    help="Kafka topic for the dataset manifest (empty string to skip)")
     args = ap.parse_args()
 
     if args.from_minio:
@@ -248,7 +267,31 @@ def main() -> int:
 
     if args.push_dataset:
         mv = args.model_version or "unversioned"
-        push_dataset_to_minio(dataset_dir, args.data_bucket, mv, args.repo_id)
+        uri, size_bytes = push_dataset_to_minio(dataset_dir, args.data_bucket, mv, args.repo_id)
+
+        if args.dataset_topic and KAFKA_BOOTSTRAP:
+            import time as _time
+            info = {}
+            info_path = dataset_dir / "meta" / "info.json"
+            if info_path.exists():
+                info = json.loads(info_path.read_text())
+            manifest = {
+                "dataset_id": args.repo_id,
+                "s3_uri": uri,
+                "model_version": mv,
+                "num_episodes": info.get("total_episodes", len(selected)),
+                "num_frames": info.get("total_frames"),
+                "fps": info.get("fps"),
+                "robot_type": info.get("robot_type"),
+                "size_bytes": size_bytes,
+                "vcodec": args.vcodec,
+                "episode_ids": [eid for eid, _ in selected],
+                "timestamp": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+            }
+            try:
+                publish_dataset_manifest(KAFKA_BOOTSTRAP, args.dataset_topic, manifest)
+            except Exception as e:
+                print(f"[assembler] dataset manifest publish failed: {e}")
     return 0
 
 
