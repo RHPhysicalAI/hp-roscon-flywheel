@@ -140,6 +140,7 @@ class Coordinator(Node):
         # Failure recovery state: the learned rest pose ({joint: pos}) and whether the
         # last episode failed (drives the recovery at the top of the next cycle).
         self._rest_pose = None
+        self._rest_pinned = False   # a snapshot the operator chose; learning won't replace it
         if _REST_POSE_ENV:
             vals = [float(v) for v in _REST_POSE_ENV.split(",")]
             if len(vals) == len(CTRL_JOINTS):
@@ -293,8 +294,10 @@ class Coordinator(Node):
             with open(REST_POSE_FILE) as f:
                 pose = json.load(f)
             if all(j in pose for j in CTRL_JOINTS):
+                self._rest_pinned = bool(pose.get("pinned", False))
                 self.get_logger().info(
-                    "Rest pose loaded from file: "
+                    ("Rest pose loaded from file (PINNED): " if self._rest_pinned
+                     else "Rest pose loaded from file: ")
                     + ", ".join(f"{j}={pose[j]:.3f}" for j in CTRL_JOINTS))
                 return {j: float(pose[j]) for j in CTRL_JOINTS}
         except FileNotFoundError:
@@ -322,6 +325,8 @@ class Coordinator(Node):
         if any(j not in pose for j in CTRL_JOINTS):
             self.get_logger().warn(f"Rest pose not learned: joints missing from /joint_states")
             return
+        if self._rest_pinned:
+            return  # operator-chosen pose stays; learned pose is not applied or saved
         moved = (max(abs(pose[j] - self._rest_pose[j]) for j in CTRL_JOINTS)
                  if self._rest_pose else None)
         self._rest_pose = pose
@@ -333,7 +338,13 @@ class Coordinator(Node):
     def _recover_arm(self):
         """After a failed episode, drive the arm back to the learned rest pose before
         the cubes are reset. No goal is active here, so nothing fights the command."""
-        if not (RECOVER_ON_FAIL and self._last_failed and self._rest_pose):
+        if not (RECOVER_ON_FAIL and self._last_failed):
+            return
+        # Pick up a pose the operator just snapshotted (pose UI) without a restart.
+        fresh = self._load_rest_pose()
+        if fresh is not None:
+            self._rest_pose = fresh
+        if not self._rest_pose:
             return
         msg = Float64MultiArray()
         msg.layout.dim.append(

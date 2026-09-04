@@ -84,6 +84,8 @@ COPY src/inference-coordinator/coordinator.py /ws_pai/coordinator.py
 COPY src/episode-emitter/task_eval.py /ws_pai/task_eval.py
 # dataset assembler: curated episodes -> LeRobot dataset (run as a batch job)
 COPY src/dataset-assembler/assemble_dataset.py /ws_pai/assemble_dataset.py
+# operator tool: live cameras + joint readout, one-click rest-pose snapshot (D021 recovery)
+COPY src/pose-ui/pose_ui.py /ws_pai/pose_ui.py
 COPY docker/inference-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
