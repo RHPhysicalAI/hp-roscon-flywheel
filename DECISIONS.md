@@ -784,3 +784,39 @@ in wording and now means the *right* thing.
   grasps. Same harness, same seeds. That is what "trained by the teacher from scratch on 5
   episodes" looks like, and why D021 replaced it.
 
+**Round 1 — result (2026-09-04; fine-tune 15k steps ≈ 2 epochs on 40 successes, LR 1e-5; v2 eval on the
+identical 50 seeds):**
+
+| | success | 3/3 | 2/3 | 1/3 | 0/3 | mean cubes | smoothness |
+|---|---|---|---|---|---|---|---|
+| v1 teacher | **74%** (37/50) | 37 | 3 | 10 | 0 | 2.54 | 0.0048 |
+| v2 fine-tuned | **80%** (40/50) | 40 | 3 | 7 | 0 | 2.66 | 0.0052 |
+
+- **Paired per seed (same scene):** 10 improved, 6 regressed, 34 unchanged. **Failures fixed = 8**
+  (seeds 1010, 1012, 1017, 1018, 1019, 1035, 1038, 1043); **successes broken = 5** (1003, 1007, 1008,
+  1029, 1049). Net **+3**. The shift is exactly the targeted one — three 1/3 "fumbled the green cube"
+  episodes became 3/3.
+- **Motion quality unchanged:** on the 32 seeds both policies solved, smoothness is identical
+  (0.0057 vs 0.0057). Fine-tuning did not degrade the policy's motion.
+- **Fine-tuning genuinely moved the weights:** 153/234 tensors changed (the rest are frozen
+  backbone/BatchNorm buffers), mean |Δw| ≈ 6e-4 — a sane update, not a no-op and not a blow-up.
+- **Honest verdict: directionally positive, statistically inconclusive.** +6 points on the rate is
+  ~1σ at N=50; the sign test on fixed-vs-broken (8 vs 5) gives p ≈ 0.58. The eval-gate should
+  **not** promote on this alone. This is the "gain inside noise" case the baseline note anticipated.
+
+**Round 2 — levers, in the order they preserve the flywheel story:**
+1. **More curated data (cheapest, most on-message).** Fine-tune on *all* current successes (68+, and
+   growing while the loop runs) instead of 40. Directly tests "more curated data → bigger gain"
+   with the good policy as the subject — the dataset-size angle, kept.
+2. **Iterate — the true flywheel.** Run v2 in the loop, curate *its* successes, fine-tune → v3.
+   Small per-round gains that *compound* across rounds are the honest version of "each turn of
+   the wheel it gets better," and a rising v1→v2→v3 curve is a stronger artifact than one jump.
+3. **Harder condition (`RANDOM_RADIUS=0.04`)** to lower the baseline and open headroom — but the
+   corpus was collected at 0.03, so in-distribution data needs re-collection at 0.04 first. Bigger
+   change; reach for it only if (1)+(2) stall.
+4. **Longer fine-tune (~4 epochs).** Cheap but the most likely to overfit; the eval-gate guards it.
+5. **N=100 evals** to resolve a small true effect — sharpens the *measurement*, doesn't improve the
+   policy. Worth it once a round is believed to be real.
+
+*Not recommended:* declaring victory on round 1. The number is real but it isn't proof yet.
+
