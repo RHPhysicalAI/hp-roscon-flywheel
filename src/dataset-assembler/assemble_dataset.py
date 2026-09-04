@@ -243,6 +243,14 @@ def main() -> int:
     if args.dry_run:
         return 0
 
+    # port_bags (LeRobotDataset.create) refuses to overwrite an existing
+    # dataset dir, so clear it first — re-assembly should be idempotent.
+    out_root = args.root or (Path.home() / ".cache/huggingface/lerobot")
+    dataset_dir = Path(out_root) / args.repo_id
+    if dataset_dir.exists():
+        print(f"[assembler] clearing existing dataset dir {dataset_dir}")
+        shutil.rmtree(dataset_dir, ignore_errors=True)
+
     stage = stage_bags(selected)
     print(f"[assembler] staged {len(selected)} bag(s) at {stage}")
 
@@ -261,8 +269,6 @@ def main() -> int:
     finally:
         shutil.rmtree(stage, ignore_errors=True)
 
-    root = args.root or Path.home() / ".cache/huggingface/lerobot"
-    dataset_dir = Path(root) / args.repo_id
     print(f"[assembler] done -> LeRobot dataset at {dataset_dir}")
 
     if args.push_dataset:
