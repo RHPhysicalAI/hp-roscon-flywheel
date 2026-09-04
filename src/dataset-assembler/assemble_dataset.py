@@ -38,8 +38,74 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 from pathlib import Path
+
+# MinIO / S3 config (env-overridable). Used only when --from-minio / --push-dataset.
+MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://10.0.0.49:30900")
+MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
+MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+
+
+def _s3():
+    """Boto3 S3 client for MinIO. Imported lazily so the local-only path has no
+    boto3 dependency."""
+    import boto3
+    return boto3.client(
+        "s3",
+        endpoint_url=MINIO_ENDPOINT,
+        aws_access_key_id=MINIO_ACCESS_KEY,
+        aws_secret_access_key=MINIO_SECRET_KEY,
+    )
+
+
+def pull_curated_from_minio(bucket: str, model_version: str | None, dest: Path) -> Path:
+    """Download curated episode JSONs from MinIO into dest, so the curated
+    *selection* comes from the hub. Returns dest."""
+    s3 = _s3()
+    prefix = f"{model_version}/" if model_version else ""
+    dest.mkdir(parents=True, exist_ok=True)
+    paginator = s3.get_paginator("list_objects_v2")
+    n = 0
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if not key.endswith(".json"):
+                continue
+            out = dest / Path(key).name
+            s3.download_file(bucket, key, str(out))
+            n += 1
+    print(f"[assembler] pulled {n} curated JSON(s) from s3://{bucket}/{prefix}")
+    return dest
+
+
+def push_dataset_to_minio(dataset_dir: Path, bucket: str, model_version: str,
+                          repo_id: str) -> str:
+    """Tar the ported LeRobot dataset and upload it to MinIO. Returns s3 URI.
+
+    The dataset is small (video-encoded), so a single tarball object is the
+    canonical trainable artifact in the hub — pull it and train. Raw bags stay
+    on the host by design (Fury-prep decides whether the hub archives them too)."""
+    s3 = _s3()
+    try:
+        s3.head_bucket(Bucket=bucket)
+    except Exception:
+        s3.create_bucket(Bucket=bucket)
+        print(f"[assembler] created bucket {bucket}")
+    key = f"{model_version}/{repo_id}.tar.gz"
+    with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
+        tar_path = tmp.name
+    try:
+        with tarfile.open(tar_path, "w:gz") as tar:
+            tar.add(dataset_dir, arcname=repo_id)
+        size_mb = os.path.getsize(tar_path) / (1024 * 1024)
+        s3.upload_file(tar_path, bucket, key)
+    finally:
+        os.unlink(tar_path)
+    uri = f"s3://{bucket}/{key}"
+    print(f"[assembler] pushed dataset ({size_mb:.1f} MB) -> {uri}")
+    return uri
 
 
 def select_episodes(curated_dir: Path, bags_root: Path, min_cubes: int,
@@ -99,8 +165,9 @@ def stage_bags(selected: list[tuple[str, Path]]) -> Path:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--curated-dir", type=Path, required=True,
-                    help="Directory of curated episode JSONs (the curator's pass set)")
+    ap.add_argument("--curated-dir", type=Path, default=None,
+                    help="Directory of curated episode JSONs (the curator's pass set). "
+                         "Omit with --from-minio to pull the selection from the hub.")
     ap.add_argument("--bags-root", type=Path, required=True,
                     help="Directory holding the recorded bag subdirectories")
     ap.add_argument("--contract", type=Path, required=True,
@@ -122,9 +189,31 @@ def main() -> int:
                          "h264_nvenc (GPU), hevc, or libsvtav1. NOT libx264.")
     ap.add_argument("--dry-run", action="store_true",
                     help="List the selected episodes and exit without porting")
+    # MinIO integration (the hub as the source/sink of curated data)
+    ap.add_argument("--from-minio", action="store_true",
+                    help="Pull the curated selection (JSONs) from MinIO instead of --curated-dir")
+    ap.add_argument("--push-dataset", action="store_true",
+                    help="Upload the ported LeRobot dataset (as a tarball) to MinIO")
+    ap.add_argument("--curated-bucket", default="episodes-curated",
+                    help="MinIO bucket holding curated episode JSONs (--from-minio)")
+    ap.add_argument("--data-bucket", default="episodes-data",
+                    help="MinIO bucket for the ported dataset tarball (--push-dataset)")
     args = ap.parse_args()
 
-    selected = select_episodes(args.curated_dir, args.bags_root, args.min_cubes,
+    if args.from_minio:
+        if args.model_version is None:
+            print("[assembler] --from-minio needs --model-version to scope the pull")
+            return 2
+        curated_dir = pull_curated_from_minio(
+            args.curated_bucket, args.model_version,
+            Path(tempfile.mkdtemp(prefix="curated_")))
+    elif args.curated_dir:
+        curated_dir = args.curated_dir
+    else:
+        print("[assembler] need --curated-dir or --from-minio")
+        return 2
+
+    selected = select_episodes(curated_dir, args.bags_root, args.min_cubes,
                                args.model_version, args.limit)
     print(f"[assembler] {len(selected)} curated episode(s) with a present bag:")
     for eid, bag_dir in selected:
@@ -154,7 +243,12 @@ def main() -> int:
         shutil.rmtree(stage, ignore_errors=True)
 
     root = args.root or Path.home() / ".cache/huggingface/lerobot"
-    print(f"[assembler] done -> LeRobot dataset at {Path(root) / args.repo_id}")
+    dataset_dir = Path(root) / args.repo_id
+    print(f"[assembler] done -> LeRobot dataset at {dataset_dir}")
+
+    if args.push_dataset:
+        mv = args.model_version or "unversioned"
+        push_dataset_to_minio(dataset_dir, args.data_bucket, mv, args.repo_id)
     return 0
 
 

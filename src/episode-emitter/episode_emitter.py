@@ -22,7 +22,7 @@ from pathlib import Path
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray, String
 
@@ -102,6 +102,23 @@ class EpisodeEmitter(Node):
             control_qos,
         )
 
+        # Model-version lineage: the coordinator (co-located with the served
+        # policy) publishes the label, latched. Prefer it over this node's env
+        # default so every episode is stamped with the policy actually running,
+        # even after a checkpoint swap on act-inference alone.
+        self._model_version = MODEL_VERSION
+        latched = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+        )
+        self.create_subscription(
+            String,
+            "/flywheel/model_version",
+            self._on_model_version,
+            latched,
+        )
+
         # Safety net: force-end an episode that runs way too long (policy hung)
         self.create_timer(1.0, self._check_timeout)
 
@@ -133,6 +150,13 @@ class EpisodeEmitter(Node):
     def _on_dataset(self, msg: String):
         """Store the recorded-bag ref for the current episode."""
         self._dataset_path = msg.data.strip() or None
+
+    def _on_model_version(self, msg: String):
+        """Adopt the served policy's label published by the coordinator."""
+        mv = msg.data.strip()
+        if mv and mv != self._model_version:
+            self._model_version = mv
+            self.get_logger().info(f"Model version set from coordinator: {mv}")
 
     def _start_episode(self):
         """Begin tracking a new episode."""
@@ -254,7 +278,7 @@ class EpisodeEmitter(Node):
             "episode_id": self._episode_id,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "scene": SCENE,
-            "model_version": MODEL_VERSION,
+            "model_version": self._model_version,
             "has_failure": has_failure,
             "rollout": {
                 "status": rollout_status,

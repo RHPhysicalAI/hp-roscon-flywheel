@@ -22,6 +22,7 @@ import time
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 
@@ -43,6 +44,11 @@ RECORD_WAIT_S = float(os.environ.get("RECORD_WAIT_S", "30.0"))
 PRUNE_REJECTED = os.environ.get("PRUNE_REJECTED", "true").lower() == "true"
 BAG_DIR = os.environ.get("BAG_DIR", "/data/bags")
 CUBES_TARGET = int(os.environ.get("CUBES_TARGET", "3"))
+# Model-version lineage: the served policy lives here (act-inference), so the
+# label belongs here too. Published (latched) to the emitter so every episode is
+# stamped with the policy that actually produced it — correct across swaps
+# without recreating the sim. Empty = let the emitter keep its own default.
+MODEL_VERSION = os.environ.get("MODEL_VERSION", "")
 SETTLE_S = float(os.environ.get("SETTLE_S", "3.0"))
 HOME_TOLERANCE = float(os.environ.get("HOME_TOLERANCE", "0.15"))
 HOME_WAIT_MAX = float(os.environ.get("HOME_WAIT_MAX", "8.0"))
@@ -74,6 +80,18 @@ class Coordinator(Node):
         # to finalize, so it can stamp dataset_path into the curator JSON (D018,
         # Phase 2.5 step 3). Published after the policy window, before 'end'.
         self._dataset_pub = self.create_publisher(String, "/flywheel/episode_dataset", 10)
+        # Latched publisher so a late-joining emitter still gets the label.
+        latched = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+        )
+        self._mv_pub = self.create_publisher(String, "/flywheel/model_version", latched)
+        if MODEL_VERSION:
+            m = String()
+            m.data = MODEL_VERSION
+            self._mv_pub.publish(m)
+            self.get_logger().info(f"Published model_version: {MODEL_VERSION}")
         self._latest_positions = None
         self.create_subscription(JointState, "/joint_states", self._on_joints, 10)
         self.get_logger().info("Coordinator started")
