@@ -58,6 +58,10 @@ class Coordinator(Node):
         self._recording_available = False
         self._last_bag_path = None
         self._control_pub = self.create_publisher(String, "/flywheel/episode_control", 10)
+        # Tell the emitter which recorded bag belongs to the episode it's about
+        # to finalize, so it can stamp dataset_path into the curator JSON (D018,
+        # Phase 2.5 step 3). Published after the policy window, before 'end'.
+        self._dataset_pub = self.create_publisher(String, "/flywheel/episode_dataset", 10)
         self._latest_positions = None
         self.create_subscription(JointState, "/joint_states", self._on_joints, 10)
         self.get_logger().info("Coordinator started")
@@ -112,6 +116,17 @@ class Coordinator(Node):
         m.data = msg
         self._control_pub.publish(m)
         self.get_logger().info(f"Signaled: {msg}")
+
+    def _publish_dataset(self):
+        """Publish the just-recorded bag as a repo-relative ref (bags/<name>)
+        so the emitter can stamp dataset_path. Empty string when no bag."""
+        m = String()
+        if self._last_bag_path:
+            m.data = f"bags/{os.path.basename(self._last_bag_path)}"
+        else:
+            m.data = ""
+        self._dataset_pub.publish(m)
+        self.get_logger().info(f"Dataset ref: '{m.data}'")
 
     def _arm_at_home(self) -> bool:
         if not self._latest_positions:
@@ -185,6 +200,7 @@ class Coordinator(Node):
             if not handle or not handle.accepted:
                 self.get_logger().warn("Goal rejected — retrying next cycle")
                 self._stop_recording()
+                self._publish_dataset()
                 self._signal("end")
                 time.sleep(2)
                 continue
@@ -236,6 +252,8 @@ class Coordinator(Node):
             # 5b. Stop recording once the policy has stopped commanding, so the
             #     bag holds the rollout (not the idle settle that follows).
             self._stop_recording()
+            # 5c. Hand the emitter the bag ref for this episode before 'end'.
+            self._publish_dataset()
 
             # 6. Settle, then evaluate via the end signal
             time.sleep(SETTLE_S)

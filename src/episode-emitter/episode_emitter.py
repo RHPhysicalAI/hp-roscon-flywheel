@@ -91,6 +91,17 @@ class EpisodeEmitter(Node):
             control_qos,
         )
 
+        # The coordinator publishes the recorded bag ref for the current episode
+        # (D018, Phase 2.5 step 3) just before the 'end' signal. Latch the last
+        # value; it's stamped into the episode JSON as dataset_path.
+        self._dataset_path = None
+        self.create_subscription(
+            String,
+            "/flywheel/episode_dataset",
+            self._on_dataset,
+            control_qos,
+        )
+
         # Safety net: force-end an episode that runs way too long (policy hung)
         self.create_timer(1.0, self._check_timeout)
 
@@ -119,6 +130,10 @@ class EpisodeEmitter(Node):
                     return
                 self._end_episode()
 
+    def _on_dataset(self, msg: String):
+        """Store the recorded-bag ref for the current episode."""
+        self._dataset_path = msg.data.strip() or None
+
     def _start_episode(self):
         """Begin tracking a new episode."""
         self._episode_id = str(uuid.uuid4())
@@ -127,6 +142,7 @@ class EpisodeEmitter(Node):
         self._prev_positions = None
         self._smoothness_deltas = []
         self._peak_cubes = 0  # high-water mark for cubes on tray
+        self._dataset_path = None  # set by the coordinator before 'end'
         self._rollout_active = True
         self.get_logger().info(f"Episode started: {self._episode_id}")
 
@@ -248,7 +264,10 @@ class EpisodeEmitter(Node):
             "task_success": task_success and not has_failure,
             "cubes_placed": cubes_placed if not has_failure else 0,
             "avg_smoothness": round(avg_smoothness, 6),
-            "rosbag_path": f"rosbags/{self._episode_id}.mcap",
+            # Repo-relative pointer to the recorded LeRobot-bound MCAP bag for
+            # this rollout (D018). Populated by the coordinator via
+            # /flywheel/episode_dataset; replaces the never-populated rosbag_path.
+            "dataset_path": self._dataset_path,
         }
 
         # Deliver to curator — local file or remote POST

@@ -85,7 +85,9 @@ is the lightweight metadata the curator scores on.
 
   "avg_smoothness": "number  -- mean abs delta between consecutive joint commands",
 
-  "rosbag_path":    "string  -- relative path to the MCAP rosbag for training"
+  "dataset_path":   "string  -- repo-relative path to the recorded MCAP bag for this
+                                rollout (bags/<name>), or null if unrecorded. Ported to a
+                                LeRobot dataset by the assembler. Replaces rosbag_path (D018)."
 }
 ```
 
