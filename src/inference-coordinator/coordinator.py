@@ -49,8 +49,11 @@ class Coordinator(Node):
     def __init__(self):
         super().__init__("inference_coordinator")
         self._client = ActionClient(self, RunPolicy, "/run_policy")
-        self._rec_client = ActionClient(
-            self, RecordEpisode, "/episode_recorder/record_episode")
+        # The recorder creates its action server with the relative name
+        # 'record_episode', which resolves to /record_episode (root namespace) —
+        # NOT /episode_recorder/record_episode (the node's docstring is wrong;
+        # verified against `ros2 action info` on the live graph).
+        self._rec_client = ActionClient(self, RecordEpisode, "/record_episode")
         self._rec_handle = None
         self._recording_available = False
         self._last_bag_path = None
