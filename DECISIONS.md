@@ -867,6 +867,36 @@ not be restarted until a bag-retention policy exists** — at ~1.6 GB/bag the D0
 curated bag on the host" hedge does not survive a recovery-rate loop. Options: keep only bags
 referenced by an assembled dataset; cap bag count (FIFO); or archive to the hub (D019 deferred
 this to Fury-prep — it just arrived early).
+
+**Round 2 — ladder result (2026-09-05; fine-tune the teacher on N seeded-nested curated successes,
+~2 epochs each, LR 1e-5; every rung on the same 50 seeds, radius 0.03):**
+
+| curated successes | success | mean cubes | 0/1/2/3 | fixed / broken vs v1 | net | sign p |
+|---|---|---|---|---|---|---|
+| 0 (teacher v1) | 74% (37/50) | 2.54 | 0/10/3/37 | — | — | — |
+| 20 | 60% (30/50) | 2.28 | 0/16/4/30 | 7 / 14 | **−7** | 0.19 |
+| 40 | 56% (28/50) | 2.32 | 0/12/10/28 | 6 / 15 | **−9** | 0.08 |
+| 80 | 76% (38/50) | 2.64 | 0/6/6/38 | 8 / 7 | +1 | 1.00 |
+| **160** | **86% (43/50)** | **2.70** | 1/6/0/43 | **8 / 2** | **+6** | 0.11 |
+
+- **The curve is not monotonic, and that is the finding.** Fine-tuning a capable policy on *too
+  little* of its own data **degrades** it: 20 and 40 break 14–15 seeds the teacher already solved
+  while fixing 6–7 (overfitting toward a small subset / forgetting). 80 is neutral. **160 is a clean
+  gain: +12 points, 8 fixed vs only 2 broken**, and smoothness on jointly-solved seeds improved
+  (0.0057 → 0.0053). More curated data → the same policy gets better — but only past a threshold.
+- **This is the eval-gate's justification in one table.** A gate on "success-rate improvement vs
+  the incumbent" refuses 20/40/80 and promotes 160. The demo story becomes stronger, not weaker:
+  the pipeline *protects* the fleet from a bad retrain.
+- **Small-N fine-tunes are high-variance, subset-dependent.** Round 1's 40-episode fine-tune (a
+  different 40, same recipe) scored 80%; this ladder's 40 scored 56%. Which episodes you get matters
+  at small N; at 160 the outcome is robust. Do not read a single small-N result as a trend.
+- **Statistics, honestly:** 160's +12 points is ≈2σ at N=50 and the paired sign test gives
+  p≈0.11 — strong, not conclusive. Per the pre-committed rule, the top and bottom (teacher, 160ep)
+  are being extended to **N=100** with 50 *new* seeds (1050–1099) merged with the existing 50;
+  result recorded below when in.
+- **v2 = the 160-success fine-tune** (`~/flywheel-data/train/ft-ladder-160ep`). Phase 3 exit
+  criterion "v1 vs v2 improvement demonstrable on the fixed eval set" is met at N=50, pending the
+  N=100 confirmation.
 - **Nested, regime-balanced rungs via seeded shuffle** (`~/rung_plan.py`): rung N = the first N of a
   seeded shuffle of the final 160, so 20 ⊂ 40 ⊂ 80 ⊂ 160 and every rung samples uniformly across
   collection time. Chronological nesting was rejected because it would make small rungs = old

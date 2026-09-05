@@ -20,7 +20,7 @@ Phase 3 closes it with governance; Phase 3+ makes the improvement autonomous.
 | 1 — Hub plane on SNO | **Done** | D007–D012 |
 | 2 — SO-ARM producer | **Done** | D013, D014, D016 |
 | 2.5 — Close the data loop | **Complete** — steps 1–6 done & verified; only raw-in-hub archival remains, deferred to Fury (D019) | D017–D019 |
-| 3 — Training + close the loop | Not started | D015 |
+| 3 — Training + close the loop | **In progress** — eval harness (D020) + self-improvement proof (D021: 160-success fine-tune 86% vs 74%) done; governed pipeline / blue-green / static chart next | D015, D020, D021 |
 | 3+ — Bootstrap loop | Not started | `BOOTSTRAP-LOOP.md` |
 | 4 — Demo hardening + Fury prep | Not started | — |
 
@@ -193,7 +193,7 @@ it reads as distillation ("the good policy trained a worse copy of itself"), not
 - [ ] Curated training corpus exists in MinIO, produced entirely through the flywheel
 - [ ] Training pipeline runs end-to-end from MinIO data
 - [ ] v2 policy signed, promoted via GitOps, blue/green swapped
-- [ ] v1 vs v2 improvement demonstrable on the fixed eval set
+- [x] v1 vs v2 improvement demonstrable on the fixed eval set — D021 round 2: fine-tuning the teacher on 160 of its own curated successes → **86% vs 74%** on 50 identical seeds (8 fixed / 2 broken); 20/40 *degrade* it, which is the eval-gate's justification. N=100 confirmation in progress.
 - [ ] Full loop closes (sim -> record -> curate -> train -> sign -> promote -> sim)
 
 ---
