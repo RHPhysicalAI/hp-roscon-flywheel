@@ -890,13 +890,15 @@ this to Fury-prep — it just arrived early).
 - **Small-N fine-tunes are high-variance, subset-dependent.** Round 1's 40-episode fine-tune (a
   different 40, same recipe) scored 80%; this ladder's 40 scored 56%. Which episodes you get matters
   at small N; at 160 the outcome is robust. Do not read a single small-N result as a trend.
-- **Statistics, honestly:** 160's +12 points is ≈2σ at N=50 and the paired sign test gives
-  p≈0.11 — strong, not conclusive. Per the pre-committed rule, the top and bottom (teacher, 160ep)
-  are being extended to **N=100** with 50 *new* seeds (1050–1099) merged with the existing 50;
-  result recorded below when in.
+- **Statistics:** at N=50, 160's +12 points was ≈2σ with a paired sign test of p≈0.11 — strong,
+  not conclusive. Per the pre-committed rule the endpoints were re-scored on **50 new seeds
+  (1050–1099)**: teacher **72%** (36/50), 160ep **86%** (43/50) — the first block replicated
+  almost exactly (74% / 86%). **Merged N=100: teacher 73/100 → 160ep 86/100, +13 points; paired
+  20 fixed / 7 broken, net +13, sign-test p = 0.019.** Mean cubes 2.51 → 2.73. The improvement is
+  real and stable across independent scene sets.
 - **v2 = the 160-success fine-tune** (`~/flywheel-data/train/ft-ladder-160ep`). Phase 3 exit
-  criterion "v1 vs v2 improvement demonstrable on the fixed eval set" is met at N=50, pending the
-  N=100 confirmation.
+  criterion "v1 vs v2 improvement demonstrable on the fixed eval set" is **met and confirmed**.
+  Records: `data/eval/phase3-ladder/` in the repo; report: `src/eval-report/ladder_report.py`.
 - **Nested, regime-balanced rungs via seeded shuffle** (`~/rung_plan.py`): rung N = the first N of a
   seeded shuffle of the final 160, so 20 ⊂ 40 ⊂ 80 ⊂ 160 and every rung samples uniformly across
   collection time. Chronological nesting was rejected because it would make small rungs = old

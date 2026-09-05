@@ -193,7 +193,7 @@ it reads as distillation ("the good policy trained a worse copy of itself"), not
 - [ ] Curated training corpus exists in MinIO, produced entirely through the flywheel
 - [ ] Training pipeline runs end-to-end from MinIO data
 - [ ] v2 policy signed, promoted via GitOps, blue/green swapped
-- [x] v1 vs v2 improvement demonstrable on the fixed eval set — D021 round 2: fine-tuning the teacher on 160 of its own curated successes → **86% vs 74%** on 50 identical seeds (8 fixed / 2 broken); 20/40 *degrade* it, which is the eval-gate's justification. N=100 confirmation in progress.
+- [x] v1 vs v2 improvement demonstrable on the fixed eval set — D021 round 2: fine-tuning the teacher on 160 of its own curated successes → **86% vs 74%** on 50 identical seeds (8 fixed / 2 broken); 20/40 *degrade* it, which is the eval-gate's justification. **Confirmed at N=100: 73% → 86%, 20 fixed / 7 broken, p = 0.019.**
 - [ ] Full loop closes (sim -> record -> curate -> train -> sign -> promote -> sim)
 
 ---
