@@ -898,7 +898,7 @@ this to Fury-prep — it just arrived early).
   real and stable across independent scene sets.
 - **v2 = the 160-success fine-tune** (`~/flywheel-data/train/ft-ladder-160ep`). Phase 3 exit
   criterion "v1 vs v2 improvement demonstrable on the fixed eval set" is **met and confirmed**.
-  Records: `data/eval/phase3-ladder/` in the repo; report: `src/eval-report/ladder_report.py`.
+  Records: `docs/eval-records/phase3-ladder/` in the repo; report: `src/eval-report/ladder_report.py`.
 - **Nested, regime-balanced rungs via seeded shuffle** (`~/rung_plan.py`): rung N = the first N of a
   seeded shuffle of the final 160, so 20 ⊂ 40 ⊂ 80 ⊂ 160 and every rung samples uniformly across
   collection time. Chronological nesting was rejected because it would make small rungs = old

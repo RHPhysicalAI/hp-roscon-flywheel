@@ -7,7 +7,7 @@ files (same name + "-s<seed>", e.g. eval-ft-160ep-s1050.json) are merged with th
 seed, so an N=100 run is base + one extension. Every comparison is paired on the identical
 seeded scene, which removes scene difficulty from the variance.
 
-  python3 ladder_report.py data/eval/phase3-ladder \
+  python3 ladder_report.py docs/eval-records/phase3-ladder \
       --baseline eval-teacher-v1 --rungs eval-ft-20ep:20,eval-ft-40ep:40,eval-ft-80ep:80,eval-ft-160ep:160
 
 This is the static, reproducible form of the step-6 chart: no dashboard, no cluster, just the
