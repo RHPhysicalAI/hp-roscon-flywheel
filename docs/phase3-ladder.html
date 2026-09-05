@@ -1,0 +1,223 @@
+<title>SO-ARM Flywheel Ladder</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@500;700&family=Red+Hat+Text:wght@400;500&family=Red+Hat+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  color-scheme:light;
+  --surface:#fcfcfb; --surface-2:#f3f2ee; --line:#e2e1dc; --grid:#ecebe6;
+  --ink:#0b0b0b; --ink-2:#52514e; --ink-3:#8a8985;
+  --series:#2a78d6; --series-soft:#cde2fb;
+  --div-pos:#2a78d6; --div-neg:#e34948; --div-mid:#f0efec;
+  --seq-0:#86b6ef; --seq-1:#5598e7; --seq-2:#2a78d6; --seq-3:#1c5cab;
+  --tile:#ffffff; --tip:#0b0b0b; --tip-ink:#ffffff;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --surface:#1a1a19; --surface-2:#232322; --line:#34342f; --grid:#2a2a27;
+    --ink:#ffffff; --ink-2:#c3c2b7; --ink-3:#8f8e86;
+    --series:#3987e5; --series-soft:#184f95;
+    --div-pos:#3987e5; --div-neg:#e66767; --div-mid:#383835;
+    --seq-0:#6da7ec; --seq-1:#3987e5; --seq-2:#256abf; --seq-3:#184f95;
+    --tile:#202020; --tip:#f4f4f1; --tip-ink:#0b0b0b;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --surface:#1a1a19; --surface-2:#232322; --line:#34342f; --grid:#2a2a27;
+  --ink:#ffffff; --ink-2:#c3c2b7; --ink-3:#8f8e86;
+  --series:#3987e5; --series-soft:#184f95;
+  --div-pos:#3987e5; --div-neg:#e66767; --div-mid:#383835;
+  --seq-0:#6da7ec; --seq-1:#3987e5; --seq-2:#256abf; --seq-3:#184f95;
+  --tile:#202020; --tip:#f4f4f1; --tip-ink:#0b0b0b;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--surface);color:var(--ink);font:16px/1.55 "Red Hat Text",system-ui,sans-serif}
+.wrap{max-width:940px;margin:0 auto;padding:40px 24px 64px}
+h1,h2{font-family:"Red Hat Display","Red Hat Text",system-ui,sans-serif;text-wrap:balance;margin:0}
+h1{font-size:34px;font-weight:700;letter-spacing:-.01em;line-height:1.15}
+h2{font-size:20px;font-weight:700;margin:0 0 4px}
+.eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:500;margin-bottom:10px}
+.lede{color:var(--ink-2);max-width:66ch;margin:12px 0 0}
+.num,.mono{font-family:"Red Hat Mono",ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:28px 0 36px}
+.tile{background:var(--tile);border:1px solid var(--line);border-radius:6px;padding:14px 16px}
+.tile .l{font-size:12px;color:var(--ink-3);letter-spacing:.06em;text-transform:uppercase;font-weight:500}
+.tile .v{font-size:28px;font-weight:500;margin-top:4px;line-height:1.1}
+.tile .s{font-size:13px;color:var(--ink-2);margin-top:4px}
+section{margin:0 0 40px}
+.sub{color:var(--ink-2);font-size:14px;margin:0 0 14px;max-width:70ch}
+.chart{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:14px 12px 8px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;overflow:visible}
+svg text{font-family:"Red Hat Text",system-ui,sans-serif;fill:var(--ink-2);font-size:12px}
+svg text.num{font-family:"Red Hat Mono",ui-monospace,monospace}
+svg text.strong{fill:var(--ink);font-weight:500}
+.grid line{stroke:var(--grid);stroke-width:1}
+.axis line,.axis path{stroke:var(--line);stroke-width:1}
+.tip{position:absolute;pointer-events:none;background:var(--tip);color:var(--tip-ink);font-size:12px;line-height:1.4;padding:8px 10px;border-radius:4px;white-space:nowrap;opacity:0;transform:translate(-50%,-110%);transition:opacity .08s}
+.tip b{font-weight:500}
+.hit{fill:transparent;cursor:crosshair}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--ink-2);margin:8px 2px 0}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:12px;height:12px;border-radius:3px;display:inline-block}
+.notes{color:var(--ink-2);font-size:14px;max-width:70ch}
+.notes li{margin:6px 0}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:right}
+th{color:var(--ink-3);font-weight:500;font-size:12px;letter-spacing:.05em;text-transform:uppercase}
+th:first-child,td:first-child{text-align:left}
+tr.hi td{background:var(--surface-2);font-weight:500}
+.foot{color:var(--ink-3);font-size:13px;border-top:1px solid var(--line);padding-top:16px;margin-top:8px}
+.flag{display:inline-block;font-size:12px;padding:2px 8px;border:1px solid var(--line);border-radius:999px;color:var(--ink-2);margin-left:8px;vertical-align:middle}
+@media (max-width:720px){.tiles{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}h1{font-size:28px}}
+@media (prefers-reduced-motion:reduce){.tip{transition:none}}
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">HP ROSCon flywheel · Phase 3 proof · D021</div>
+  <h1>Does more curated data make the same policy better?</h1>
+  <p class="lede">The SO-ARM ACT teacher was fine-tuned on 20, 40, 80 and 160 of its <em>own</em> curated successes (one randomly placed cube, ±3 cm), then every checkpoint was scored on the same 50 seeded scenes. Yes — but only past a threshold. Too little data makes it worse.</p>
+
+  <div class="tiles">
+    <div class="tile"><div class="l">Teacher · v1</div><div class="v num">73%</div><div class="s">73 of 100 scenes</div></div>
+    <div class="tile"><div class="l">Fine-tuned on 160 · v2</div><div class="v num">86%</div><div class="s">86 of 100 scenes</div></div>
+    <div class="tile"><div class="l">Same scenes, paired</div><div class="v num">20 / 7</div><div class="s">failures fixed / successes broken</div></div>
+    <div class="tile"><div class="l">Significance</div><div class="v num">p = 0.019</div><div class="s">paired sign test, N=100 seeds</div></div>
+  </div>
+
+  <section>
+    <h2>Success rate vs. curated successes fine-tuned on</h2>
+    <p class="sub">Each point is one checkpoint trained from the teacher's weights for ~2 epochs on a nested, seeded subset of its curated successes. Rungs are nested: the 160 set contains the 80 set contains the 40.</p>
+    <div class="chart" id="c1">
+      <svg viewBox="0 0 900 360" role="img" aria-label="Line chart: success rate 74, 60, 56, 76, 86 percent at 0, 20, 40, 80, 160 curated successes">
+        <g class="grid" id="g1"></g>
+        <g class="axis" id="a1"></g>
+        <g id="p1"></g>
+      </svg>
+      <div class="tip" id="t1"></div>
+    </div>
+  </section>
+
+  <div class="two">
+    <section>
+      <h2>Fixed vs. broken, scene by scene</h2>
+      <p class="sub">Because every rung sees the identical scenes, each one can be compared to the teacher seed-for-seed. Up: scenes the teacher failed that the rung solves. Down: scenes the teacher solved that the rung breaks.</p>
+      <div class="chart" id="c2">
+        <svg viewBox="0 0 440 300" role="img" aria-label="Diverging bars: fixed 7,6,8,8 and broken 14,15,7,2 for 20,40,80,160"><g id="p2"></g></svg>
+        <div class="tip" id="t2"></div>
+      </div>
+      <div class="legend"><span><i class="sw" style="background:var(--div-pos)"></i>failures fixed</span><span><i class="sw" style="background:var(--div-neg)"></i>successes broken</span></div>
+    </section>
+    <section>
+      <h2>How many cubes landed on the tray</h2>
+      <p class="sub">The task is three cubes. The teacher's failures are almost all 1-of-3 — it places the first cube and fumbles the randomized one. Fine-tuning on 160 turns most of those into 3-of-3.</p>
+      <div class="chart" id="c3">
+        <svg viewBox="0 0 440 300" role="img" aria-label="Stacked bars of cube counts 0 to 3 per rung"><g id="p3"></g></svg>
+        <div class="tip" id="t3"></div>
+      </div>
+      <div class="legend"><span><i class="sw" style="background:var(--seq-0)"></i>0 cubes</span><span><i class="sw" style="background:var(--seq-1)"></i>1</span><span><i class="sw" style="background:var(--seq-2)"></i>2</span><span><i class="sw" style="background:var(--seq-3)"></i>3 of 3</span></div>
+    </section>
+  </div>
+
+  <section>
+    <h2>What the curve says</h2>
+    <ul class="notes">
+      <li><b>Small-data fine-tuning hurts.</b> 20 and 40 break 14–15 scenes the teacher already solved while fixing 6–7. The policy overfits toward a small subset and forgets.</li>
+      <li><b>80 breaks even</b> (8 fixed, 7 broken). <b>160 is a clean gain:</b> +12 points, 8 fixed against 2 broken, and motion on jointly-solved scenes got slightly smoother (0.0057 → 0.0053 mean joint delta).</li>
+      <li><b>This is why the pipeline has an eval gate.</b> A gate on "improves on the incumbent" refuses 20, 40 and 80 and promotes 160 — it protects the fleet from a bad retrain as much as it ships a good one.</li>
+      <li><b>Small rungs are subset-dependent.</b> An earlier 40-episode fine-tune on a different 40 scored 80%; this one scored 56%. Read small-N results as noise, not trend. At 160 the outcome is robust.</li>
+      <li><b>Statistics, plainly.</b> On the 50 ladder seeds, +12 points was about two standard errors (sign test p ≈ 0.11). So the teacher and the 160 checkpoint were re-scored on <b>50 new seeds</b>: 72% and 86% — the first block replicated almost exactly. Merged to N=100: <b>73% → 86%, 20 fixed against 7 broken, p = 0.019.</b> The gain is real and stable across independent scene sets. (The 20/40/80 rungs remain N=50; the ladder line above is drawn at N=50 for every rung so the points stay comparable.)</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Every number <span class="flag">table view</span></h2>
+    <table>
+      <thead><tr><th>Curated successes</th><th>Success</th><th>Scenes solved</th><th>Mean cubes</th><th>0 / 1 / 2 / 3</th><th>Fixed</th><th>Broken</th><th>Net</th></tr></thead>
+      <tbody id="tb"></tbody>
+    </table>
+  </section>
+
+  <p class="foot">Method: teacher = upstream ACT (<span class="mono">francocipollone/rospai_act_sim_arm101_place_cubes_on_tray</span>); fine-tune = <span class="mono">lerobot-train --policy.path=&lt;teacher&gt;</span>, steps = 0.25 × frames (~2 epochs), LR 1e-5, batch 8. Scenes: <span class="mono">cube_medium</span> randomized within 3 cm, seeds 1000–1049 for every rung plus 1050–1099 for the teacher and the 160 checkpoint, 60 s window, early-stop on 3/3. Success = all three cubes on the tray by ground-truth pose. Source records: <span class="mono">data/eval/phase3-ladder/</span> in the repo (<span class="mono">eval-teacher-v1[-s1050].json</span>, <span class="mono">eval-ft-{20,40,80,160}ep.json</span>, <span class="mono">eval-ft-160ep-s1050.json</span>); table reproducible with <span class="mono">src/eval-report/ladder_report.py</span>. Decision log D020–D021.</p>
+</div>
+
+<script>
+const R=[
+ {n:0,  lab:"0 (teacher)", succ:74, k:37, cubes:2.54, hist:[0,10,3,37], fixed:null, broken:null},
+ {n:20, lab:"20",  succ:60, k:30, cubes:2.28, hist:[0,16,4,30], fixed:7, broken:14},
+ {n:40, lab:"40",  succ:56, k:28, cubes:2.32, hist:[0,12,10,28], fixed:6, broken:15},
+ {n:80, lab:"80",  succ:76, k:38, cubes:2.64, hist:[0,6,6,38],  fixed:8, broken:7},
+ {n:160,lab:"160", succ:86, k:43, cubes:2.70, hist:[1,6,0,43],  fixed:8, broken:2},
+];
+const NS="http://www.w3.org/2000/svg";
+const el=(t,a={},txt)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);if(txt!=null)e.textContent=txt;return e;};
+function tip(id,box,html,x,y){const t=document.getElementById(id);if(!html){t.style.opacity=0;return;}t.innerHTML=html;const r=box.getBoundingClientRect();t.style.left=x+"px";t.style.top=y+"px";t.style.opacity=1;}
+function svgPt(svg,vx,vy){const vb=svg.viewBox.baseVal,r=svg.getBoundingClientRect();return [r.left-svg.closest(".chart").getBoundingClientRect().left+vx*r.width/vb.width, r.top-svg.closest(".chart").getBoundingClientRect().top+vy*r.height/vb.height];}
+
+/* ---- 1. ladder line ---- */
+(function(){
+  const svg=document.querySelector("#c1 svg"),g=document.getElementById("g1"),a=document.getElementById("a1"),p=document.getElementById("p1");
+  const L=64,Rt=24,T=28,B=52,W=900,H=360,pw=W-L-Rt,ph=H-T-B;
+  const x=i=>L+pw*(i+0.5)/R.length, y=v=>T+ph*(1-v/100);
+  [0,25,50,75,100].forEach(v=>{g.appendChild(el("line",{x1:L,x2:W-Rt,y1:y(v),y2:y(v)}));a.appendChild(el("text",{x:L-10,y:y(v)+4,"text-anchor":"end",class:"num"},v+"%"));});
+  a.appendChild(el("line",{x1:L,x2:W-Rt,y1:y(0),y2:y(0)}));
+  R.forEach((r,i)=>a.appendChild(el("text",{x:x(i),y:H-B+22,"text-anchor":"middle",class:"num strong"},r.lab)));
+  a.appendChild(el("text",{x:L+pw/2,y:H-6,"text-anchor":"middle"},"curated successes fine-tuned on"));
+  // teacher reference
+  p.appendChild(el("line",{x1:L,x2:W-Rt,y1:y(74),y2:y(74),stroke:"var(--ink-3)","stroke-width":1.5,"stroke-dasharray":"5 5"}));
+  p.appendChild(el("text",{x:W-Rt,y:y(74)-8,"text-anchor":"end"},"teacher, before any fine-tuning"));
+  // line
+  const d=R.map((r,i)=>(i?"L":"M")+x(i)+" "+y(r.succ)).join(" ");
+  p.appendChild(el("path",{d,fill:"none",stroke:"var(--series)","stroke-width":2,"stroke-linejoin":"round"}));
+  R.forEach((r,i)=>{
+    p.appendChild(el("circle",{cx:x(i),cy:y(r.succ),r:5.5,fill:"var(--series)",stroke:"var(--surface)","stroke-width":2}));
+    p.appendChild(el("text",{x:x(i),y:y(r.succ)-14,"text-anchor":"middle",class:"num strong"},r.succ+"%"));
+    const hit=el("rect",{x:x(i)-pw/R.length/2,y:T,width:pw/R.length,height:ph,class:"hit"});
+    hit.addEventListener("mousemove",()=>{const [px,py]=svgPt(svg,x(i),y(r.succ));tip("t1",svg,`<b>${r.lab==="0 (teacher)"?"Teacher (v1)":r.lab+" curated successes"}</b><br>${r.succ}% · ${r.k} of 50 scenes<br>mean cubes ${r.cubes.toFixed(2)}`,px,py-8);});
+    hit.addEventListener("mouseleave",()=>tip("t1"));
+    p.appendChild(hit);
+  });
+})();
+
+/* ---- 2. diverging fixed / broken ---- */
+(function(){
+  const svg=document.querySelector("#c2 svg"),p=document.getElementById("p2");
+  const rows=R.filter(r=>r.fixed!=null),L=40,Rt=16,T=24,B=40,W=440,H=300,pw=W-L-Rt,ph=H-T-B,max=16;
+  const y0=T+ph/2,sy=v=>ph/2*v/max,bw=pw/rows.length*0.42;
+  p.appendChild(el("line",{x1:L,x2:W-Rt,y1:y0,y2:y0,stroke:"var(--line)"}));
+  [8,16].forEach(v=>{[1,-1].forEach(s=>{const yy=y0-s*sy(v);p.appendChild(el("line",{x1:L,x2:W-Rt,y1:yy,y2:yy,stroke:"var(--grid)"}));p.appendChild(el("text",{x:L-8,y:yy+4,"text-anchor":"end",class:"num"},v));});});
+  rows.forEach((r,i)=>{
+    const cx=L+pw*(i+0.5)/rows.length;
+    const up=el("rect",{x:cx-bw/2,y:y0-sy(r.fixed)-1,width:bw,height:sy(r.fixed),rx:4,fill:"var(--div-pos)"});
+    const dn=el("rect",{x:cx-bw/2,y:y0+1,width:bw,height:sy(r.broken),rx:4,fill:"var(--div-neg)"});
+    p.appendChild(up);p.appendChild(dn);
+    p.appendChild(el("text",{x:cx,y:y0-sy(r.fixed)-7,"text-anchor":"middle",class:"num strong"},"+"+r.fixed));
+    p.appendChild(el("text",{x:cx,y:y0+sy(r.broken)+15,"text-anchor":"middle",class:"num strong"},"−"+r.broken));
+    p.appendChild(el("text",{x:cx,y:H-14,"text-anchor":"middle",class:"num strong"},r.lab));
+    const net=r.fixed-r.broken;
+    p.appendChild(el("text",{x:cx,y:H-1,"text-anchor":"middle"},"net "+(net>0?"+":"")+net));
+    const hit=el("rect",{x:cx-pw/rows.length/2,y:T,width:pw/rows.length,height:ph,class:"hit"});
+    hit.addEventListener("mousemove",()=>{const [px,py]=svgPt(svg,cx,y0-sy(r.fixed));tip("t2",svg,`<b>${r.lab} curated successes</b><br>fixed ${r.fixed} · broken ${r.broken} · net ${net>0?"+":""}${net}`,px,py-8);});
+    hit.addEventListener("mouseleave",()=>tip("t2"));p.appendChild(hit);
+  });
+})();
+
+/* ---- 3. stacked cube distribution ---- */
+(function(){
+  const svg=document.querySelector("#c3 svg"),p=document.getElementById("p3");
+  const L=40,Rt=16,T=16,B=40,W=440,H=300,pw=W-L-Rt,ph=H-T-B,bw=pw/R.length*0.6,cols=["var(--seq-0)","var(--seq-1)","var(--seq-2)","var(--seq-3)"];
+  [0,50,100].forEach(v=>{const yy=T+ph*(1-v/100);p.appendChild(el("line",{x1:L,x2:W-Rt,y1:yy,y2:yy,stroke:"var(--grid)"}));p.appendChild(el("text",{x:L-8,y:yy+4,"text-anchor":"end",class:"num"},v+"%"));});
+  R.forEach((r,i)=>{
+    const cx=L+pw*(i+0.5)/R.length;let acc=0;
+    r.hist.forEach((c,j)=>{if(!c)return;const h=ph*c/50,yy=T+ph-(acc+c)/50*ph;
+      const seg=el("rect",{x:cx-bw/2,y:yy+1,width:bw,height:Math.max(h-2,1),rx:j===3?4:0,fill:cols[j]});
+      seg.addEventListener("mousemove",()=>{const [px,py]=svgPt(svg,cx,yy);tip("t3",svg,`<b>${r.lab==="0 (teacher)"?"Teacher (v1)":r.lab+" curated successes"}</b><br>${j} of 3 cubes: ${c} scenes (${Math.round(c*2)}%)`,px,py-8);});
+      seg.addEventListener("mouseleave",()=>tip("t3"));p.appendChild(seg);acc+=c;});
+    p.appendChild(el("text",{x:cx,y:H-14,"text-anchor":"middle",class:"num strong"},r.lab));
+    p.appendChild(el("text",{x:cx,y:T+ph*(1-r.hist[3]/50)+ (r.hist[3]?-6:0),"text-anchor":"middle",class:"num",fill:"var(--ink)"},""));
+  });
+})();
+
+/* ---- table ---- */
+document.getElementById("tb").innerHTML=R.map(r=>`<tr${r.n===160?' class="hi"':''}><td>${r.lab}</td><td class="num">${r.succ}%</td><td class="num">${r.k} / 50</td><td class="num">${r.cubes.toFixed(2)}</td><td class="num">${r.hist.join(" / ")}</td><td class="num">${r.fixed??"—"}</td><td class="num">${r.broken??"—"}</td><td class="num">${r.fixed==null?"—":(r.fixed-r.broken>0?"+":"")+(r.fixed-r.broken)}</td></tr>`).join("");
+</script>
