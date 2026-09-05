@@ -853,6 +853,20 @@ identical 50 seeds):**
   > 5 s), so it is only a fallback. Operator tool `src/pose-ui/pose_ui.py` (host :8090) shows both
   > cameras + live joints and can pin a chosen pose (`pinned: true`), which learning never
   > overwrites (5cdb33b).
+
+**Incident (2026-09-04 night) — disk full during the round-2 ladder.** With failure recovery the
+loop collected ~50 successes/hr and was left running for ~8 h after the 160 target: 514 bags,
+798 GB, root filesystem at 100%. Consequences: the rung-160 training's log append hit ENOSPC, the
+driver mis-read that as a training failure and skipped the eval phase (rungs 20/40/80 trained
+fine; the 160 run itself kept going and finished once space was freed); the SNO VM (qcow2 on the
+same disk) went unreachable — libvirt pauses a VM on ENOSPC; resume needs the operator (sudo).
+Freed ~55 GB of safe space (docker build cache, dangling images, 8 partial bags, 3 superseded
+rollback containers, anonymous dangling volumes). **Not** deleted: curated bags, the operator's
+older rollback containers (~16 GB), other projects' named volumes. **The loop is parked and must
+not be restarted until a bag-retention policy exists** — at ~1.6 GB/bag the D019 "keep every
+curated bag on the host" hedge does not survive a recovery-rate loop. Options: keep only bags
+referenced by an assembled dataset; cap bag count (FIFO); or archive to the hub (D019 deferred
+this to Fury-prep — it just arrived early).
 - **Nested, regime-balanced rungs via seeded shuffle** (`~/rung_plan.py`): rung N = the first N of a
   seeded shuffle of the final 160, so 20 ⊂ 40 ⊂ 80 ⊂ 160 and every rung samples uniformly across
   collection time. Chronological nesting was rejected because it would make small rungs = old
