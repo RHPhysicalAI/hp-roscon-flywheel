@@ -215,7 +215,11 @@ spec:
                 # Volume=/var/lib/act-inference/bags:/data/bags
                 {{ if eq (getOrDefault .metadata.labels "gpu" "none") "nvidia" }}AddDevice=nvidia.com/gpu=all
                 SecurityLabelDisable=true
-                {{ end }}HealthCmd=/healthcheck.sh
+                # Interim (D045 image): /healthcheck.sh runs `set -u` before sourcing the ROS setup scripts, which
+                # reference unbound variables, so every probe exits 1 and HealthOnFailure=kill would crashloop the
+                # container every ~6 min. A string HealthCmd runs under `sh -c`; the same checks run with the
+                # trap neutralised. Revert to HealthCmd=/healthcheck.sh when F's image carries the fixed script.
+                {{ end }}HealthCmd=sed 's/^set -u/set +u/' /healthcheck.sh | bash -s
                 HealthStartPeriod=240s
                 HealthInterval=30s
                 HealthTimeout=10s
