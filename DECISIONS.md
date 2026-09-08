@@ -879,6 +879,12 @@ this to Fury-prep — it just arrived early).
 > Expected: ~520 GB freed. Going forward the loop must not accumulate raw bags unbounded: port
 > and prune on a schedule (or cap bag count). Docker rollback containers from earlier sessions
 > removed (+17.5 GB).
+> **Executed 2026-09-08 12:15:** corpus assembled — `flywheel-teacher-all-2026-09-08`, **450 episodes /
+> 709,879 frames**, verified (lerobot loads), pushed to `episodes-data` (1.5 GB) with its manifest.
+> Prune classes: **proof 172 kept (288 GB), ported 290 deleted (482 GB), unported 0, orphan 46 kept
+> (75 GB)** — the orphans are real 3/3 bags whose curated JSON never reached MinIO during the outage;
+> port them directly with `rosetta.port_bags` later. Disk: 18 GB → 467 GB free. The resident
+> `bag_watchdog.sh` parks the loop at the bag cap / 60 GB free.
 
 **Round 2 — ladder result (2026-09-05; fine-tune the teacher on N seeded-nested curated successes,
 ~2 epochs each, LR 1e-5; every rung on the same 50 seeds, radius 0.03):**
@@ -1078,3 +1084,16 @@ definition, gate, packaging, signing, PR, and gitops manifests are written once,
   are built and exercised.** Note for the desktop: the PR sets green `replicas: 1` (correct for the
   target); on the desktop that pod stays Pending (no in-cluster GPU) — a visible shim artifact, not
   a fault; the swap agent keys on the Service color + digest, not on replicas.
+- **PR #1 merged (operator, Gate 3) → Argo synced (Service → green, green = `bdb513ca`) → the swap
+  agent verified the signature, exported `models/act`, recreated `act-inference` serving
+  `act-v2-ft160` → v2's rollouts flow through the emitter/curator/sync-agent under the new lineage
+  (`episodes-curated/act-v2-ft160/`). Phase 3 step 7 — the loop is closed.** Round B is autonomous:
+  `manifest-consumer` now counts v2's successes and, at 160, starts the pipeline with v2 as incumbent
+  (its checkpoint from MinIO) — v3 is fine-tuned *from v2 on v2's curated successes*, gated against
+  v2 on the same 100 seeds, and lands on **blue**.
+- **One GPU, blue/green:** the PR step now reads the live side from the Service and targets the
+  *other* Deployment — candidate → 1, live → 0, Service flipped, all in one commit; both sides
+  `Recreate`, so the incumbent's pod releases the GPU and the candidate's pod (briefly Pending on
+  `nvidia.com/gpu`) schedules. Rollback is the same three edits reversed; the other side keeps the
+  previous digest. (Fixed 2026-09-08: the first version always wrote green, which would have
+  overwritten the live side in place on the second promotion.)

@@ -20,7 +20,7 @@ Phase 3 closes it with governance; Phase 3+ makes the improvement autonomous.
 | 1 — Hub plane on SNO | **Done** | D007–D012 |
 | 2 — SO-ARM producer | **Done** | D013, D014, D016 |
 | 2.5 — Close the data loop | **Complete** — steps 1–6 done & verified; only raw-in-hub archival remains, deferred to Fury (D019) | D017–D019 |
-| 3 — Training + close the loop | **In progress** — eval harness (D020) + self-improvement proof (D021: 160-success fine-tune 86% vs 74%) done; governed pipeline / blue-green / static chart next | D015, D020, D021 |
+| 3 — Training + close the loop | **Complete** (2026-09-08) — eval harness (D020), self-improvement proof (D021: 73% → 86%, p=0.019), governed pipeline through RHOAI/RHTAS with PR #1 merged and swapped, loop closed on v2; static chart shipped | D015, D020–D022 |
 | 3+ — Bootstrap loop | Not started | `BOOTSTRAP-LOOP.md` |
 | 4 — Demo hardening + Fury prep | Not started | — |
 
@@ -193,11 +193,11 @@ it reads as distillation ("the good policy trained a worse copy of itself"), not
    dashboard shows the healthier stream.
 
 ### Exit criteria
-- [ ] Curated training corpus exists in MinIO, produced entirely through the flywheel
+- [x] Curated training corpus exists in MinIO, produced entirely through the flywheel — `flywheel-teacher-all-2026-09-08` (450 episodes) + per-episode records; v2's corpus accumulating
 - [x] Training pipeline runs end-to-end from MinIO data — D022 run 6: trigger → assemble/train (host shim, MinIO in/out) → paired eval gate → crane package → cosign+Rekor sign → promotion PR, unattended
-- [x] v2 policy signed (Rekor index 1) and promotion PR opened via GitOps (PR #1) — merge + blue/green swap pending the operator's Gate 3
+- [x] v2 policy signed (Rekor index 1), promoted via GitOps (PR #1 merged), blue/green swapped (Argo → green; host swap agent recreated `act-inference` as `act-v2-ft160` after cosign verify)
 - [x] v1 vs v2 improvement demonstrable on the fixed eval set — D021 round 2: fine-tuning the teacher on 160 of its own curated successes → **86% vs 74%** on 50 identical seeds (8 fixed / 2 broken); 20/40 *degrade* it, which is the eval-gate's justification. **Confirmed at N=100: 73% → 86%, 20 fixed / 7 broken, p = 0.019.**
-- [ ] Full loop closes (sim -> record -> curate -> train -> sign -> promote -> sim)
+- [x] Full loop closes (sim -> record -> curate -> train -> sign -> promote -> sim) — v2 is running in the sim and its curated rollouts land under `act-v2-ft160/`; round B fires on its own at 160 (D022)
 
 ---
 
@@ -297,7 +297,7 @@ belong here; retraining on the policy's own successes is not one of them (D015).
 | LeRobot v2 shard layout and per-episode storage volume in MinIO | 2.5 | Resolved — hub stores the ported LeRobot dataset as one tarball (~4.5 MB/ep), not raw bags; raw bags stay on host (D019) |
 | Retain frames for rejected episodes, or metadata only? | 2.5 | Resolved — metadata only: the coordinator prunes a rollout's bag at episode end unless it reached 3/3 (curated); rejected episodes keep their JSON, not their frames (D018, prune commit) |
 | Dataset assembler: `lerobot-train` local-root vs. a synthetic `repo_id` | 2.5 | Resolved — local root via `port_bags --root`; `lerobot-train --dataset.root=<dir>` (D018) |
-| Eval-gate threshold (success-rate delta) for promotion | 3 | Open |
+| Eval-gate threshold (success-rate delta) for promotion | 3 | Resolved — paired on fixed seeds, N=100: promote iff net fixed−broken > 0 and sign-test p < 0.05 (D022) |
 | Expert grasp planning: MoveIt vs. direct IK for the SO-ARM gripper | 3+ | Open |
 | Curriculum schedule — what signal widens randomization | 3+ | Open |
 | aarch64 build of the cu130 PyTorch inference image | 4 | Open |
