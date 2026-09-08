@@ -23,7 +23,7 @@ Phase 3 closes it with governance; Phase 3+ makes the improvement autonomous.
 | 3 — Training + close the loop | **Complete** (2026-09-08) — eval harness (D020), self-improvement proof (D021: 73% → 86%, p=0.019), governed pipeline through RHOAI/RHTAS with PR #1 merged and swapped, loop closed on v2; static chart shipped | D015, D020–D022 |
 | 3+ — Bootstrap loop | Not started | `BOOTSTRAP-LOOP.md` |
 | 4 — Demo hardening + Fury prep | **In progress** — item 1 done (2026-09-08): `docs/DEMO_RUNBOOK.md`, Short Cut + Full Live, every screen verified live (D023) | D023 |
-| 4.5 — RHEM device plane | **Planned** (2026-09-08) — see Phase 4.5 below; runs before Phase 4 item 2 (the kit is recorded once, on the RHEM path) | D024–D028 |
+| 4.5 — RHEM device plane | **In progress** (2026-09-08) — A done (SNO 4.19.44, RHEM 1.3.0 under Argo, ResourceSync Synced), B done except enrollment, C in progress | D024–D048 |
 
 ---
 
@@ -358,8 +358,9 @@ A. **Hub: RHEM 1.3 on SNO under GitOps** (D024)
    - `rhem/bootstrap/{repository,resourcesync}.yaml` (`path: gitops/rhem`), applied once with
      `flightctl apply`; RBAC check with `flightctl login` — if 403, port thor D005 to
      `gitops/rhem-config/rbac.yaml`. `/etc/hosts` entries for the new routes (D006).
-   - **Exit:** UI route serves; `flightctl get resourcesync` Synced against an empty `gitops/rhem/`;
-     a cached DSP run still works after the upgrade.
+   - **Exit (met 2026-09-08):** UI route serves; `flightctl get resourcesync` Synced (Fleet
+     `act-inference` rendered VALID); DSPA + `ds-pipeline-dspa` healthy after the upgrade (no run
+     submitted — it would open a PR).
 
 B. **Desktop stand-in device: RHEL 10 VM + CPU spike** (D024)
    - `device/provision.sh`, arch-neutral, runs on the VM and the Fury: `subscription-manager`,

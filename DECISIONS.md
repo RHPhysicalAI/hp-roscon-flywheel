@@ -1437,7 +1437,9 @@ the 4.17→4.18 edge; the 4.18→4.19 gate check is repeated after the first hop
 **Decision:** `stable-*` channels (not `fast-*`, not `eus-*`: EUS only matters for a skip-hop
 we are not doing on SNO), `--to-latest=true` inside each channel so the target is the newest
 *recommended* edge — if the newest is only "conditional", switch to `--to <version>` of the
-newest recommended one rather than `--allow-not-recommended`.
+newest recommended one rather than `--allow-not-recommended`. One gate existed on the 4.18→4.19
+edge (`ack-4.18-kube-1.32-api-removals-in-4.19`); the cluster made zero requests to any API
+removed in 1.32, so it was acknowledged.
 **Operator compatibility evidence (checked before starting):** no installed CSV carries an
 `olm.maxOpenShiftVersion` property (all six checked via `operatorframework.io/properties`), so OLM
 has no block. Vendor matrices: RHOAI 2.25 supports OCP 4.16–4.20 (x86_64,
@@ -1483,6 +1485,10 @@ the auth CA, and the previously generated `flightctl-db-*`/`flightctl-kv-secret`
   client secret (`flightctl-api-config`, `flightctl-remote-access-config`,
   `flightctl-alertmanager-proxy-config`), with `RespectIgnoreDifferences=true` so a sync writes
   the live values back rather than the freshly randomised ones.
+- `upgradeHooks.databaseMigrationDryRun: false` and `upgradeHooks.scaleDown.condition: never` —
+  the chart's Helm `pre-upgrade` hooks become Argo PreSync hooks that also run on install: the
+  migration dry-run deadlocks on a fresh install (its ServiceAccount is created by the main sync)
+  and the scale-to-zero job re-renders on every sync because it relies on `lookup`.
 - `managedNamespaceMetadata.labels: io.flightctl/instance=flightctl` — the namespace→organisation
   label thor set by hand (`DEPLOYMENT_GUIDE.md:112`).
 - `prune: true` (D026 direction) — new app, nothing hand-made to lose.
@@ -1897,3 +1903,30 @@ attached: `sudo podman run --rm -v /var/lib/act-inference/bags:/data/bags
 registry.access.redhat.com/ubi9/ubi-micro:9.5 touch /data/bags/.podman-test` then
 `ausearch -m avc -ts recent`. If `:z` turns out to be harmless on virtiofs, the two Volume lines can
 be made uniform again.
+
+---
+
+## D048 — flightctl CLI identity on the hub: a real OpenShift user (kubeadmin), not the chart's ServiceAccount
+
+**Date:** 2026-09-08
+**Context:** the chart creates `ServiceAccount/flightctl-admin` bound to
+`ClusterRole/flightctl-admin-flightctl` (`createAdminUser: true`) and its NOTES suggest `flightctl
+login --token`. On this cluster the SA token validates but `GET /api/v1/organizations` returns an
+empty list and login fails with "You do not have access to any organizations": with `auth.type:
+openshift`, organisations are the projects labelled `io.flightctl/instance=flightctl` that the
+*caller* can read, and the SA has no `get` on projects (`oc auth can-i get projects --as=system:
+serviceaccount:flightctl:flightctl-admin` → no). kubeadmin (in `system:cluster-admins`) logs in,
+auto-selects the `Default` organisation, and `flightctl get fleets` answers — no 403, so thor's
+D005 RBAC workaround is **not** ported.
+**Decision:** bootstrap and demo CLI work use a user token (kubeadmin via a throwaway kubeconfig,
+since the install kubeconfig is certificate-based and `oc whoami -t` is empty there). The SA stays
+as the chart ships it; nothing is added to `gitops/rhem-config/`. Neither the desktop nor the Mac
+resolves the `api.` route without sudo, so `~/.config/flightctl/client.yaml` on the desktop now
+targets `localhost:3443` via `oc port-forward svc/flightctl-api 3443:3443`. The thor-era OSD-hub
+client config was kept rather than overwritten — backed up as `client.yaml.bak-osd-hub-2026-09-08`.
+**Alternatives:** grant the SA `get` on the flightctl project (RoleBinding to `view`) so it maps to
+the organisation — plausible, untested, and adds hand-made RBAC the chart does not own; drop
+`createAdminUser` — no benefit.
+**Consequences:** the user token expires (24 h); re-login before a demo. Routes still need the
+`/etc/hosts` line on the Mac; until then `oc port-forward svc/flightctl-api 3443:3443` on the
+desktop is the working path (used today).

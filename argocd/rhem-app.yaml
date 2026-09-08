@@ -60,6 +60,13 @@ spec:
           enabled: false
         imageBuilderWorker:
           enabled: false
+        # Helm pre-upgrade hooks become Argo PreSync hooks and run on install too. The migration
+        # dry-run deadlocks on a fresh install (its ServiceAccount is created by the main sync),
+        # and the scale-to-zero job re-renders on every sync because it relies on `lookup`.
+        upgradeHooks:
+          databaseMigrationDryRun: false
+          scaleDown:
+            condition: never
   syncPolicy:
     automated:
       prune: true

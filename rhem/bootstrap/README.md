@@ -16,13 +16,33 @@ Field names follow the flightctl 1.3 core OpenAPI (`GitRepoSpec.{type,url}`,
 
 ## Apply
 
+Log in with a **real OpenShift user's** token (kubeadmin is fine: it is in `system:cluster-admins`,
+which the chart maps to `flightctl-admin`). The default `~/sno-flywheel/auth/kubeconfig` is
+certificate-based, so `oc whoami -t` there is empty — get a token from a throwaway login:
+
 ```bash
-# token from the desktop: ssh -n jary@10.0.0.48 'export KUBECONFIG=~/sno-flywheel/auth/kubeconfig; oc whoami -t'
-flightctl login https://api.flightctl.apps.sno-flywheel.local --token <token> --insecure-skip-tls-verify
+# on the desktop
+KUBECONFIG=$(mktemp) oc login https://api.sno-flywheel.local:6443 -u kubeadmin \
+  -p "$(cat ~/sno-flywheel/auth/kubeadmin-password)" --insecure-skip-tls-verify
+flightctl login https://api.flightctl.apps.sno-flywheel.local --token "$(oc whoami -t)" --insecure-skip-tls-verify
 flightctl apply -f rhem/bootstrap/repository.yaml
 flightctl apply -f rhem/bootstrap/resourcesync.yaml
 flightctl get repository,resourcesync
 ```
+
+Verified 2026-09-08: `flightctl get fleets` answers as kubeadmin without any RBAC workaround.
+Two things that do **not** work:
+
+- The chart's `flightctl-admin` ServiceAccount token (`oc create token flightctl-admin -n
+  flightctl`) validates but maps to **no organisation** ("You do not have access to any
+  organizations") — OpenShift organisations are the projects the caller can read, and the SA
+  cannot `get` its own project. Use a user token.
+- If `api.flightctl.apps.sno-flywheel.local` does not resolve on the machine you are on (no
+  `/etc/hosts` line yet), the route is TLS-passthrough so an IP URL will not SNI-route. Use a
+  port-forward instead: `oc port-forward -n flightctl svc/flightctl-api 3443:3443` and
+  `flightctl login https://localhost:3443 ...`. The desktop also still had a thor-era
+  `~/.config/flightctl/client.yaml` pointing at the retired OSD hub; `flightctl login` replaces
+  it (backup left as `client.yaml.bak-osd-hub-2026-09-08`).
 
 `flightctl` 1.3.0 is installed at `~/.local/bin/flightctl` on the Mac and the desktop
 (sha256-verified from the GitHub release, os/arch from `uname`).

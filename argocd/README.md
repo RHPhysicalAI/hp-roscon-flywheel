@@ -54,8 +54,8 @@ device VM, Phase 4.5 B), next to the existing `10.0.0.49` lines:
 ```
 
 `oc get route -n flightctl` lists the live set. The UI is `https://ui.flightctl.apps.sno-flywheel.local`
-(OpenShift OAuth login); the CLI logs in with
-`flightctl login https://api.flightctl.apps.sno-flywheel.local --token $(oc whoami -t) --insecure-skip-tls-verify`.
+(OpenShift OAuth login); the CLI logs in with a real user's token — see `rhem/bootstrap/README.md`
+for why the chart's ServiceAccount token does not work and how to get a kubeadmin token.
 
 ## Why `rhem-app.yaml` pins so many values
 
