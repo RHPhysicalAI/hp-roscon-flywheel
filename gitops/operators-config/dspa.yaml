@@ -1,0 +1,21 @@
+apiVersion: datasciencepipelinesapplications.opendatahub.io/v1
+kind: DataSciencePipelinesApplication
+metadata:
+  name: dspa
+  namespace: flywheel
+spec:
+  dspVersion: v2
+  apiServer:
+    enableSamplePipeline: false
+  objectStorage:
+    externalStorage:
+      host: minio.minio.svc:9000
+      scheme: http
+      bucket: pipelines
+      s3CredentialsSecret:
+        secretName: hub-credentials
+        accessKey: AWS_ACCESS_KEY_ID
+        secretKey: AWS_SECRET_ACCESS_KEY
+  database:
+    mariaDB:
+      deploy: true

@@ -1,0 +1,44 @@
+apiVersion: dscinitialization.opendatahub.io/v1
+kind: DSCInitialization
+metadata:
+  name: default-dsci
+spec:
+  applicationsNamespace: redhat-ods-applications
+  monitoring:
+    managementState: Removed
+  serviceMesh:
+    managementState: Removed
+  trustedCABundle:
+    managementState: Managed
+---
+apiVersion: datasciencecluster.opendatahub.io/v1
+kind: DataScienceCluster
+metadata:
+  name: default-dsc
+spec:
+  components:
+    datasciencepipelines:
+      managementState: Managed
+    kserve:
+      managementState: Managed
+      defaultDeploymentMode: RawDeployment   # no Service Mesh / Serverless on SNO
+      serving:
+        managementState: Removed
+    dashboard:
+      managementState: Removed
+    workbenches:
+      managementState: Removed
+    modelmeshserving:
+      managementState: Removed
+    modelregistry:
+      managementState: Removed
+    ray:
+      managementState: Removed
+    kueue:
+      managementState: Removed
+    codeflare:
+      managementState: Removed
+    trainingoperator:
+      managementState: Removed
+    trustyai:
+      managementState: Removed

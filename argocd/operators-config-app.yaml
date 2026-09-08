@@ -1,0 +1,19 @@
+# Apply once the operator CSVs are Succeeded: oc apply -f argocd/operators-config-app.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: operators-config
+  namespace: openshift-gitops
+spec:
+  destination:
+    namespace: flywheel
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    path: gitops/operators-config
+    repoURL: https://github.com/RHPhysicalAI/hp-roscon-flywheel.git
+    targetRevision: desktop-gpu-split
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
