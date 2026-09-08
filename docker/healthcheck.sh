@@ -1,11 +1,12 @@
 #!/bin/bash
-# Container health for act-inference: the coordinator has latched the expected model_version and the
-# rosetta policy action server is on the graph. Exit 0 only when both hold (D024, Phase 4.5 C).
+# Container health for act-inference: the expected model_version is latched on the graph (coordinator in
+# role all, model_version_pub.py in role policy) and the rosetta policy action server is up. Exit 0 only
+# when both hold (D024, Phase 4.5 C).
 # This project was developed with assistance from AI tools.
-set -u
-
 source /opt/ros/"$ROS_DISTRO"/setup.bash
 source /ws_pai/install/setup.bash
+# After the sources: the ROS/colcon setup scripts reference unbound variables and abort under -u.
+set -u
 
 # Same zenoh client session the entrypoint configured; without it ros2 would try to start a local router.
 ZENOH_CFG=/tmp/zenoh_session.json5
@@ -13,7 +14,7 @@ export ZENOH_SESSION_CONFIG_URI="$ZENOH_CFG" RMW_ZENOH_CONFIG_FILE="$ZENOH_CFG" 
 [ -f "$ZENOH_CFG" ] || { echo "unhealthy: $ZENOH_CFG not written yet"; exit 1; }
 [ -n "${MODEL_VERSION:-}" ] || { echo "unhealthy: MODEL_VERSION is unset"; exit 1; }
 
-# Latched (TRANSIENT_LOCAL) publisher in coordinator.py; the subscriber must ask for the same durability.
+# Latched (TRANSIENT_LOCAL) publisher; the subscriber must ask for the same durability.
 got=$(timeout "${HEALTH_STEP_TIMEOUT:-4}" ros2 topic echo --once \
   --qos-durability transient_local --qos-reliability reliable \
   /flywheel/model_version 2>/dev/null | sed -n 's/^data: //p' | tr -d "'\"" | head -1)

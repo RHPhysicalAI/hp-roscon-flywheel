@@ -11,8 +11,8 @@ for criteria 2–3.
 | # | Criterion (D024) | Result |
 |---|---|---|
 | 1 | p95 forward latency < 0.5 × (`n_action_steps`/50) s | **PASS** — 83.2 ms vs 1000 ms (8 threads) |
-| 2 | `ros2 topic hz` on the commanded-action topic: no gap > 40 ms | **pending** — needs the VM and a scheduled stop of host `act-inference` |
-| 3 | 20-seed D020 eval within 10 points of GPU v2 (86%) | **pending** — same prerequisite; 20-seed GPU baseline is 17/20 = 85% |
+| 2 | `ros2 topic hz` on the commanded-action topic: no gap > 40 ms | **FAIL** (2026-09-08, in the RHEM-managed container) — max 335 ms, 6.2 % of intervals > 40 ms; see Part 2 below |
+| 3 | 20-seed D020 eval within 10 points of GPU v2 (86%) | **INVALID from the VM** (2026-09-08) — the coordinator's seeded reset and cube judge use Gazebo transport, which is host-local; see Part 3 below |
 
 ## Model under test
 
@@ -222,6 +222,150 @@ episodes with seed 1000–1019) = **17/20 = 85%** (failures: seeds 1000, 1010, 1
 figure. If it fails, apply D024's fallbacks in order: raise `n_action_steps` (cheap — part 1
 shows the forward pass is not the bottleneck, so a miss here would point at cadence, not compute),
 lower the Gazebo real-time factor, VFIO last.
+
+## Parts 2–3 — live run on the RHEM-managed VM (2026-09-08, Phase 4.5 C cut-over)
+
+Setting: host `act-inference` stopped 22:45:58Z (swap agent + bag watchdog killed first); the VM
+enrolled 22:46:10Z as device `s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg` (alias
+`act-device.localdomain`, labels `fleet=act-inference site=desktop gpu=none policy_device=cpu
+arch=amd64 zenoh_router=10.0.0.48 zenoh_port=7447`); Fleet `act-inference` generation 3
+(`a8fbe3b`), renderedVersion 3, `applicationsSummary: Healthy`, container
+`act-inference-128875-act-inference` `(healthy)` from 22:58:49Z. Runtime image
+`quay.io/jary/soarm-flywheel@sha256:29955e4e…` (D045), checkpoint from the modelcar image volume
+(`/modelcar/models/act`), `POLICY_DEVICE=cpu`, `OMP_NUM_THREADS=8`, `TORCH_NUM_THREADS=8`,
+`RECORD=false` (D044). The sim, zenoh router and pose UI stayed on the host.
+
+### Part 2 — commanded-action cadence: **FAIL** (as written)
+
+Method: instead of the host-side `ros2 topic hz` above, a probe *inside the managed container*
+(`podman exec … python3 /tmp/cadence_probe.py 300`; source in the C-live agent's scratchpad and
+reproduced below in spirit by `ros2 topic hz`) subscribed to `/forward_position_controller/commands`
+(reliable) and to `/flywheel/episode_control`, and recorded wall-clock inter-message gaps only inside
+the first 59.5 s after each `start` signal — so the cancel→end idle between episodes is excluded.
+Run 23:00:50Z–23:05:50Z, three full episodes plus a partial:
+
+| ep | start (Z) | msgs | rate (wall) | gap p50 | p95 | p99 | max | > 40 ms | > 100 ms | > 200 ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 23:01:21 | 2156 | 36.3 Hz | 20.2 ms | 57.1 | 211.1 | **335.2** | 134 | 64 | 28 |
+| 2 | 23:02:39 | 2134 | 35.9 Hz | 20.2 ms | 54.9 | 229.2 | **313.4** | 135 | 62 | 46 |
+| 3 | 23:03:56 | 2121 | 35.8 Hz | 20.2 ms | 54.6 | 229.9 | **325.3** | 129 | 62 | 42 |
+| 4 (partial, 35.7 s) | 23:05:14 | 1288 | 36.1 Hz | 20.2 ms | 52.6 | 228.4 | 298.7 | 78 | 35 | 23 |
+
+All three full episodes: 6408 intervals, **max 335.2 ms, 398 (6.21 %) over 40 ms**. Criterion:
+no gap > 40 ms → **FAIL**. `ros2 topic hz -w 3000` in the same container over 23:00:50–23:03:00Z:
+`average rate: 33.1`, `std dev: 0.135 s` (its `max 5.24 s` spans an inter-episode idle and is not
+a within-window number).
+
+Corroboration from the client itself: `rosetta.py:324` declares an action timeout of 2 frame
+periods (= 40 ms at the contract's 50 Hz) and logs `Action timeout - sending safety action`;
+**67** such lines fell inside episode 1's window (~1.1/s), 334 between the 22:58:19Z container
+start and 23:04Z.
+
+Mechanism (from the same logs): the policy server reports `Actions per chunk: 30` and logs
+`Running inference for observation #… (must_go: True)` up to **4 times per second**. The live
+node parameters (`ros2 param get /rosetta_client …`, 23:12Z) are `actions_per_chunk=30` and
+`chunk_size_threshold=0.95` (node defaults are 50 / 0.5, `rosetta_client_node.py:169-177`; the
+values come from the launch file's `params_file`, not from the entrypoint). At a 0.95 threshold the
+client asks for the next chunk as soon as ~2 of 30 actions have been consumed, i.e. effectively
+continuously, while one in-guest forward pass takes 170–250 ms (part 1, in-guest row). The queue runs dry at every chunk boundary
+and the ~200–330 ms gaps are one forward pass each. Part 1's 2 s budget assumed one forward per
+`n_action_steps = 100`; the client never asks for 100. The stall is compute-contention at the chunk
+cadence, not zenoh or the VM's network.
+
+Reading against D024's fallbacks: "raise `n_action_steps`" maps to raising the client's
+`actions_per_chunk` toward the checkpoint's 100 (a `params_file` value for
+`rosetta_client_launch.py` — the entrypoint's `policy_device:=` style argument is not declared by
+that launch file, see the device-plumbing finding — so it rides with F's image; the Fleet can then
+set it per `gpu` label). At 100 actions per chunk with a lower threshold (e.g. 0.5) the server would
+run ~0.5 forwards/s and have ~1 s of queue to hide a 250 ms forward; keeping 0.95 with 100 actions
+would still re-request early but only once per ~2 s. vCPU pinning (`VCPU_CPUSET`, D034) buys ~2× on the
+forward and would not by itself clear a 0.6 s chunk with margin. Lower RTF and VFIO stay last.
+
+Real-time check (same container, 23:09Z, `rtf_probe.py 20`): `/clock` advanced 19.80 s over
+19.99 s wall (**RTF 0.990**) and `/joint_states` arrived at **49.6 Hz wall** — the sim runs at speed,
+so the 36 Hz command rate and the gaps above are wall-time stalls on the policy side (the client
+misses ~28 % of 50 Hz ticks); the 40 ms criterion needs no RTF scaling. For scale, `ros2 topic hz
+-w 1000 /joint_states` from the same container (23:03Z): `average rate: 49.315`, `max: 0.047 s`,
+`std dev: 0.00227 s` — the sim's own 50 Hz stream is tight to ~2 ms with one 47 ms outlier.
+
+Device plumbing finding: `rosetta_client_node.py:568` logged `Requested policy device 'cuda' but
+the requested backend is unavailable; using 'cpu' instead` even though the entrypoint launched with
+`policy_device:=cpu` and printed `Launching Rosetta client with ACT on cpu`. `ros2 param get
+/rosetta_client policy_device` → `cuda`: `rosetta_client_launch.py` declares no `policy_device`
+launch argument (it takes a `params_file`; `rosetta_hil_launch.py` is the one that declares it), so
+the entrypoint's `policy_device:=cpu` is silently ignored, the node keeps its default `cuda`
+(checkpoint `config.json` also says `"device": "cuda"`), and CPU is selected by the
+CUDA-unavailable fallback, not by the setting. On a GPU host
+`POLICY_DEVICE=cpu` would therefore still run on CUDA. See the C-live decisions for the fix owner (F).
+
+No host GPU baseline could be read from the host container logs: every `act-inference` instance
+since ~20:00Z was cycled by the bag watchdog inside 18–42 s.
+
+### Part 3 — 20-seed D020 eval on CPU: **INVALID from the device VM** (stopped after 5/20)
+
+Procedure as planned, on the VM with the Fleet app target stopped
+(`systemctl stop act-inference-128875-flightctl-quadlet-app.target` at 23:06:39Z — the agent did
+not restart it), using the Fleet's image and the modelcar image volume:
+
+```bash
+sudo podman run -d --name act-eval --network host \
+  -e ZENOH_ROUTER=10.0.0.48:7447 -e RMW_IMPLEMENTATION=rmw_zenoh_cpp \
+  -e POLICY_DEVICE=cpu -e OMP_NUM_THREADS=8 -e TORCH_NUM_THREADS=8 \
+  -e EVAL_MODE=true -e EVAL_EPISODES=20 -e EVAL_SEED_BASE=1000 \
+  -e RECORD=false -e EPISODE_LEN=60 -e RESET_ARM=true \
+  -e RANDOMIZE_CUBES=true -e RANDOMIZE_ONLY=cube_medium -e RANDOM_RADIUS=0.03 -e RANDOM_YAW_DEG=180 \
+  -e MODEL_VERSION=eval-cpu-v2-ft160 -e POLICY_PATH=/modelcar/models/act \
+  -v systemd-act-inference-128875-models:/modelcar:ro -v /var/lib/act-inference/data:/data:z \
+  quay.io/jary/soarm-flywheel@sha256:29955e4e9422b194f950ba66d43689a2815a3670e5e0b398921d78501d5bb140
+```
+
+Baseline on the same seeds re-read from `docs/eval-records/phase3-ladder/eval-ft-160ep.json`:
+17/20 (failures 1000, 1010, 1018). Pass: ≥ 15/20.
+
+Run 23:08:43Z–23:17:18Z, stopped after five episodes because every result was structurally
+impossible rather than a policy outcome:
+
+```
+[eval] ep 0 -> cubes=0/3 success=False steps=416 smooth=0.004519   (seed 1000; GPU: fail)
+[eval] ep 1 -> cubes=0/3 success=False steps=382 smooth=0.00484    (seed 1001; GPU: pass, 1447 steps)
+[eval] ep 2 -> cubes=0/3 success=False steps=365 smooth=0.005054   (seed 1002; GPU: pass, 1957 steps)
+[eval] ep 3 -> cubes=0/3 success=False steps=373 smooth=0.004966   (seed 1003; GPU: pass, 1320 steps)
+[eval] ep 4 -> cubes=0/3 success=False steps=435 smooth=0.004418   (seed 1004; GPU: pass, 1335 steps)
+```
+
+Container stopped and removed 23:17:18–23:17:29Z (full log kept on the VM as
+`/home/jary/spike/eval-cpu-v2-ft160-INVALID-*.log`; no result JSON was written). The Fleet app
+target was started again at 23:17:29Z and was `healthy` at 23:18:20Z with
+`Published model_version: act-v2-ft160`.
+
+Why it cannot work from the VM: the coordinator's seeded reset (`sim_reset.py` → `gz service
+…/set_pose`) and its cube judge (`task_eval.evaluate_task()` → `gz topic -e -t
+/world/pai_world/pose/info -n 1`, 8 s timeout, silent `{}` on failure) both use **Gazebo transport**,
+not ROS/zenoh. From inside the VM container: `gz topic -l` does list `/world/pai_world/pose/info`
+(multicast discovery crosses `br0`), but `gz topic -e … -n 1` receives nothing in 20 s and
+`gz service -l` shows no `set_pose` service — the publisher/service data path back to the guest
+does not come up (`so-arm-sim` runs `--network host` on `jary-ubuntu`, so its advertised endpoints
+are host-side). So on the VM every `Resetting cubes (seed=N)` is a silent no-op and every cube
+count is 0. The `steps` figure (~6 Hz of `/joint_states`) is a second, separate artefact: in eval
+mode the coordinator counts joint states itself from a Python thread that is starved on a VM whose
+8 vCPUs are saturated by torch; on the GPU host it sees 20–43 Hz.
+
+The same gap qualifies the live-loop evidence above: the Fleet-managed coordinator on the VM also
+never resets cubes, so after the first post-cut-over episode (`79d80ff1`, 1/3 at the emitter's early
+evaluation, then all three placed later in that window) the following "successes" (`ba0d930c`
+3/3 within 2 s of `start`, `355f8af7`, `9711f96d`, …) inherit cubes already on the tray. They are
+valid evidence of the **lineage path** (VM coordinator → `/flywheel/model_version` → host emitter
+→ curator → `episodes-curated/act-v2-ft160/`), not of task performance.
+
+**Verdict: part 3 not run to a result; criterion 3 remains open.** What would make it valid:
+(a) run the coordinator (reset + judge) where Gazebo transport is local — on the host — against
+the VM's `/run_policy` action server, with the device container running the rosetta client only
+(needs an entrypoint switch, F); or (b) make Gazebo transport reachable from the device (`GZ_IP` /
+`GZ_PARTITION` on both ends and a route for the publisher back to the guest — untested, and it
+touches `so-arm-sim`); or (c) move reset + judge behind ROS services on the host (the cleanest
+contract for the Fury, where the sim is also on a different box than the device). Until one lands,
+the desktop stand-in's episodes should be read as lineage proof only, and the runbook's Beat 6
+should not quote their success rate.
 
 ## Files
 

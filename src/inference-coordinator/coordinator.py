@@ -49,6 +49,9 @@ CUBES_TARGET = int(os.environ.get("CUBES_TARGET", "3"))
 # stamped with the policy that actually produced it — correct across swaps
 # without recreating the sim. Empty = let the emitter keep its own default.
 MODEL_VERSION = os.environ.get("MODEL_VERSION", "")
+# docker/inference-entrypoint.sh ROLE: in "coordinator" the policy container publishes the label
+# (model_version_pub.py) and this node only observes it; otherwise this node publishes it.
+ROLE = os.environ.get("ROLE", "all")
 SETTLE_S = float(os.environ.get("SETTLE_S", "3.0"))
 HOME_TOLERANCE = float(os.environ.get("HOME_TOLERANCE", "0.15"))
 HOME_WAIT_MAX = float(os.environ.get("HOME_WAIT_MAX", "8.0"))
@@ -129,12 +132,17 @@ class Coordinator(Node):
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
             history=HistoryPolicy.KEEP_LAST,
         )
-        self._mv_pub = self.create_publisher(String, "/flywheel/model_version", latched)
-        if MODEL_VERSION:
-            m = String()
-            m.data = MODEL_VERSION
-            self._mv_pub.publish(m)
-            self.get_logger().info(f"Published model_version: {MODEL_VERSION}")
+        self._observed_mv = None
+        if ROLE == "coordinator":
+            self.create_subscription(String, "/flywheel/model_version", self._on_model_version, latched)
+        else:
+            self._mv_pub = self.create_publisher(String, "/flywheel/model_version", latched)
+            if MODEL_VERSION:
+                m = String()
+                m.data = MODEL_VERSION
+                self._mv_pub.publish(m)
+                self._observed_mv = MODEL_VERSION
+                self.get_logger().info(f"Published model_version: {MODEL_VERSION}")
         self._latest_positions = None
         self._latest_names = None
         # Failure recovery state: the learned rest pose ({joint: pos}) and whether the
@@ -275,6 +283,16 @@ class Coordinator(Node):
         m.data = msg
         self._control_pub.publish(m)
         self.get_logger().info(f"Signaled: {msg}")
+
+    def _on_model_version(self, msg):
+        """Coordinator role: note the label the policy container serves; warn if it is not ours."""
+        mv = msg.data.strip()
+        if not mv or mv == self._observed_mv:
+            return
+        self._observed_mv = mv
+        self.get_logger().info(f"Observed model_version: {mv}")
+        if MODEL_VERSION and mv != MODEL_VERSION:
+            self.get_logger().warn(f"MODEL_VERSION={MODEL_VERSION} but the policy serves {mv}")
 
     def _publish_dataset(self):
         """Publish the just-recorded bag as a repo-relative ref (bags/<name>)
@@ -655,6 +673,8 @@ class Coordinator(Node):
         mv = MODEL_VERSION or "unversioned"
         doc = {
             "model_version": mv,
+            # what the policy container actually announced (differs from mv in the coordinator role)
+            "served_model_version": self._observed_mv,
             "policy_path": os.environ.get("POLICY_PATH", ""),
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "eval_config": {

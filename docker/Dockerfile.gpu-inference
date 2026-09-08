@@ -76,6 +76,8 @@ ENV RMW_IMPLEMENTATION=rmw_zenoh_cpp
 
 COPY src/sim-reset/sim_reset.py /ws_pai/sim_reset.py
 COPY src/inference-coordinator/coordinator.py /ws_pai/coordinator.py
+# policy role (ROLE=policy): latched /flywheel/model_version without a coordinator in the container
+COPY src/inference-coordinator/model_version_pub.py /ws_pai/model_version_pub.py
 # coordinator's early-stop imports task_eval to confirm the task is complete
 COPY src/episode-emitter/task_eval.py /ws_pai/task_eval.py
 # dataset assembler: curated episodes -> LeRobot dataset (run as a batch job)
@@ -86,7 +88,7 @@ COPY docker/inference-entrypoint.sh /entrypoint.sh
 COPY docker/healthcheck.sh /healthcheck.sh
 RUN chmod +x /entrypoint.sh /healthcheck.sh
 
-# Healthy = coordinator latched $MODEL_VERSION and the policy action server is up (Phase 4.5 C).
+# Healthy = $MODEL_VERSION is latched on /flywheel/model_version and the policy action server is up (Phase 4.5 C).
 # start-period covers sim discovery + rosetta launch + recorder (~60-90 s) with headroom for a CPU device.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=240s --retries=3 CMD ["/healthcheck.sh"]
 

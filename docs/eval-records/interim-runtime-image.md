@@ -151,3 +151,34 @@ Phase 4.5 F replaces this with the Tekton-built multi-arch manifest (amd64 + arm
 (D028). When that lands: re-pin `gitops/rhem/fleet-act-inference.yaml` to the new manifest digest,
 leave this tag and Rekor index 2 in place as history (do not delete the signature), and mark this
 record superseded.
+
+## 2026-09-08b — role split + chunk params (Phase 4.5 C3)
+
+Same recipe, second interim build. Supersedes the digest above in the Fleet; index 2 stays in Rekor as history.
+
+| | |
+|---|---|
+| Tag | `quay.io/jary/soarm-flywheel:act-inference-amd64-2026-09-08b` |
+| Manifest digest | `sha256:2ad1fb1c393a6a5c5281abab83187d9e4aeecc05fdca8e12b7d247ced0009e11` |
+| Pin as | `quay.io/jary/soarm-flywheel@sha256:2ad1fb1c393a6a5c5281abab83187d9e4aeecc05fdca8e12b7d247ced0009e11` |
+| Platform | `linux/amd64` only (single manifest, `application/vnd.docker.distribution.manifest.v2+json`, 29 layers — one more `COPY`) |
+| Local image id | `sha256:b21e9348a50089e3859f59adedbaaa1be2e9a746fc0cf504705292a3fcd53a3d` (created 2026-09-08T18:29:40-05:00) |
+| Rekor log index | **3** (uuid `06f19aeda42b56bdc637632d152d957fb0695d330ae76f53c42336f549c78396dc1a9ec862c21541`, `hashedrekord`, payload hash `894deb6ddb615bf6470cd7a52331c7c135dfad3c025fd0bf3370f570d10d8fa6`, integrated 1788910239 = 2026-09-08T23:30:39Z, tree size after = 4) |
+| Signature | `quay.io/jary/soarm-flywheel:sha256-2ad1fb1c…0009e11.sig` (cosign attachment, bundle embedded) |
+| Signing / Rekor keys | unchanged (desktop `~/cosign/cosign.key`; `~/rekor-live.pub`, md5 `e34fa270…` = the device's `/etc/pki/containers/rekor.pub`) |
+
+What changed vs. `29955e4e`: `docker/inference-entrypoint.sh` gains `ROLE=policy|coordinator|all` and
+writes the rosetta client `params_file` (`policy_device`, `actions_per_chunk`, `chunk_size_threshold`
+from env — the old `key:=value` launch args were not declared by `rosetta_client_launch.py` and were
+ignored); new `src/inference-coordinator/model_version_pub.py` (latched `/flywheel/model_version` for
+the policy role); `coordinator.py` observes instead of publishing the label in the coordinator role;
+`docker/healthcheck.sh` sources ROS before `set -u` (the C2 `HealthCmd=` workaround is no longer needed).
+
+Build: host checkout at `0827369` with `docker/` and `src/` rsync'd in from the working tree
+(`rsync -a docker/ src/ …`); `docker build --platform linux/amd64 -f docker/Dockerfile.gpu-inference
+-t quay.io/jary/soarm-flywheel:act-inference-amd64-2026-09-08b .` 18:29:39–18:29:41 CDT, 10 steps
+`CACHED`, only the `COPY`/`chmod` layers re-ran; `docker push` 18:29:41–18:29:47 (all but the new
+layers already in quay). Sign + verify: `~/build-logs/sign-interim-b.sh` (the same container recipe;
+verify run with `SIGSTORE_REKOR_PUBLIC_KEY=/rekor.pub` mounted from `~/rekor-live.pub`), 18:30:38–18:30:41 CDT:
+`tlog entry created with index: 3`; verify — cosign claims validated, transparency-log existence
+verified offline, signature verified against the key. No `:latest` tag moved.

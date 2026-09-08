@@ -83,8 +83,10 @@ if command -v subscription-manager >/dev/null 2>&1; then
 fi
 
 # ---- 2. podman ----------------------------------------------------------------
-log "installing podman"
-dnf -y install podman >/dev/null
+log "installing podman + skopeo"
+# flightctl-agent 1.3.0 shells out to skopeo to inspect application images before pulling; without
+# it the first spec fails at prefetch ("required commands not found: skopeo") — seen 2026-09-08.
+dnf -y install podman skopeo >/dev/null
 PODMAN_VER="$(podman --version | awk '{print $3}')"
 version_ge "$PODMAN_VER" "$PODMAN_MIN" \
   || die "podman ${PODMAN_VER} < ${PODMAN_MIN}; image volumes (Fleet application volumes) need >= ${PODMAN_MIN}. Enable a newer AppStream stream or update the OS before continuing."
