@@ -22,7 +22,7 @@ Phase 3 closes it with governance; Phase 3+ makes the improvement autonomous.
 | 2.5 — Close the data loop | **Complete** — steps 1–6 done & verified; only raw-in-hub archival remains, deferred to Fury (D019) | D017–D019 |
 | 3 — Training + close the loop | **Complete** (2026-09-08) — eval harness (D020), self-improvement proof (D021: 73% → 86%, p=0.019), governed pipeline through RHOAI/RHTAS with PR #1 merged and swapped, loop closed on v2; static chart shipped | D015, D020–D022 |
 | 3+ — Bootstrap loop | Not started | `BOOTSTRAP-LOOP.md` |
-| 4 — Demo hardening + Fury prep | Not started | — |
+| 4 — Demo hardening + Fury prep | **In progress** — item 1 done (2026-09-08): `docs/DEMO_RUNBOOK.md`, Short Cut + Full Live, every screen verified live (D023) | D023 |
 
 ---
 
@@ -241,7 +241,7 @@ belong here; retraining on the policy's own successes is not one of them (D015).
 
 **Goal:** demo-ready on the desktop; arm64 images build; Fury porting checklist ready.
 
-1. **Adapt the demo runbook** — re-skin the 6-beat narrative for SO-ARM:
+1. **Adapt the demo runbook** ✅ — `docs/DEMO_RUNBOOK.md` (2026-09-08, D023). Re-skin the 6-beat narrative for SO-ARM:
    - Beat 1: "Here's the sim — SO-ARM placing cubes, running a trained policy"
    - Beat 2: "The curator is watching — this is the curation stream"
    - Beat 3: "Training started from the curated data — here's the pipeline"
@@ -260,6 +260,11 @@ belong here; retraining on the policy's own successes is not one of them (D015).
    Short Cut plays from those. If the dashboard isn't ready or breaks, Beat 4 falls back to the
    static chart from Phase 3 step 6.
 
+   **Done:** every beat has screen / command / spoken line / fallback, plus the desktop-vs-Fury
+   difference per beat. Full Live = live pipeline + merge + swap on a pre-trained candidate (training
+   and the N=100 gate take ~2 h — D023); reset-to-v1 procedure included. The end-to-end Full Live
+   cycle is marked *not rehearsed* and belongs to item 2's recording session.
+
 2. **Record a fallback run** — clean end-to-end captured on the desktop for venue-link /
    Fury-slip insurance. Non-negotiable.
 
@@ -276,7 +281,7 @@ belong here; retraining on the policy's own successes is not one of them (D015).
    - All x86 assumptions resolved
 
 ### Exit criteria
-- [ ] Demo-ready on desktop with runbook
+- [ ] Demo-ready on desktop with runbook — *runbook done (D023); "demo-ready" waits on one full rehearsal of the Full Live cut (item 2)*
 - [ ] Fallback recording captured
 - [ ] arm64 images build
 - [ ] Fury porting checklist written

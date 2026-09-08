@@ -1106,3 +1106,53 @@ definition, gate, packaging, signing, PR, and gitops manifests are written once,
   with `rung_plan.json`); models `soarm-act-v2-ft160` (the promoted v2), `soarm-act-ft-ladder-{20,40,80}ep`
   and `soarm-act-teacher-ft40-round1` (the ladder evidence). Raw bags stay on the host (355 GB, D019).
   Phase 4 idea: the package step pushes each *promoted* checkpoint to HF as part of promotion.
+
+---
+
+## D023 — Demo runbook: the Full Live cut promotes a pre-trained, pre-evaluated candidate live
+
+**Date:** 2026-09-08
+**Context:** Phase 4 item 1 — re-skin thor-testing's six-beat runbook for SO-ARM (`docs/DEMO_RUNBOOK.md`).
+BUILD-PLAN asks for a Short Cut (4–5 min, pinned run) and a Full Live (10–12 min, "live training +
+promotion"). Measured on the desktop: fine-tuning on 160 episodes takes ~25 min on the RTX 5090, and
+the D022 gate is a **paired N=100 eval per policy** at up to 60 s per episode — over an hour per
+candidate. Neither fits a 12-minute slot; thor-testing hit the same wall (30-min SFT) and showed
+the real artifacts instead of the training.
+
+**Decision — Full Live = the governed pipeline runs live on a candidate whose training and eval
+already happened.** The run is submitted on stage through the same DSP API and parameters the
+`manifest-consumer` uses, with `candidate=act-v2-ft160`; the host runner recognises the existing
+checkpoint and the two N=100 records and reuses them (its documented idempotent path, D022), so
+trigger → gate → `crane append` → `cosign sign` (a **new** Rekor entry) → a **new** promotion PR
+takes ~3 min (run 6: 15:01 → 15:04). The operator merges live; Argo (hard refresh) and one
+swap-agent pass land v2 in ~2–3 min. **Live:** sim, curation, the pipeline, the signature, the
+transparency-log entry, the PR, the merge, the sync, the swap, the badge flip, v2's first episodes.
+**Pre-baked:** the checkpoint and the eval records (real artifacts from 2026-09-05/08). The runbook
+says so in one paragraph ("the one honest shortcut") and the narration never claims training
+happened on stage. Rejected: (a) train live — 25 min of nothing to watch, then the eval wall;
+(b) shrink `eval_n` for the show — changes the gate rule and misrepresents the evidence.
+
+**Consequences:**
+- The Full Live needs a **reset to v1** before the show (blue live, `upstream-act-teacher`): the
+  D022 rollback — three edits reversed in one commit on `desktop-gpu-split`, Argo hard refresh, one
+  swap-agent pass. It also needs the stale `promote/act-v2-ft160` head branch deleted on GitHub, or
+  the PR step fails on `create_git_ref`. While v1 collects, round B is paused (the consumer counts
+  only `act-v2-ft160` episodes); it resumes when the demo re-promotes v2.
+- The runner parks the collection loop around the eval even when it reuses records, so **the arm
+  pauses ~1 min during the gate step**; the runbook narrates it rather than hiding it.
+- **Beat 4 uses the Phase 3 static chart as the primary screen** until the eval dashboard exists
+  (separate owner). Whatever replaces it must run from the frozen records in
+  `docs/eval-records/phase3-ladder/` — the booth has no cluster and no Kafka (BUILD-PLAN rule).
+- The operational dashboard's `TRIGGER_THRESHOLD` was 10 (thor default) while the consumer fires
+  at 160; its bar read "44 / 10" with a permanent "training threshold reached" banner — set to
+  **160** so Beat 2's screen doesn't contradict Beat 3's narration. The bar still counts local
+  `sent/` files since the last Clear; the consumer's count is authoritative.
+- Verified against the live system while writing (2026-09-08): the sim and camera bridge run on the
+  **host** (`10.0.0.48:8081`), not the NodePort 30881 the Phase-0 ops extract lists (the in-cluster
+  `so-arm-sim` is `replicas: 0`); there is **no graphical DSP run view** (RHOAI `dashboard`
+  component is `Removed`) — Beat 3's screen is the runner/poller logs and the KFP API task list;
+  `cosign verify --key` passes, tlog verification against RHTAS needs its TUF root on the host
+  (follow-up); the Rekor UI needs a `rekor-server-…` hosts entry on the presenting laptop.
+- Not executed in this session (documented as **[not rehearsed]**): the reset-to-v1 →
+  live-run → merge → swap cycle end to end, and the sim-container restart. Both belong to the
+  fallback-recording rehearsal (Phase 4 item 2).
