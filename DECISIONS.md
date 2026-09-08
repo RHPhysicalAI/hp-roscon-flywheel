@@ -1069,3 +1069,12 @@ definition, gate, packaging, signing, PR, and gitops manifests are written once,
   transparency log (RHTAS), for `sha256:83984b5f…`. The PR step then failed with GitHub 403 *"Resource
   not accessible by personal access token"* on `git/trees`: the fine-grained PAT lacked Contents write
   (and org access) — a token-scope issue, not the pipeline. Re-issued token → run 6.
+- **Run 6 (2026-09-08) — the governed promotion, end to end, unattended:** trigger → host runner →
+  gate PASS (73% → 86%, 20/7, p = 0.019) → `crane append` → `quay.io/jary/soarm-act-modelcar@sha256:bdb513ca…`
+  → cosign sign with **Rekor index 1** → **PR #1** `Promote act-v2-ft160 (73% -> 86%)`
+  (https://github.com/RHPhysicalAI/hp-roscon-flywheel/pull/1): one commit editing the three
+  `act-serving` files atomically, evidence table in the body. Human merge = Gate 3; Argo then syncs
+  the flip and, on the desktop, the swap agent applies it to the host container. **Phase 3 steps 4–5
+  are built and exercised.** Note for the desktop: the PR sets green `replicas: 1` (correct for the
+  target); on the desktop that pod stays Pending (no in-cluster GPU) — a visible shim artifact, not
+  a fault; the swap agent keys on the Service color + digest, not on replicas.
