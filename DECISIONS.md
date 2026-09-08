@@ -868,6 +868,18 @@ curated bag on the host" hedge does not survive a recovery-rate loop. Options: k
 referenced by an assembled dataset; cap bag count (FIFO); or archive to the hub (D019 deferred
 this to Fury-prep — it just arrived early).
 
+> **Resolved 2026-09-08 (operator-decided): bag retention = port everything, keep the proof bags.**
+> The hub is back (VM resumed; guest clock had frozen 3d 9h at the pause → MinIO
+> `RequestTimeTooSkewed`; fixed by setting the node clock from the host). All curated teacher
+> successes (~453 JSONs; 507 bags on disk) are being ported into one LeRobot dataset
+> (`flywheel-teacher-all-2026-09-08`, pushed to `episodes-data` with a Kafka manifest per D019).
+> Once verified, raw bags whose episode is in that manifest are deleted; the **172 bags that
+> predate the ladder assembly** (a superset of the 161 the proof trained on) are kept as the
+> re-port hedge, as are any bag whose JSON arrived after the pull (ported separately later).
+> Expected: ~520 GB freed. Going forward the loop must not accumulate raw bags unbounded: port
+> and prune on a schedule (or cap bag count). Docker rollback containers from earlier sessions
+> removed (+17.5 GB).
+
 **Round 2 — ladder result (2026-09-05; fine-tune the teacher on N seeded-nested curated successes,
 ~2 epochs each, LR 1e-5; every rung on the same 50 seeds, radius 0.03):**
 
