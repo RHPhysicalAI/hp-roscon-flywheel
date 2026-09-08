@@ -7,7 +7,7 @@ spec:
   type: ClusterIP
   selector:
     app: act-policy
-    color: blue          # the LIVE side. A promotion flips this in the same commit as the replicas.
+    color: green          # the LIVE side. A promotion flips this in the same commit as the replicas.
   ports:
     - name: policy-server
       port: 8080

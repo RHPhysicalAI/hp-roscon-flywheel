@@ -8,7 +8,7 @@ metadata:
     app: act-policy
     color: green
 spec:
-  replicas: 0            # desktop: 0 (host shim). target: 1 when green is live.
+  replicas: 1            # desktop: 0 (host shim). target: 1 when green is live.
   revisionHistoryLimit: 0
   strategy:
     type: Recreate       # one GPU — never RollingUpdate
@@ -25,7 +25,7 @@ spec:
       initContainers:
         - name: modelcar
           # Signed ACT modelcar, pinned BY DIGEST. The pipeline's promotion PR rewrites this line.
-          image: quay.io/jary/soarm-act-modelcar@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          image: quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b
           command: ["sh", "-c", "cp -a /models/. /mnt/models/"]
           volumeMounts:
             - name: models
@@ -37,7 +37,7 @@ spec:
             - name: POLICY_PATH
               value: /models/act
             - name: MODEL_VERSION
-              value: upstream-act-teacher
+              value: act-v2-ft160
             - name: RMW_IMPLEMENTATION
               value: rmw_zenoh_cpp
             - name: ZENOH_ROUTER
