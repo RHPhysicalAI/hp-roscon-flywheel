@@ -188,10 +188,16 @@ def handle(t: dict, producer: KafkaProducer):
     k = float(t.get("steps_per_frame", 0.25)); n = int(t.get("eval_n", 100)); sb = int(t.get("eval_seed_base", 1000))
     result = {"run_id": run_id, "candidate": cand, "incumbent": inc, "status": "error", "message": ""}
     try:
-        repo_id = f"{cand}-train"
-        result["dataset_uri"] = assemble(coll, repo_id)
         inc_path = resolve_incumbent(t.get("incumbent_checkpoint", "hf"), inc)
-        ck = train(cand, repo_id, inc_path, k)
+        ck = FLY / "train" / cand / "checkpoints" / "last" / "pretrained_model"
+        if (ck / "model.safetensors").exists():
+            # Idempotent: a checkpoint already trained under this candidate name (e.g. the D022
+            # bootstrap that promotes the already-evaluated v2) is reused; assemble+train skipped.
+            log(f"checkpoint for {cand} exists — skipping assemble/train"); result["dataset_uri"] = "reused"
+        else:
+            repo_id = f"{cand}-train"
+            result["dataset_uri"] = assemble(coll, repo_id)
+            ck = train(cand, repo_id, inc_path, k)
         result["checkpoint_uri"] = upload_dir_tgz(ck, f"checkpoints/{cand}/pretrained_model.tar.gz")
         loop_park()
         try:
