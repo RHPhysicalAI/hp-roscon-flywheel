@@ -101,6 +101,12 @@ data:
                 try:
                     ep = json.loads(body)
                     eid = ep.get("episode_id", "unknown")
+                    # Eval-harness runs are not production data: never let an eval-* lineage
+                    # into raw/ (and so never into curated/rejected, MinIO or Kafka). Ack so the
+                    # emitter doesn't fall back to writing locally.
+                    if str(ep.get("model_version", "")).startswith("eval-"):
+                        print(f"[curator-receiver] Discarded eval-run episode {eid} ({ep.get('model_version')})", flush=True)
+                        self.send_response(200); self.end_headers(); self.wfile.write(b"discarded"); return
                     out = RAW_DIR / f"{eid}.json"
                     out.write_text(json.dumps(ep, indent=2))
                     print(f"[curator-receiver] Received episode {eid}", flush=True)
