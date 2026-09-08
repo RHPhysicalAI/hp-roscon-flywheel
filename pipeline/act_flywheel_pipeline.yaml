@@ -278,10 +278,12 @@ deploymentSpec:
           tar\", \"-xzf\", \"/tmp/crane.tgz\", \"-C\", \"/tmp\", \"crane\"], check=True)\n\
           \    # quay-push is a kubernetes.io/dockerconfigjson Secret: the mounted\
           \ file is .dockerconfigjson,\n    # while crane/cosign look for $DOCKER_CONFIG/config.json.\n\
-          \    import shutil; os.makedirs(\"/tmp/docker\", exist_ok=True)\n    shutil.copy(\"\
-          /etc/quay/.dockerconfigjson\", \"/tmp/docker/config.json\"); os.environ[\"\
-          DOCKER_CONFIG\"] = \"/tmp/docker\"\n    r = subprocess.run([\"/tmp/crane\"\
-          , \"append\", \"--platform\", platform, \"-b\", \"registry.access.redhat.com/ubi9/ubi-micro:latest\"\
+          \    import json as _j; os.makedirs(\"/tmp/docker\", exist_ok=True)\n  \
+          \  cfg = _j.load(open(\"/etc/quay/.dockerconfigjson\"))\n    _j.dump({\"\
+          auths\": cfg.get(\"auths\", {})}, open(\"/tmp/docker/config.json\", \"w\"\
+          ))  # drop credsStore/credHelpers\n    os.environ[\"DOCKER_CONFIG\"] = \"\
+          /tmp/docker\"\n    r = subprocess.run([\"/tmp/crane\", \"append\", \"--platform\"\
+          , platform, \"-b\", \"registry.access.redhat.com/ubi9/ubi-micro:latest\"\
           ,\n                        \"-f\", \"/tmp/layer.tar\", \"-t\", f\"{registry_repo}:{candidate}\"\
           ], capture_output=True, text=True)\n    if r.returncode != 0:\n        print(\"\
           crane append failed:\", r.stderr[-1500:]); raise SystemExit(1)\n    ref\
@@ -319,13 +321,15 @@ deploymentSpec:
           \ log when rekor_url is set (RHTAS).\"\"\"\n    import os, subprocess, urllib.request\n\
           \    urllib.request.urlretrieve(f\"https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-amd64\"\
           , \"/tmp/cosign\")\n    os.chmod(\"/tmp/cosign\", 0o755); os.environ[\"\
-          COSIGN_PASSWORD\"] = \"\"\n    import shutil; os.makedirs(\"/tmp/docker\"\
-          , exist_ok=True)\n    shutil.copy(\"/etc/quay/.dockerconfigjson\", \"/tmp/docker/config.json\"\
-          ); os.environ[\"DOCKER_CONFIG\"] = \"/tmp/docker\"\n    cmd = [\"/tmp/cosign\"\
-          , \"sign\", \"--key\", \"/etc/cosign/cosign.key\", \"-y\", image_ref]\n\
-          \    cmd += [\"--rekor-url\", rekor_url, \"--tlog-upload=true\"] if rekor_url\
-          \ else [\"--tlog-upload=false\"]\n    subprocess.run(cmd, check=True); print(\"\
-          signed\", image_ref); return image_ref\n\n"
+          COSIGN_PASSWORD\"] = \"\"\n    import json as _j; os.makedirs(\"/tmp/docker\"\
+          , exist_ok=True)\n    cfg = _j.load(open(\"/etc/quay/.dockerconfigjson\"\
+          ))\n    _j.dump({\"auths\": cfg.get(\"auths\", {})}, open(\"/tmp/docker/config.json\"\
+          , \"w\"))  # drop credsStore/credHelpers\n    os.environ[\"DOCKER_CONFIG\"\
+          ] = \"/tmp/docker\"\n    cmd = [\"/tmp/cosign\", \"sign\", \"--key\", \"\
+          /etc/cosign/cosign.key\", \"-y\", image_ref]\n    cmd += [\"--rekor-url\"\
+          , rekor_url, \"--tlog-upload=true\"] if rekor_url else [\"--tlog-upload=false\"\
+          ]\n    subprocess.run(cmd, check=True); print(\"signed\", image_ref); return\
+          \ image_ref\n\n"
         image: registry.access.redhat.com/ubi9/python-312:latest
     exec-trigger-and-wait:
       container:

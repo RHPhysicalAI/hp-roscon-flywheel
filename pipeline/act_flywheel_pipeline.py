@@ -88,8 +88,10 @@ def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, pl
     urllib.request.urlretrieve(url, "/tmp/crane.tgz"); subprocess.run(["tar", "-xzf", "/tmp/crane.tgz", "-C", "/tmp", "crane"], check=True)
     # quay-push is a kubernetes.io/dockerconfigjson Secret: the mounted file is .dockerconfigjson,
     # while crane/cosign look for $DOCKER_CONFIG/config.json.
-    import shutil; os.makedirs("/tmp/docker", exist_ok=True)
-    shutil.copy("/etc/quay/.dockerconfigjson", "/tmp/docker/config.json"); os.environ["DOCKER_CONFIG"] = "/tmp/docker"
+    import json as _j; os.makedirs("/tmp/docker", exist_ok=True)
+    cfg = _j.load(open("/etc/quay/.dockerconfigjson"))
+    _j.dump({"auths": cfg.get("auths", {})}, open("/tmp/docker/config.json", "w"))  # drop credsStore/credHelpers
+    os.environ["DOCKER_CONFIG"] = "/tmp/docker"
     r = subprocess.run(["/tmp/crane", "append", "--platform", platform, "-b", "registry.access.redhat.com/ubi9/ubi-micro:latest",
                         "-f", "/tmp/layer.tar", "-t", f"{registry_repo}:{candidate}"], capture_output=True, text=True)
     if r.returncode != 0:
@@ -103,8 +105,10 @@ def sign_modelcar(image_ref: str, rekor_url: str, cosign_version: str) -> str:
     import os, subprocess, urllib.request
     urllib.request.urlretrieve(f"https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-amd64", "/tmp/cosign")
     os.chmod("/tmp/cosign", 0o755); os.environ["COSIGN_PASSWORD"] = ""
-    import shutil; os.makedirs("/tmp/docker", exist_ok=True)
-    shutil.copy("/etc/quay/.dockerconfigjson", "/tmp/docker/config.json"); os.environ["DOCKER_CONFIG"] = "/tmp/docker"
+    import json as _j; os.makedirs("/tmp/docker", exist_ok=True)
+    cfg = _j.load(open("/etc/quay/.dockerconfigjson"))
+    _j.dump({"auths": cfg.get("auths", {})}, open("/tmp/docker/config.json", "w"))  # drop credsStore/credHelpers
+    os.environ["DOCKER_CONFIG"] = "/tmp/docker"
     cmd = ["/tmp/cosign", "sign", "--key", "/etc/cosign/cosign.key", "-y", image_ref]
     cmd += ["--rekor-url", rekor_url, "--tlog-upload=true"] if rekor_url else ["--tlog-upload=false"]
     subprocess.run(cmd, check=True); print("signed", image_ref); return image_ref
