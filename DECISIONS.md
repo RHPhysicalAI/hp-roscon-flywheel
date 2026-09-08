@@ -1020,3 +1020,28 @@ definition, gate, packaging, signing, PR, and gitops manifests are written once,
 6. Run it end-to-end on the desktop: v2 (already trained + evaluated) as the first candidate —
    package → sign → PR → merge → swap. Then let the loop run v2 (round B) and let the pipeline
    fire on its own for v3.
+
+**Built 2026-09-08 (same day):**
+- Operators subscribed via GitOps (`gitops/operators/`, Argo app `operators`): OpenShift Pipelines
+  `latest`, RHTAS `stable`, RHOAI `stable`. Stale Cosmos-era `dreamer`/`robot-sim` leftovers removed;
+  `flywheel` app Synced/Healthy.
+- `gitops/act-serving/` (Argo app `act-serving`): blue/green Deployment pair + color Service, target-
+  shaped, both `replicas: 0` on the desktop. **Registry for the desktop: `quay.io/jary/soarm-act-modelcar`**
+  (no internal-registry route on SNO; host has quay creds) — a pipeline parameter; the target uses the
+  internal registry. **cosign v2.6.5** (v2.x as required; thor moved off 2.4.1 for a CVE fix).
+- Seeds packaged on the host with `crane append` (flat `models/act/` on ubi-micro, amd64) and signed:
+  v1 `upstream-act-teacher` → `sha256:d5e5897f…` (blue now pins it), v2 `act-v2-ft160` →
+  `sha256:d1337aa5…` (the first promotion candidate). Both `cosign verify` clean.
+- **Desktop shim contract** (identical artifacts to the in-cluster components on the target):
+  pipeline → Kafka `training-triggers` `{run_id, candidate, incumbent, collector, incumbent_checkpoint,
+  steps_per_frame, eval_n, eval_seed_base}`; host runner (`src/host-runner/host_runner.py`) assembles,
+  trains (D021 recipe), parks the loop, runs the D020 harness on candidate **and** incumbent (N=100,
+  same seeds), restores the loop, writes the paired `eval_report.json` (rule: net > 0 ∧ p < 0.05),
+  uploads `checkpoints/<candidate>/pretrained_model.tar.gz` + `eval/<run_id>/…` to MinIO, emits
+  `training-results`. `src/swap-agent/swap_agent.py` applies the three act-serving files to the host
+  container (cosign verify → crane export → Recreate) — verified in check mode against blue.
+- `pipeline/act_flywheel_pipeline.py` (KFP v2, compiled): trigger+wait → gate (`sys.exit(1)` on
+  fail) → package → sign → **one-commit** promotion PR. `gitops/flywheel/manifest-consumer.yaml`:
+  trigger at 160, inert until `DSP_URL`/`TRAINING_PIPELINE_ID` are set.
+- Gotcha recorded: lerobot writes checkpoints root-owned 0600; the runner `chmod -R a+rX`s them so the
+  host user can tar/package them.
