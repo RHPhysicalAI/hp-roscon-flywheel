@@ -586,7 +586,9 @@ class Coordinator(Node):
             self._start_peak_poll()   # resets peak to 0, spawns the poll thread
             self._metrics_active = True
             ep_start = time.time()
-            self._signal("start")
+            # No 'start'/'end' signals in eval mode: the emitter would POST each eval episode to
+            # the curator under the eval label and pollute the production buckets (found
+            # 2026-09-08: 135 eval-* objects in MinIO). The harness scores itself.
 
             # 3. Send goal + run the attempt window.
             goal = RunPolicy.Goal()
@@ -608,8 +610,6 @@ class Coordinator(Node):
             self._metrics_active = False
             self._stop_peak_poll()
             time.sleep(SETTLE_S)
-            self._signal("end")
-            time.sleep(0.5)
             try:
                 import task_eval
                 _, snapshot = task_eval.evaluate_task()

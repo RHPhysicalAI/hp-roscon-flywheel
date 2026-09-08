@@ -664,10 +664,12 @@ mean_smoothness) and touches **no** curator / MinIO / Kafka:
 - eval scenes can therefore **never contaminate the training corpus** (and the assembler's
   `--model-version` filter ignores the eval label even if an eval episode reaches the curator), and
 - the eval doesn't depend on the hub being healthy — it's a reproducible measurement, not a producer.
-The coordinator still publishes the eval `model_version` (latched) and signals `start`/`end`, so the
-emitter self-labels any eval episode it happens to see; the coordinator's `/data/eval` file is
-authoritative and complete regardless (fast early-stopped successes that trip the emitter's
-`MIN_EPISODE_S` debounce are still scored by the coordinator).
+~~The coordinator still publishes the eval `model_version` (latched) and signals `start`/`end`, so the
+emitter self-labels any eval episode it happens to see~~ — **revised 2026-09-08:** those emitted eval
+episodes reached the curator and MinIO (135 `eval-*` objects across both buckets, polluting the
+lineage grouping the eval dashboard relies on). They were deleted; eval mode now sends **no**
+signals to the emitter, and the curator discards any `eval-*` label. The coordinator's `/data/eval`
+file was always the authoritative record.
 
 **No recording during eval:** `run_eval` never calls the RecordEpisode action and pruning is moot —
 50 episodes × ~2 GB of bags per policy would be pointless (we don't train on eval scenes). Run the

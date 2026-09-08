@@ -26,8 +26,11 @@ with the served policy, so a swap re-labels immediately). Values so far:
 | `act-v2-ft160` | v2 — the teacher fine-tuned on 160 of its own curated successes, promoted via PR #1 | 2026-09-08 12:16 → |
 | (next) `act-v2-ft160-ft<N>-<stamp>` | v3 candidates — fine-tuned from v2 on v2's successes | when the trigger fires at 160 new curated |
 
-Older labels (`soarm-act-*`, `weak-v1-*`, `flywheel-curated-*`) are Phase-2 baselines; group them
-as "pre-teacher". Nothing with an `eval-` prefix reaches MinIO — harness runs are self-contained.
+Older labels (`soarm-act-10ep-10k`, `soarm-act-v1`) are Phase-2 baselines; group them as
+"pre-teacher". **Treat any `eval-` prefix as non-production and exclude it.** Until 2026-09-08 the eval
+harness let the emitter POST its episodes to the curator, so 135 `eval-*` objects sat in both
+buckets; they were deleted that day, the harness no longer signals the emitter, and the curator
+now discards `eval-*` labels at the door — but a defensive filter in the dashboard costs nothing.
 
 **Success rate by lineage = curated / (curated + rejected)** — the loop's *operational* rate. Note
 it is lower than the policy's clean-start rate (the eval harness homes the arm each episode; the
