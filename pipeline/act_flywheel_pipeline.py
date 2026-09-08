@@ -124,26 +124,33 @@ def open_promotion_pr(image_ref: str, candidate: str, report_json: str, github_r
     repo = Github(tok).get_repo(github_repo)
     base_ref = repo.get_git_ref(f"heads/{gitops_branch}"); base = repo.get_git_commit(base_ref.object.sha)
     def get(p): return repo.get_contents(p, ref=gitops_branch).decoded_content.decode()
-    green = get("gitops/act-serving/deployment-green.yaml"); blue = get("gitops/act-serving/deployment.yaml"); svc = get("gitops/act-serving/service.yaml")
+    # Blue/green alternate: the LIVE side is whatever the Service selects; the candidate goes to
+    # the OTHER side. One GPU -> the live side scales to 0 in the same commit the candidate scales
+    # to 1 (Recreate on both; the candidate pod stays Pending until the GPU is released).
+    files = {"blue": "gitops/act-serving/deployment.yaml", "green": "gitops/act-serving/deployment-green.yaml"}
+    svc = get("gitops/act-serving/service.yaml")
+    live = re.search(r"^\s+color:\s*(blue|green)", svc, re.M).group(1)
+    target = "green" if live == "blue" else "blue"
+    cand_yaml = get(files[target]); live_yaml = get(files[live])
     digest = image_ref.split("@", 1)[1]
-    green = re.sub(r"(soarm-act-modelcar)@sha256:[0-9a-f]{64}", r"\1@" + digest, green, count=1)
-    green = re.sub(r"(name: MODEL_VERSION\n\s+value: ).*", lambda m: m.group(1) + candidate, green, count=1)
-    green = green.replace("replicas: 0", "replicas: 1", 1)
-    blue = blue.replace("replicas: 1", "replicas: 0", 1)
-    svc = svc.replace("color: blue", "color: green", 1)
+    cand_yaml = re.sub(r"(soarm-act-modelcar)@sha256:[0-9a-f]{64}", r"\1@" + digest, cand_yaml, count=1)
+    cand_yaml = re.sub(r"(name: MODEL_VERSION\n\s+value: ).*", lambda m: m.group(1) + candidate, cand_yaml, count=1)
+    cand_yaml = re.sub(r"replicas: 0", "replicas: 1", cand_yaml, count=1)
+    live_yaml = re.sub(r"replicas: 1", "replicas: 0", live_yaml, count=1)
+    svc = re.sub(r"(^\s+color:\s*)" + live, r"\g<1>" + target, svc, count=1, flags=re.M)
     rep = json.loads(report_json)
-    elems = [InputGitTreeElement("gitops/act-serving/deployment-green.yaml", "100644", "blob", content=green),
-             InputGitTreeElement("gitops/act-serving/deployment.yaml", "100644", "blob", content=blue),
+    elems = [InputGitTreeElement(files[target], "100644", "blob", content=cand_yaml),
+             InputGitTreeElement(files[live], "100644", "blob", content=live_yaml),
              InputGitTreeElement("gitops/act-serving/service.yaml", "100644", "blob", content=svc)]
     tree = repo.create_git_tree(elems, base.tree)
-    msg = f"Promote {candidate}: green <- {image_ref.split('@')[1][:19]}..., blue 0, service -> green\n\nEval gate: {rep['incumbent']} {rep['incumbent_success_rate']:.2f} -> {candidate} {rep['candidate_success_rate']:.2f}, fixed {rep['fixed']} broken {rep['broken']} net {rep['net']:+d} p={rep['sign_test_p']}"
+    msg = f"Promote {candidate}: {target} <- {image_ref.split('@')[1][:19]}..., {live} 0, service -> {target}\n\nEval gate: {rep['incumbent']} {rep['incumbent_success_rate']:.2f} -> {candidate} {rep['candidate_success_rate']:.2f}, fixed {rep['fixed']} broken {rep['broken']} net {rep['net']:+d} p={rep['sign_test_p']}"
     commit = repo.create_git_commit(msg, tree, [base])
     head = f"promote/{candidate}"; repo.create_git_ref(f"refs/heads/{head}", commit.sha)
     body = (f"## Promotion: `{candidate}` replaces `{rep['incumbent']}`\n\n"
             f"| | success | mean cubes |\n|---|---|---|\n| incumbent `{rep['incumbent']}` | {rep['incumbent_success_rate']:.0%} | {rep['incumbent_mean_cubes']:.2f} |\n"
             f"| candidate `{candidate}` | {rep['candidate_success_rate']:.0%} | {rep['candidate_mean_cubes']:.2f} |\n\n"
             f"Paired on {rep['n_paired']} identical seeded scenes: **{rep['fixed']} fixed / {rep['broken']} broken, net {rep['net']:+d}, sign-test p = {rep['sign_test_p']}** - gate rule: {rep['rule']} -> **{rep['verdict']}**.\n\n"
-            f"Signed modelcar: `{image_ref}`\n\nMerging flips blue/green atomically (green replicas 1, blue 0, Service -> green); Argo syncs it; the swap agent applies it on the desktop.")
+            f"Signed modelcar: `{image_ref}`\n\nMerging flips blue/green atomically ({target} replicas 1, {live} replicas 0, Service -> {target}); with one GPU the {live} pod releases it and the {target} pod schedules (Recreate). Argo syncs it; the swap agent applies it on the desktop.")
     pr = repo.create_pull(title=f"Promote {candidate} ({rep['incumbent_success_rate']:.0%} -> {rep['candidate_success_rate']:.0%})", body=body, base=gitops_branch, head=head)
     print(pr.html_url); return pr.html_url
 
