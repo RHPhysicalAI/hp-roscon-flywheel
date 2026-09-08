@@ -58,7 +58,12 @@ CONTRACT = "$(ros2 pkg prefix pai_data_collection)/share/pai_data_collection/con
 
 
 def s3():
-    return boto3.client("s3", endpoint_url=MINIO, aws_access_key_id=S3KEY, aws_secret_access_key=S3SEC)
+    # Path-style, accelerate off: the runner runs as the host user and would otherwise inherit any
+    # ~/.aws config (boto3 >= 1.36 raises "custom endpoint cannot be combined with S3 Accelerate").
+    from botocore.config import Config
+    return boto3.client("s3", endpoint_url=MINIO, aws_access_key_id=S3KEY, aws_secret_access_key=S3SEC,
+                        config=Config(s3={"addressing_style": "path", "use_accelerate_endpoint": False},
+                                      signature_version="s3v4"))
 
 
 def log(msg):
