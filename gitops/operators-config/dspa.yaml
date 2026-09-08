@@ -14,8 +14,8 @@ spec:
       bucket: pipelines
       s3CredentialsSecret:
         secretName: hub-credentials
-        accessKey: AWS_ACCESS_KEY_ID
-        secretKey: AWS_SECRET_ACCESS_KEY
+        accessKey: s3-access-key
+        secretKey: s3-secret-key
   database:
     mariaDB:
       deploy: true

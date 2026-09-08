@@ -154,11 +154,11 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
                          eval_seed_base=eval_seed_base, kafka_bootstrap=kafka_bootstrap, timeout_min=timeout_min)
     t.set_caching_options(False)
     g = eval_gate(eval_report_uri=t.outputs["eval_report"], s3_endpoint=s3_endpoint); g.set_caching_options(False)
-    k8s.use_secret_as_env(g, secret_name="hub-credentials", secret_key_to_env={"AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY"})
+    k8s.use_secret_as_env(g, secret_name="hub-credentials", secret_key_to_env={"s3-access-key": "AWS_ACCESS_KEY_ID", "s3-secret-key": "AWS_SECRET_ACCESS_KEY"})
     pk = package_modelcar(checkpoint_uri=t.outputs["checkpoint"], candidate=candidate, registry_repo=registry_repo,
                           platform=platform, s3_endpoint=s3_endpoint, crane_version=crane_version).after(g)
     pk.set_caching_options(False)
-    k8s.use_secret_as_env(pk, secret_name="hub-credentials", secret_key_to_env={"AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY"})
+    k8s.use_secret_as_env(pk, secret_name="hub-credentials", secret_key_to_env={"s3-access-key": "AWS_ACCESS_KEY_ID", "s3-secret-key": "AWS_SECRET_ACCESS_KEY"})
     k8s.use_secret_as_volume(pk, secret_name="quay-push", mount_path="/etc/quay")
     sg = sign_modelcar(image_ref=pk.output, rekor_url=rekor_url, cosign_version=cosign_version); sg.set_caching_options(False)
     k8s.use_secret_as_volume(sg, secret_name="quay-push", mount_path="/etc/quay")
