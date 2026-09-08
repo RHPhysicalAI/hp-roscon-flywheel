@@ -17,9 +17,14 @@ data:
     INCUMBENT = os.environ.get("INCUMBENT", "upstream-act-teacher"); COLLECTOR = os.environ.get("COLLECTOR", INCUMBENT)
     def token():
         return open("/var/run/secrets/kubernetes.io/serviceaccount/token").read().strip()
+    def latest_version_id():
+        ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+        req = urllib.request.Request(f"{DSP_URL}/apis/v2beta1/pipelines/{PIPELINE_ID}/versions?sort_by=created_at%20desc&page_size=1",
+                                     headers={"Authorization": f"Bearer {token()}"})
+        with urllib.request.urlopen(req, context=ctx, timeout=30) as r: return json.load(r)["pipeline_versions"][0]["pipeline_version_id"]
     def start_run(n):
         cand = f"{COLLECTOR}-ft{n}-{time.strftime('%Y%m%d%H%M')}"
-        body = {"display_name": f"promote-{cand}", "pipeline_version_reference": {"pipeline_id": PIPELINE_ID},
+        body = {"display_name": f"promote-{cand}", "pipeline_version_reference": {"pipeline_id": PIPELINE_ID, "pipeline_version_id": latest_version_id()},
                 "runtime_config": {"parameters": {"candidate": cand, "incumbent": INCUMBENT, "collector": COLLECTOR}}}
         req = urllib.request.Request(f"{DSP_URL}/apis/v2beta1/runs", data=json.dumps(body).encode(),
                                      headers={"Authorization": f"Bearer {token()}", "Content-Type": "application/json"}, method="POST")
