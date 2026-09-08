@@ -15,6 +15,7 @@ data:
     THRESH = int(os.environ.get("TRIGGER_THRESHOLD", "160")); COOLDOWN = int(os.environ.get("TRIGGER_COOLDOWN", "3600"))
     DSP_URL = os.environ.get("DSP_URL", ""); PIPELINE_ID = os.environ.get("TRAINING_PIPELINE_ID", "")
     INCUMBENT = os.environ.get("INCUMBENT", "upstream-act-teacher"); COLLECTOR = os.environ.get("COLLECTOR", INCUMBENT)
+    INCUMBENT_CKPT = os.environ.get("INCUMBENT_CHECKPOINT", "hf")  # "hf" = upstream teacher; else s3://... tarball
     def token():
         return open("/var/run/secrets/kubernetes.io/serviceaccount/token").read().strip()
     def latest_version_id():
@@ -25,7 +26,7 @@ data:
     def start_run(n):
         cand = f"{COLLECTOR}-ft{n}-{time.strftime('%Y%m%d%H%M')}"
         body = {"display_name": f"promote-{cand}", "pipeline_version_reference": {"pipeline_id": PIPELINE_ID, "pipeline_version_id": latest_version_id()},
-                "runtime_config": {"parameters": {"candidate": cand, "incumbent": INCUMBENT, "collector": COLLECTOR}}}
+                "runtime_config": {"parameters": {"candidate": cand, "incumbent": INCUMBENT, "collector": COLLECTOR, "incumbent_checkpoint": INCUMBENT_CKPT}}}
         req = urllib.request.Request(f"{DSP_URL}/apis/v2beta1/runs", data=json.dumps(body).encode(),
                                      headers={"Authorization": f"Bearer {token()}", "Content-Type": "application/json"}, method="POST")
         ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
@@ -72,8 +73,10 @@ spec:
             - {name: KAFKA_BOOTSTRAP, value: "edge-kafka.flywheel.svc:9092"}
             - {name: TRIGGER_THRESHOLD, value: "160"}
             - {name: TRIGGER_COOLDOWN, value: "3600"}
-            - {name: INCUMBENT, value: "upstream-act-teacher"}
-            - {name: COLLECTOR, value: "upstream-act-teacher"}
+            # Round B (after PR #1): v2 collects; the next candidate is fine-tuned FROM v2 and gated against it.
+            - {name: INCUMBENT, value: "act-v2-ft160"}
+            - {name: COLLECTOR, value: "act-v2-ft160"}
+            - {name: INCUMBENT_CHECKPOINT, value: "s3://episodes-data/checkpoints/act-v2-ft160/pretrained_model.tar.gz"}
             - {name: DSP_URL, value: "https://ds-pipeline-dspa.flywheel.svc:8443"}
             - {name: TRAINING_PIPELINE_ID, value: "99ec0aab-51fb-412e-bd2f-47bc6a0d3e3d"}
           volumeMounts:
