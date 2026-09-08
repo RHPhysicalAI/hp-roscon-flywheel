@@ -34,3 +34,4 @@ models/
 *.hdf5
 *.rosbag
 *.bag
+.venv-kfp/

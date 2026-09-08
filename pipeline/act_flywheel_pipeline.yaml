@@ -1,0 +1,629 @@
+# PIPELINE DEFINITION
+# Name: act-flywheel-promotion
+# Description: assemble -> train -> eval gate -> package -> sign -> promotion PR (D022)
+# Inputs:
+#    candidate: str
+#    collector: str [Default: 'upstream-act-teacher']
+#    cosign_version: str [Default: 'v2.6.5']
+#    crane_version: str [Default: 'v0.20.3']
+#    eval_n: int [Default: 100.0]
+#    eval_seed_base: int [Default: 1000.0]
+#    github_repo: str [Default: 'RHPhysicalAI/hp-roscon-flywheel']
+#    gitops_branch: str [Default: 'desktop-gpu-split']
+#    incumbent: str [Default: 'upstream-act-teacher']
+#    incumbent_checkpoint: str [Default: 'hf']
+#    kafka_bootstrap: str [Default: 'edge-kafka.flywheel.svc:9092']
+#    mode: str [Default: 'desktop']
+#    platform: str [Default: 'linux/amd64']
+#    registry_repo: str [Default: 'quay.io/jary/soarm-act-modelcar']
+#    rekor_url: str [Default: '']
+#    s3_endpoint: str [Default: 'http://minio.minio.svc:9000']
+#    steps_per_frame: float [Default: 0.25]
+#    timeout_min: int [Default: 600.0]
+components:
+  comp-eval-gate:
+    executorLabel: exec-eval-gate
+    inputDefinitions:
+      parameters:
+        eval_report_uri:
+          parameterType: STRING
+        s3_endpoint:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+        report_out:
+          parameterType: STRING
+  comp-open-promotion-pr:
+    executorLabel: exec-open-promotion-pr
+    inputDefinitions:
+      parameters:
+        candidate:
+          parameterType: STRING
+        github_repo:
+          parameterType: STRING
+        gitops_branch:
+          parameterType: STRING
+        image_ref:
+          parameterType: STRING
+        report:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-package-modelcar:
+    executorLabel: exec-package-modelcar
+    inputDefinitions:
+      parameters:
+        candidate:
+          parameterType: STRING
+        checkpoint_uri:
+          parameterType: STRING
+        crane_version:
+          parameterType: STRING
+        platform:
+          parameterType: STRING
+        registry_repo:
+          parameterType: STRING
+        s3_endpoint:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-sign-modelcar:
+    executorLabel: exec-sign-modelcar
+    inputDefinitions:
+      parameters:
+        cosign_version:
+          parameterType: STRING
+        image_ref:
+          parameterType: STRING
+        rekor_url:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-trigger-and-wait:
+    executorLabel: exec-trigger-and-wait
+    inputDefinitions:
+      parameters:
+        candidate:
+          parameterType: STRING
+        collector:
+          parameterType: STRING
+        eval_n:
+          parameterType: NUMBER_INTEGER
+        eval_seed_base:
+          parameterType: NUMBER_INTEGER
+        incumbent:
+          parameterType: STRING
+        incumbent_checkpoint:
+          parameterType: STRING
+        kafka_bootstrap:
+          parameterType: STRING
+        run_id:
+          parameterType: STRING
+        steps_per_frame:
+          parameterType: NUMBER_DOUBLE
+        timeout_min:
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      parameters:
+        checkpoint:
+          parameterType: STRING
+        eval_report:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-eval-gate:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - eval_gate
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'boto3==1.35.36'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef eval_gate(eval_report_uri: str, s3_endpoint: str, report_out:\
+          \ dsl.OutputPath(str)) -> str:\n    \"\"\"Gate: candidate vs incumbent on\
+          \ the same fixed seeds. Promote iff net > 0 and p < 0.05 (D022).\n    Fails\
+          \ the pipeline (sys.exit 1) otherwise \u2014 downstream never runs (thor-testing's\
+          \ hard-stop).\"\"\"\n    import json, os, sys, boto3\n    s3 = boto3.client(\"\
+          s3\", endpoint_url=s3_endpoint, aws_access_key_id=os.environ[\"AWS_ACCESS_KEY_ID\"\
+          ],\n                      aws_secret_access_key=os.environ[\"AWS_SECRET_ACCESS_KEY\"\
+          ])\n    b, k = eval_report_uri[5:].split(\"/\", 1)\n    rep = json.loads(s3.get_object(Bucket=b,\
+          \ Key=k)[\"Body\"].read())\n    print(json.dumps(rep, indent=1))\n    with\
+          \ open(report_out, \"w\") as f: json.dump(rep, f)\n    ok = rep[\"net\"\
+          ] > 0 and rep[\"sign_test_p\"] < 0.05\n    print(f\"GATE {'PASS' if ok else\
+          \ 'FAIL'}: {rep['incumbent']} {rep['incumbent_success_rate']:.2f} -> \"\n\
+          \          f\"{rep['candidate']} {rep['candidate_success_rate']:.2f}; fixed\
+          \ {rep['fixed']} broken {rep['broken']} \"\n          f\"net {rep['net']:+d}\
+          \ p={rep['sign_test_p']}\")\n    if not ok: sys.exit(1)\n    return \"PASS\"\
+          \n\n"
+        image: registry.access.redhat.com/ubi9/python-312:latest
+    exec-open-promotion-pr:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - open_promotion_pr
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'PyGithub==2.4.0'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef open_promotion_pr(image_ref: str, candidate: str, report: dsl.InputPath(str),\
+          \ github_repo: str,\n                      gitops_branch: str) -> str:\n\
+          \    \"\"\"ONE commit editing the three act-serving files atomically (thor-testing\
+          \ 5e3e87a), then a PR\n    whose body carries the eval report. Human merge\
+          \ is the last gate; Argo does the rest.\"\"\"\n    import json, re\n   \
+          \ from github import Github, InputGitTreeElement\n    tok = open(\"/etc/github/token\"\
+          ).read().strip()\n    repo = Github(tok).get_repo(github_repo)\n    base_ref\
+          \ = repo.get_git_ref(f\"heads/{gitops_branch}\"); base = repo.get_git_commit(base_ref.object.sha)\n\
+          \    def get(p): return repo.get_contents(p, ref=gitops_branch).decoded_content.decode()\n\
+          \    green = get(\"gitops/act-serving/deployment-green.yaml\"); blue = get(\"\
+          gitops/act-serving/deployment.yaml\"); svc = get(\"gitops/act-serving/service.yaml\"\
+          )\n    digest = image_ref.split(\"@\", 1)[1]\n    green = re.sub(r\"(soarm-act-modelcar)@sha256:[0-9a-f]{64}\"\
+          , r\"\\1@\" + digest, green, count=1)\n    green = re.sub(r\"(name: MODEL_VERSION\\\
+          n\\s+value: ).*\", lambda m: m.group(1) + candidate, green, count=1)\n \
+          \   green = green.replace(\"replicas: 0\", \"replicas: 1\", 1)\n    blue\
+          \ = blue.replace(\"replicas: 1\", \"replicas: 0\", 1)\n    svc = svc.replace(\"\
+          color: blue\", \"color: green\", 1)\n    rep = json.load(open(report))\n\
+          \    elems = [InputGitTreeElement(\"gitops/act-serving/deployment-green.yaml\"\
+          , \"100644\", \"blob\", content=green),\n             InputGitTreeElement(\"\
+          gitops/act-serving/deployment.yaml\", \"100644\", \"blob\", content=blue),\n\
+          \             InputGitTreeElement(\"gitops/act-serving/service.yaml\", \"\
+          100644\", \"blob\", content=svc)]\n    tree = repo.create_git_tree(elems,\
+          \ base.tree)\n    msg = f\"Promote {candidate}: green <- {image_ref.split('@')[1][:19]}...,\
+          \ blue 0, service -> green\\n\\nEval gate: {rep['incumbent']} {rep['incumbent_success_rate']:.2f}\
+          \ -> {candidate} {rep['candidate_success_rate']:.2f}, fixed {rep['fixed']}\
+          \ broken {rep['broken']} net {rep['net']:+d} p={rep['sign_test_p']}\"\n\
+          \    commit = repo.create_git_commit(msg, tree, [base])\n    head = f\"\
+          promote/{candidate}\"; repo.create_git_ref(f\"refs/heads/{head}\", commit.sha)\n\
+          \    body = (f\"## Promotion: `{candidate}` replaces `{rep['incumbent']}`\\\
+          n\\n\"\n            f\"| | success | mean cubes |\\n|---|---|---|\\n| incumbent\
+          \ `{rep['incumbent']}` | {rep['incumbent_success_rate']:.0%} | {rep['incumbent_mean_cubes']:.2f}\
+          \ |\\n\"\n            f\"| candidate `{candidate}` | {rep['candidate_success_rate']:.0%}\
+          \ | {rep['candidate_mean_cubes']:.2f} |\\n\\n\"\n            f\"Paired on\
+          \ {rep['n_paired']} identical seeded scenes: **{rep['fixed']} fixed / {rep['broken']}\
+          \ broken, net {rep['net']:+d}, sign-test p = {rep['sign_test_p']}** \u2014\
+          \ gate rule: {rep['rule']} \u2192 **{rep['verdict']}**.\\n\\n\"\n      \
+          \      f\"Signed modelcar: `{image_ref}`\\n\\nMerging flips blue/green atomically\
+          \ (green replicas 1, blue 0, Service \u2192 green); Argo syncs it; the swap\
+          \ agent applies it on the desktop.\")\n    pr = repo.create_pull(title=f\"\
+          Promote {candidate} ({rep['incumbent_success_rate']:.0%} \u2192 {rep['candidate_success_rate']:.0%})\"\
+          , body=body, base=gitops_branch, head=head)\n    print(pr.html_url); return\
+          \ pr.html_url\n\n"
+        image: registry.access.redhat.com/ubi9/python-312:latest
+    exec-package-modelcar:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - package_modelcar
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'boto3==1.35.36'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef package_modelcar(checkpoint_uri: str, candidate: str, registry_repo:\
+          \ str, platform: str,\n                     s3_endpoint: str, crane_version:\
+          \ str) -> str:\n    \"\"\"crane append: flat ACT checkpoint dir -> /models/act\
+          \ on ubi-micro. Returns image@digest.\"\"\"\n    import os, subprocess,\
+          \ tarfile, io, boto3, urllib.request\n    s3 = boto3.client(\"s3\", endpoint_url=s3_endpoint,\
+          \ aws_access_key_id=os.environ[\"AWS_ACCESS_KEY_ID\"],\n               \
+          \       aws_secret_access_key=os.environ[\"AWS_SECRET_ACCESS_KEY\"])\n \
+          \   b, k = checkpoint_uri[5:].split(\"/\", 1)\n    buf = io.BytesIO(s3.get_object(Bucket=b,\
+          \ Key=k)[\"Body\"].read())\n    os.makedirs(\"/tmp/layer/models/act\", exist_ok=True)\n\
+          \    with tarfile.open(fileobj=buf, mode=\"r:gz\") as t:\n        for m\
+          \ in t:\n            if m.isfile():\n                m.name = \"models/act/\"\
+          \ + os.path.basename(m.name); t.extract(m, \"/tmp/layer\")\n    with tarfile.open(\"\
+          /tmp/layer.tar\", \"w\") as t: t.add(\"/tmp/layer/models\", arcname=\"models\"\
+          )\n    url = f\"https://github.com/google/go-containerregistry/releases/download/{crane_version}/go-containerregistry_Linux_x86_64.tar.gz\"\
+          \n    urllib.request.urlretrieve(url, \"/tmp/crane.tgz\"); subprocess.run([\"\
+          tar\", \"-xzf\", \"/tmp/crane.tgz\", \"-C\", \"/tmp\", \"crane\"], check=True)\n\
+          \    os.environ[\"DOCKER_CONFIG\"] = \"/etc/quay\"   # secret mounted as\
+          \ /etc/quay/config.json\n    out = subprocess.run([\"/tmp/crane\", \"append\"\
+          , \"--platform\", platform, \"-b\", \"registry.access.redhat.com/ubi9/ubi-micro:latest\"\
+          ,\n                          \"-f\", \"/tmp/layer.tar\", \"-t\", f\"{registry_repo}:{candidate}\"\
+          ], check=True, capture_output=True, text=True).stdout\n    ref = out.strip().splitlines()[-1];\
+          \ print(\"pushed\", ref); return ref\n\n"
+        image: registry.access.redhat.com/ubi9/python-312:latest
+    exec-sign-modelcar:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - sign_modelcar
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef sign_modelcar(image_ref: str, rekor_url: str, cosign_version:\
+          \ str) -> str:\n    \"\"\"cosign v2.x sign by digest; Rekor transparency\
+          \ log when rekor_url is set (RHTAS).\"\"\"\n    import os, subprocess, urllib.request\n\
+          \    urllib.request.urlretrieve(f\"https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-amd64\"\
+          , \"/tmp/cosign\")\n    os.chmod(\"/tmp/cosign\", 0o755); os.environ[\"\
+          DOCKER_CONFIG\"] = \"/etc/quay\"; os.environ[\"COSIGN_PASSWORD\"] = \"\"\
+          \n    cmd = [\"/tmp/cosign\", \"sign\", \"--key\", \"/etc/cosign/cosign.key\"\
+          , \"-y\", image_ref]\n    cmd += [\"--rekor-url\", rekor_url, \"--tlog-upload=true\"\
+          ] if rekor_url else [\"--tlog-upload=false\"]\n    subprocess.run(cmd, check=True);\
+          \ print(\"signed\", image_ref); return image_ref\n\n"
+        image: registry.access.redhat.com/ubi9/python-312:latest
+    exec-trigger-and-wait:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - trigger_and_wait
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kafka-python==2.0.2'\
+          \ 'boto3==1.35.36'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.17.0' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef trigger_and_wait(run_id: str, candidate: str, incumbent: str,\
+          \ collector: str,\n                     incumbent_checkpoint: str, steps_per_frame:\
+          \ float, eval_n: int,\n                     eval_seed_base: int, kafka_bootstrap:\
+          \ str, timeout_min: int,\n                     eval_report: dsl.OutputPath(str),\
+          \ checkpoint: dsl.OutputPath(str)):\n    \"\"\"[desktop shim] publish a\
+          \ training trigger and wait for the host runner's result.\"\"\"\n    import\
+          \ json, sys, time\n    from kafka import KafkaConsumer, KafkaProducer\n\
+          \    msg = dict(run_id=run_id, candidate=candidate, incumbent=incumbent,\
+          \ collector=collector,\n               incumbent_checkpoint=incumbent_checkpoint,\
+          \ steps_per_frame=steps_per_frame,\n               eval_n=eval_n, eval_seed_base=eval_seed_base)\n\
+          \    consumer = KafkaConsumer(\"training-results\", bootstrap_servers=kafka_bootstrap,\n\
+          \                             group_id=f\"pipeline-{run_id}\", auto_offset_reset=\"\
+          latest\",\n                             consumer_timeout_ms=60_000,\n  \
+          \                           value_deserializer=lambda v: json.loads(v.decode()))\n\
+          \    consumer.poll(1000)  # join the group before the trigger goes out\n\
+          \    p = KafkaProducer(bootstrap_servers=kafka_bootstrap, value_serializer=lambda\
+          \ v: json.dumps(v).encode())\n    p.send(\"training-triggers\", value=msg);\
+          \ p.flush()\n    print(\"trigger sent:\", msg, flush=True)\n    deadline\
+          \ = time.time() + timeout_min * 60\n    while time.time() < deadline:\n\
+          \        for m in consumer:\n            if m.value.get(\"run_id\") == run_id:\n\
+          \                res = m.value; print(\"result:\", res, flush=True)\n  \
+          \              if res.get(\"status\") != \"ok\":\n                    print(\"\
+          host runner failed:\", res.get(\"message\")); sys.exit(1)\n            \
+          \    with open(eval_report, \"w\") as f: f.write(res[\"eval_report_uri\"\
+          ])\n                with open(checkpoint, \"w\") as f: f.write(res[\"checkpoint_uri\"\
+          ])\n                return\n        print(\"waiting for training-results...\"\
+          , flush=True)\n    print(\"timed out waiting for the host runner\"); sys.exit(1)\n\
+          \n"
+        image: registry.access.redhat.com/ubi9/python-312:latest
+pipelineInfo:
+  description: assemble -> train -> eval gate -> package -> sign -> promotion PR (D022)
+  name: act-flywheel-promotion
+root:
+  dag:
+    tasks:
+      eval-gate:
+        cachingOptions: {}
+        componentRef:
+          name: comp-eval-gate
+        dependentTasks:
+        - trigger-and-wait
+        inputs:
+          parameters:
+            eval_report_uri:
+              taskOutputParameter:
+                outputParameterKey: eval_report
+                producerTask: trigger-and-wait
+            s3_endpoint:
+              componentInputParameter: s3_endpoint
+        taskInfo:
+          name: eval-gate
+      open-promotion-pr:
+        cachingOptions: {}
+        componentRef:
+          name: comp-open-promotion-pr
+        dependentTasks:
+        - eval-gate
+        - sign-modelcar
+        inputs:
+          parameters:
+            candidate:
+              componentInputParameter: candidate
+            github_repo:
+              componentInputParameter: github_repo
+            gitops_branch:
+              componentInputParameter: gitops_branch
+            image_ref:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: sign-modelcar
+            report:
+              taskOutputParameter:
+                outputParameterKey: report_out
+                producerTask: eval-gate
+        taskInfo:
+          name: open-promotion-pr
+      package-modelcar:
+        cachingOptions: {}
+        componentRef:
+          name: comp-package-modelcar
+        dependentTasks:
+        - eval-gate
+        - trigger-and-wait
+        inputs:
+          parameters:
+            candidate:
+              componentInputParameter: candidate
+            checkpoint_uri:
+              taskOutputParameter:
+                outputParameterKey: checkpoint
+                producerTask: trigger-and-wait
+            crane_version:
+              componentInputParameter: crane_version
+            platform:
+              componentInputParameter: platform
+            registry_repo:
+              componentInputParameter: registry_repo
+            s3_endpoint:
+              componentInputParameter: s3_endpoint
+        taskInfo:
+          name: package-modelcar
+      sign-modelcar:
+        cachingOptions: {}
+        componentRef:
+          name: comp-sign-modelcar
+        dependentTasks:
+        - package-modelcar
+        inputs:
+          parameters:
+            cosign_version:
+              componentInputParameter: cosign_version
+            image_ref:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: package-modelcar
+            rekor_url:
+              componentInputParameter: rekor_url
+        taskInfo:
+          name: sign-modelcar
+      trigger-and-wait:
+        cachingOptions: {}
+        componentRef:
+          name: comp-trigger-and-wait
+        inputs:
+          parameters:
+            candidate:
+              componentInputParameter: candidate
+            collector:
+              componentInputParameter: collector
+            eval_n:
+              componentInputParameter: eval_n
+            eval_seed_base:
+              componentInputParameter: eval_seed_base
+            incumbent:
+              componentInputParameter: incumbent
+            incumbent_checkpoint:
+              componentInputParameter: incumbent_checkpoint
+            kafka_bootstrap:
+              componentInputParameter: kafka_bootstrap
+            run_id:
+              runtimeValue:
+                constant: '{{$.pipeline_job_uuid}}'
+            steps_per_frame:
+              componentInputParameter: steps_per_frame
+            timeout_min:
+              componentInputParameter: timeout_min
+        taskInfo:
+          name: trigger-and-wait
+  inputDefinitions:
+    parameters:
+      candidate:
+        parameterType: STRING
+      collector:
+        defaultValue: upstream-act-teacher
+        isOptional: true
+        parameterType: STRING
+      cosign_version:
+        defaultValue: v2.6.5
+        isOptional: true
+        parameterType: STRING
+      crane_version:
+        defaultValue: v0.20.3
+        isOptional: true
+        parameterType: STRING
+      eval_n:
+        defaultValue: 100.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      eval_seed_base:
+        defaultValue: 1000.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      github_repo:
+        defaultValue: RHPhysicalAI/hp-roscon-flywheel
+        isOptional: true
+        parameterType: STRING
+      gitops_branch:
+        defaultValue: desktop-gpu-split
+        isOptional: true
+        parameterType: STRING
+      incumbent:
+        defaultValue: upstream-act-teacher
+        isOptional: true
+        parameterType: STRING
+      incumbent_checkpoint:
+        defaultValue: hf
+        isOptional: true
+        parameterType: STRING
+      kafka_bootstrap:
+        defaultValue: edge-kafka.flywheel.svc:9092
+        isOptional: true
+        parameterType: STRING
+      mode:
+        defaultValue: desktop
+        isOptional: true
+        parameterType: STRING
+      platform:
+        defaultValue: linux/amd64
+        isOptional: true
+        parameterType: STRING
+      registry_repo:
+        defaultValue: quay.io/jary/soarm-act-modelcar
+        isOptional: true
+        parameterType: STRING
+      rekor_url:
+        defaultValue: ''
+        isOptional: true
+        parameterType: STRING
+      s3_endpoint:
+        defaultValue: http://minio.minio.svc:9000
+        isOptional: true
+        parameterType: STRING
+      steps_per_frame:
+        defaultValue: 0.25
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+      timeout_min:
+        defaultValue: 600.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.17.0
+---
+platforms:
+  kubernetes:
+    deploymentSpec:
+      executors:
+        exec-eval-gate:
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: AWS_ACCESS_KEY_ID
+              secretKey: AWS_ACCESS_KEY_ID
+            - envVar: AWS_SECRET_ACCESS_KEY
+              secretKey: AWS_SECRET_ACCESS_KEY
+            optional: false
+            secretName: hub-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: hub-credentials
+        exec-open-promotion-pr:
+          secretAsVolume:
+          - mountPath: /etc/github
+            optional: false
+            secretName: github-token
+            secretNameParameter:
+              runtimeValue:
+                constant: github-token
+        exec-package-modelcar:
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: AWS_ACCESS_KEY_ID
+              secretKey: AWS_ACCESS_KEY_ID
+            - envVar: AWS_SECRET_ACCESS_KEY
+              secretKey: AWS_SECRET_ACCESS_KEY
+            optional: false
+            secretName: hub-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: hub-credentials
+          secretAsVolume:
+          - mountPath: /etc/quay
+            optional: false
+            secretName: quay-push
+            secretNameParameter:
+              runtimeValue:
+                constant: quay-push
+        exec-sign-modelcar:
+          secretAsVolume:
+          - mountPath: /etc/quay
+            optional: false
+            secretName: quay-push
+            secretNameParameter:
+              runtimeValue:
+                constant: quay-push
+          - mountPath: /etc/cosign
+            optional: false
+            secretName: cosign-signing-key
+            secretNameParameter:
+              runtimeValue:
+                constant: cosign-signing-key

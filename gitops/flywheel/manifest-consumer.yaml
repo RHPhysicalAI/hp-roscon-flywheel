@@ -1,0 +1,80 @@
+# Trigger for the governed pipeline (D022): counts curated episode manifests and starts a
+# Data Science Pipelines run once TRIGGER_THRESHOLD new curated successes have arrived
+# (thor-testing hub-training/manifest-consumer shape; threshold raised from 10 to 160 —
+# D021 showed small-batch retrains degrade the policy). Inert until TRAINING_PIPELINE_ID is set.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: manifest-consumer-code
+  namespace: flywheel
+data:
+  consumer.py: |
+    import json, os, time, urllib.request, ssl
+    from kafka import KafkaConsumer, KafkaProducer
+    BOOT = os.environ.get("KAFKA_BOOTSTRAP", "edge-kafka.flywheel.svc:9092")
+    THRESH = int(os.environ.get("TRIGGER_THRESHOLD", "160")); COOLDOWN = int(os.environ.get("TRIGGER_COOLDOWN", "3600"))
+    DSP_URL = os.environ.get("DSP_URL", ""); PIPELINE_ID = os.environ.get("TRAINING_PIPELINE_ID", "")
+    INCUMBENT = os.environ.get("INCUMBENT", "upstream-act-teacher"); COLLECTOR = os.environ.get("COLLECTOR", INCUMBENT)
+    def token():
+        return open("/var/run/secrets/kubernetes.io/serviceaccount/token").read().strip()
+    def start_run(n):
+        cand = f"{COLLECTOR}-ft{n}-{time.strftime('%Y%m%d%H%M')}"
+        body = {"display_name": f"promote-{cand}", "pipeline_version_reference": {"pipeline_id": PIPELINE_ID},
+                "runtime_config": {"parameters": {"candidate": cand, "incumbent": INCUMBENT, "collector": COLLECTOR}}}
+        req = urllib.request.Request(f"{DSP_URL}/apis/v2beta1/runs", data=json.dumps(body).encode(),
+                                     headers={"Authorization": f"Bearer {token()}", "Content-Type": "application/json"}, method="POST")
+        ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(req, context=ctx, timeout=30) as r: print("[consumer] started run:", r.status, cand, flush=True)
+    def main():
+        c = KafkaConsumer("episode-manifests", bootstrap_servers=BOOT, group_id="manifest-consumer", auto_offset_reset="latest",
+                          value_deserializer=lambda v: json.loads(v.decode()))
+        p = KafkaProducer(bootstrap_servers=BOOT, value_serializer=lambda v: json.dumps(v).encode())
+        pending, last = 0, 0.0
+        print(f"[consumer] threshold={THRESH} cooldown={COOLDOWN}s pipeline={'set' if PIPELINE_ID else 'UNSET (log only)'}", flush=True)
+        for m in c:
+            if m.value.get("model_version") != COLLECTOR: continue
+            pending += 1
+            if pending >= THRESH and time.time() - last > COOLDOWN:
+                evt = {"event": "training-trigger", "pending": pending, "collector": COLLECTOR, "ts": time.time()}
+                p.send("training-events", value=evt); p.flush(); print("[consumer]", evt, flush=True)
+                if PIPELINE_ID and DSP_URL:
+                    try: start_run(pending)
+                    except Exception as e: print("[consumer] run start failed:", e, flush=True)
+                pending, last = 0, time.time()
+    while True:
+        try: main()
+        except Exception as e: print("[consumer] crashed, restarting:", e, flush=True); time.sleep(10)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: manifest-consumer
+  namespace: flywheel
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: manifest-consumer}
+  template:
+    metadata:
+      labels: {app: manifest-consumer}
+    spec:
+      serviceAccountName: pipeline-runner
+      containers:
+        - name: consumer
+          image: registry.access.redhat.com/ubi9/python-312:latest
+          command: ["sh", "-c", "pip install -q kafka-python==2.0.2 && python /code/consumer.py"]
+          env:
+            - {name: KAFKA_BOOTSTRAP, value: "edge-kafka.flywheel.svc:9092"}
+            - {name: TRIGGER_THRESHOLD, value: "160"}
+            - {name: TRIGGER_COOLDOWN, value: "3600"}
+            - {name: INCUMBENT, value: "upstream-act-teacher"}
+            - {name: COLLECTOR, value: "upstream-act-teacher"}
+            - {name: DSP_URL, value: ""}              # set when DSP is up: https://ds-pipeline-dspa.flywheel.svc:8443
+            - {name: TRAINING_PIPELINE_ID, value: ""} # set after the pipeline is uploaded
+          volumeMounts:
+            - {name: code, mountPath: /code}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+      volumes:
+        - name: code
+          configMap: {name: manifest-consumer-code}
