@@ -2,6 +2,13 @@
 #
 # Fleet act-inference — the ACT policy container as an RHEM-delivered quadlet application (D024, D026).
 #
+# Role split (Phase 4.5 C3, D0xx): RHEM delivers model serving only — the runtime image in ROLE=policy
+# (rosetta client + policy server + latched /flywheel/model_version) with the ModelCar volume, trust
+# and health. The sim harness (coordinator, episode recorder, sim reset, bags) lives with the
+# simulator, because sim reset and the cube judge use Gazebo transport, which is host-local:
+# tools/host/run-coordinator.sh on the sim host (docker on the desktop, podman on the Fury). No bags
+# or data volume here (D041/D043/D044/D046/D047 superseded on the desktop).
+#
 # One Fleet serves both boxes. The per-site differences live in device labels set at approval time
 # (device/enroll.sh) and are read here with flightctl's Go-template placeholders:
 #
@@ -9,7 +16,7 @@
 #   site             desktop         fury         rolloutPolicy batch order (desktop first, then fury)
 #   gpu              none            nvidia       AddDevice=nvidia.com/gpu=all only when "nvidia";
 #                                                 OMP/TORCH thread caps only when "none"
-#   policy_device    cpu             cuda         POLICY_DEVICE for docker/inference-entrypoint.sh
+#   policy_device    cpu             cuda         POLICY_DEVICE -> rosetta_client params file (entrypoint)
 #   zenoh_router     10.0.0.48       <fury-ip>    ZENOH_ROUTER=<router>:<port> (two labels: ':' is not a
 #   zenoh_port       7447            7447         legal label-value character, D033)
 #
@@ -44,6 +51,8 @@
 #
 # A promotion (D025) is a two-regex edit of this file: the modelcar digest in models.volume and
 # MODEL_VERSION in envVars. Rollback is `git revert` — the previous image is still in local storage.
+# ACTIONS_PER_CHUNK / CHUNK_SIZE_THRESHOLD are the same on both boxes (one code path); see D0xx for
+# the GPU-parity choice and the 30/0.95 baseline caveat.
 #
 # Schema note: v1beta1 config providers are a plain oneOf distinguished by shape (`inline` / `gitRef` /
 # `secretRef` / `httpRef`); the `configType:` key some 1.3.0 doc examples still show is not in the
@@ -165,27 +174,25 @@ spec:
                 OMP_NUM_THREADS=8
                 TORCH_NUM_THREADS=8
                 {{ end }}# The episode emitter (curator POST to http://10.0.0.49:30802/episode) runs in the sim container on the
-                # host, not here; it reads /flywheel/model_version from this container's coordinator. No CURATOR_URL needed.
+                # host, not here; it reads /flywheel/model_version from this container's publisher. No CURATOR_URL needed.
       applications:
         - name: act-inference
           appType: quadlet
           # rootful for the demo: host networking + CDI + /dev/shm have fewer unknowns (D024); rootless is the
           # product recommendation and is not built.
           envVars:
-            # Lineage contract: MODEL_VERSION -> coordinator -> /flywheel/model_version -> emitter -> curator
+            # Role split (C3): this container is model serving only — rosetta client + policy server +
+            # latched /flywheel/model_version. The sim harness (coordinator, episode recorder, sim reset,
+            # bags) runs next to the simulator: tools/host/run-coordinator.sh on the sim host.
+            ROLE: policy
+            # Lineage contract: MODEL_VERSION -> model_version_pub.py -> /flywheel/model_version -> emitter -> curator
             MODEL_VERSION: act-v2-ft160
             # Image-volume mount is the modelcar rootfs; the checkpoint lives at models/act inside it (test A)
             POLICY_PATH: /modelcar/models/act
-            # Coordinator settings carried over from the host `docker run` of 2026-09-08 (sim randomisation, D020)
-            # Interim (D044): no bag recording on the desktop VM until the virtiofs share is mounted;
-            # episodes still reach the curator with dataset_path null. Flip to "true" once mounted.
-            RECORD: "false"
-            RESET_ARM: "false"
-            EPISODE_LEN: "60"
-            RANDOMIZE_CUBES: "true"
-            RANDOMIZE_ONLY: cube_medium
-            RANDOM_RADIUS: "0.03"
-            REST_POSE: 0,0,0,0,0,0
+            # rosetta client chunking (cpu-spike.md part 2, D024 fallback 1): the checkpoint's full chunk,
+            # re-requested at half queue, so one CPU forward hides behind ~1 s of queued actions.
+            ACTIONS_PER_CHUNK: "100"
+            CHUNK_SIZE_THRESHOLD: "0.5"
           inline:
             - path: models.volume
               content: |
@@ -198,28 +205,15 @@ spec:
                 Description=ACT policy inference (RHEM-managed, Fleet act-inference)
 
                 [Container]
-                # Runtime image: built + signed by Tekton (Phase 4.5 F), referenced by digest. Placeholder until F lands.
-                Image=quay.io/jary/soarm-flywheel@sha256:29955e4e9422b194f950ba66d43689a2815a3670e5e0b398921d78501d5bb140
+                # Runtime image: built + signed by Tekton (Phase 4.5 F), referenced by digest. Interim host build (D045 record, 2026-09-08b) until F lands.
+                Image=quay.io/jary/soarm-flywheel@sha256:2ad1fb1c393a6a5c5281abab83187d9e4aeecc05fdca8e12b7d247ced0009e11
                 ContainerName=act-inference
                 Network=host
                 EnvironmentFile=/etc/act-inference/env
                 Volume=models.volume:/modelcar:ro
-                Volume=/var/lib/act-inference/data:/data:z
-                # Bags (D043): same in-container path as the host `docker run` (/data/bags), so the recorder's
-                # BAG_DIR default and the curator's dataset_path "bags/<sec>_<nsec>" are unchanged. On the desktop
-                # VM this is the host's bag dir over virtiofs (labelled by the context= mount option, hence no :z);
-                # on the Fury it is local disk labelled by provision.sh.
-                # Interim (D044): the line is out while RECORD=false. Quadlet turns every host-path Volume= into
-                # RequiresMountsFor=, so on the desktop the not-yet-attached virtiofs mount (D046) fails the unit
-                # with "Dependency failed" — nofail in fstab does not help there. Restore together with RECORD=true:
-                # Volume=/var/lib/act-inference/bags:/data/bags
                 {{ if eq (getOrDefault .metadata.labels "gpu" "none") "nvidia" }}AddDevice=nvidia.com/gpu=all
                 SecurityLabelDisable=true
-                # Interim (D045 image): /healthcheck.sh runs `set -u` before sourcing the ROS setup scripts, which
-                # reference unbound variables, so every probe exits 1 and HealthOnFailure=kill would crashloop the
-                # container every ~6 min. A string HealthCmd runs under `sh -c`; the same checks run with the
-                # trap neutralised. Revert to HealthCmd=/healthcheck.sh when F's image carries the fixed script.
-                {{ end }}HealthCmd=sed 's/^set -u/set +u/' /healthcheck.sh | bash -s
+                {{ end }}HealthCmd=/healthcheck.sh
                 HealthStartPeriod=240s
                 HealthInterval=30s
                 HealthTimeout=10s
