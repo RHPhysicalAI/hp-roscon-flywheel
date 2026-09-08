@@ -209,7 +209,10 @@ spec:
                 # BAG_DIR default and the curator's dataset_path "bags/<sec>_<nsec>" are unchanged. On the desktop
                 # VM this is the host's bag dir over virtiofs (labelled by the context= mount option, hence no :z);
                 # on the Fury it is local disk labelled by provision.sh.
-                Volume=/var/lib/act-inference/bags:/data/bags
+                # Interim (D044): the line is out while RECORD=false. Quadlet turns every host-path Volume= into
+                # RequiresMountsFor=, so on the desktop the not-yet-attached virtiofs mount (D046) fails the unit
+                # with "Dependency failed" — nofail in fstab does not help there. Restore together with RECORD=true:
+                # Volume=/var/lib/act-inference/bags:/data/bags
                 {{ if eq (getOrDefault .metadata.labels "gpu" "none") "nvidia" }}AddDevice=nvidia.com/gpu=all
                 SecurityLabelDisable=true
                 {{ end }}HealthCmd=/healthcheck.sh
