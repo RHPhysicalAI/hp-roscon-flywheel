@@ -1,0 +1,52 @@
+# RHTAS (Red Hat Trusted Artifact Signer) — Rekor transparency log for cosign sign --rekor-url.
+# Signing is KEY-based (cosign --key, D022); Fulcio/keyless is not used, but the CRD requires a
+# Fulcio block, satisfied here by the cluster's own service-account OIDC issuer. Minimal: no
+# TSA, no monitoring (no user-workload monitoring on this SNO).
+apiVersion: rhtas.redhat.com/v1alpha1
+kind: Securesign
+metadata:
+  name: securesign
+  namespace: trusted-artifact-signer
+spec:
+  rekor:
+    externalAccess:
+      enabled: true          # Route: the host runner / pipeline reach Rekor from outside the cluster
+    monitoring:
+      enabled: false
+  trillian:
+    database:
+      create: true
+    monitoring:
+      enabled: false
+  ctlog:
+    monitoring:
+      enabled: false
+  fulcio:
+    externalAccess:
+      enabled: true
+    monitoring:
+      enabled: false
+    certificate:
+      commonName: fulcio.sno-flywheel.local
+      organizationEmail: flywheel@redhat.com
+      organizationName: Red Hat
+    config:
+      OIDCIssuers:
+        - ClientID: sigstore
+          Issuer: https://kubernetes.default.svc
+          IssuerURL: https://kubernetes.default.svc
+          Type: kubernetes
+  tuf:
+    externalAccess:
+      enabled: true
+    keys:
+      - name: rekor.pub
+      - name: ctfe.pub
+      - name: fulcio_v1.crt.pem
+    pvc:
+      accessModes: [ReadWriteOnce]
+      retain: true
+      size: 100Mi
+    rootKeySecretRef:
+      name: tuf-root-keys
+    signingConfigURLMode: external
