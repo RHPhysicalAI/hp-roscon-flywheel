@@ -58,7 +58,7 @@ spec:
     metadata:
       labels: {app: manifest-consumer}
     spec:
-      serviceAccountName: pipeline-runner
+      serviceAccountName: manifest-consumer
       containers:
         - name: consumer
           image: registry.access.redhat.com/ubi9/python-312:latest
