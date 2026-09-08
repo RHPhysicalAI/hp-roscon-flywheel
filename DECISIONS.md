@@ -1164,3 +1164,610 @@ happened on stage. Rejected: (a) train live — 25 min of nothing to watch, then
 > on the presenting box and a same-day rehearsal there. `docs/demo-kit/` holds the text artifacts
 > that back each beat (run 6 logs and task states, PR #1, Rekor entry 1); the recordings and
 > screenshots are Phase 4 item 2, now framed as the kit rather than as insurance.
+
+---
+
+## D024 — RHEM (flightctl 1.3) is the device plane; a RHEL 10 VM stands in for the device on the desktop
+
+**Date:** 2026-09-08
+**Context:** D007 dropped RHEM along with the OSD hub. An RHEM engineer asked how the demo integrates
+with RHEM, and the honest answer after auditing both repos: thor-testing used RHEM for **enrollment +
+the OS plane only** — no Fleet CR, no device labels, no application delivery, hub installed by hand
+with Helm, nothing under GitOps; model + runtime went Argo → MicroShift over the ACM cluster-proxy.
+This project has none of it. The original goal was *more correct* integrated use, not none, and RHEM
+engineering has a Fleet → runtime + OCI ModelCar → edge device flow proven. The brief's Red Hat value
+is the governed lifecycle (`PROJECT-BRIEF.md:10`); a model plane that never reaches a managed device
+undersells it.
+
+**Decision:** RHEM (flightctl 1.3) becomes the device plane, and Beats 5/6 run on it.
+- **Topology.** Fury: the RHEL 10.2 host is the managed device — package-mode `flightctl-agent`,
+  podman + NVIDIA CDI, GPU on the host; the SNO VM on the same host is the hub (RHEM, RHOAI DSP,
+  RHTAS, Argo). Desktop: Ubuntu cannot run the agent, so a RHEL 10 KVM VM (plain qcow2 + cloud-init,
+  **not bootc** — the Fury host is package-mode, the stand-in mirrors it) is the device and runs ACT
+  inference on **CPU**. The Gazebo sim, the camera bridge and the train/eval host runner stay on the
+  host RTX 5090 untouched; only the policy container moves, and only on the desktop.
+- **The CPU stand-in is gated by a latency spike.** ACT amortises one forward pass per action chunk;
+  on the VM with `policy_device=cpu` measure p95 forward latency (two 480×480 cams), `ros2 topic hz`
+  on the commanded-action topic, and a 20-seed D020 eval vs GPU v2. Pass: p95 <
+  0.5 × (`n_action_steps`/50 s), no gap > 40 ms, success within 10 points of 86%. Fallbacks in
+  order: raise `n_action_steps`; lower the Gazebo real-time factor; **VFIO passthrough of the 5090
+  last** (D001's headless objection stands).
+- **Hub under GitOps.** Argo Application with a Helm OCI source (`quay.io/flightctl/charts`, chart
+  `flightctl` 1.3.0, ns `flightctl`, UI on a Route). Fleets and CatalogItems are flightctl API
+  objects, not k8s CRs, so Argo cannot apply them: a `Repository` + `ResourceSync` against
+  `gitops/rhem/` renders them, applied once with `flightctl apply` and documented like the
+  `argocd/*-app.yaml` bootstrap steps.
+- **SNO goes 4.17 → 4.18 → 4.19 first.** The chart declares `kubeVersion: '>= 1.32.0-0'`; RHEM 1.3
+  wants OpenShift 4.19+. Desktop SNO is 4.17.56 (k8s 1.30) and Helm will refuse. Do not dodge it
+  with Argo's `helm.kubeVersion` override — that hides real incompatibilities on the box that
+  matters. The Fury SNO is a fresh install: 4.19+ there regardless.
+- **In the ROSCon demo:** Beat 5 = the promotion PR edits the Fleet in git → ResourceSync → RHEM
+  rolls it out; Beat 6 = device application health in the RHEM UI + `flightctl console`. This
+  replaces the Argo selector flip + host swap agent (D022 stage 7).
+
+**Alternatives:** keep the in-cluster blue/green Deployment pair as the target (rejected — on the
+Fury the device is the host, not the cluster, D025); bootc image-mode device (rejected for the
+stand-in — it would not mirror the Fury host, and thor's greenboot/bootc lessons are the cost);
+CPU KServe in-cluster on the desktop (D022 fork 3b, still rejected — not what ships).
+
+**Consequences:**
+- BUILD-PLAN gains **Phase 4.5 — RHEM device plane**, sequenced *after* the contingency kit (Phase
+  4 item 2): today's Beat 5/6 clips are the fallback while the desktop is destabilised, and Beats
+  5/6 are re-recorded once RHEM works on the desktop.
+- New: `argocd/rhem-app.yaml` (+ an Argo repo Secret with `enableOCI: "true"`, hand-created),
+  `rhem/bootstrap/{repository,resourcesync}.yaml`, `gitops/rhem/`, `device/provision.sh` (one
+  arch-neutral script for VM and Fury), `docs/eval-records/cpu-spike.md`.
+- Device labels carry the per-site differences (`site`, `gpu`, `policy_device`, `zenoh_router`,
+  `arch`) so one Fleet template serves both boxes; `/etc/hosts` entries for the new routes on the
+  Mac and the device VM (same failure mode as the Rekor UI, D006).
+- Rootful quadlet for the demo (host networking + CDI + `/dev/shm` for zenoh have fewer unknowns);
+  rootless is noted as the product recommendation, not built.
+- Lineage contract unchanged: `MODEL_VERSION` env → coordinator → `/flywheel/model_version` →
+  emitter → curator → MinIO → `manifest-consumer` `COLLECTOR`.
+
+---
+
+## D025 — `gitops/act-serving/`, the `act-serving` Argo app and the host swap agent are retired once RHEM has promoted
+
+**Date:** 2026-09-08
+**Context:** D022 built serving as a blue/green Deployment pair in the cluster (target-shaped, both
+`replicas: 0` on the desktop) with a **[desktop shim]** host swap agent that recreates the host
+container from the promoted digest. D024 moves serving onto the RHEM device — on the Fury that is
+the host, not the cluster — so the in-cluster KServe-style path is no longer the target and the
+shim has nothing left to shim.
+
+**Decision:** retire `gitops/act-serving/`, `argocd/act-serving-app.yaml`, `src/swap-agent/` and
+the `act-serving` Argo app — **after the RHEM path has promoted once**, not before. Git history
+keeps them. The promotion step becomes a two-regex edit of one file,
+`gitops/rhem/fleet-act-inference.yaml`: `soarm-act-modelcar@sha256:…` → the new digest and
+`MODEL_VERSION: <old>` → the candidate. Same branch/commit/PR-body shape as PR #1; the body adds
+`Rollback: git revert <sha>` and the Fleet URL. **The same commit bumps `COLLECTOR`/`INCUMBENT` in
+`gitops/flywheel/manifest-consumer.yaml`** (hand-edited after PR #1 today) so the next round fires
+on the new lineage — the D022 lesson (5e3e87a: a partial flip is an outage) applied to the new
+file set.
+
+**Why:** one file, one commit, one merge is a stronger Beat 5 than three files and a shim; the
+Fleet is the product's rollout object and the RHEM UI shows the rollout without narration.
+
+**Consequences:**
+- Rollback = `git revert` + merge; the image volume is `reclaimPolicy: Retain`, so rolling back
+  does not re-pull. Rehearse once.
+- Human merge stays Gate 3; ResourceSync renders the Fleet; the device pulls the modelcar as an
+  image volume, the container restarts with the new `MODEL_VERSION`, health reports back.
+- D022's "target-shaped Deployment pair" section and D023's reset-to-v1 procedure (three edits
+  reversed) describe the retired path; the runbook is rewritten in Phase 4.5 G.
+
+---
+
+## D026 — Product-fidelity drift acknowledged and scheduled: what is repaired before the Fury, what is deferred past ROSCon
+
+**Date:** 2026-09-08
+**Context:** the same audit that produced D024 inventoried where this project sits relative to
+the Red Hat stack thor-testing ran. Some of the gap is (a) legitimate single-box simplification,
+some is (b) tagged `[desktop shim]` with a Fury replacement, and some is (c) **silent drift with
+no decision recorded**. Putting the whole table on record is the point of this entry.
+
+| # | Area | thor-testing | flywheel today | Class | Fixed in |
+|---|---|---|---|---|---|
+| 1 | Node trust | `policy.json` sigstoreSigned + `registries.d` (D015/D018) | none; prose only in `gitops/act-serving/README.md` | (c) | C |
+| 2 | Rekor at verify | pull path honours policy | `swap_agent.py:66` `--insecure-ignore-tlog` — signs into RHTAS, never reads it | (c) | C |
+| 3 | Build system | Tekton in-cluster, signed | no `tekton/`; `docker buildx` on Ubuntu → quay; Pipelines operator installed unused; `gitops/operators/README.md:8` still claims Tekton | (c) | F |
+| 4 | Fleet/device mgmt | RHEM enrollment + OS plane | none (D007) | (a) | A–D |
+| 5 | GitOps coverage | ApplicationSets (live-only) | `flywheel`, `minio`, `observability` Argo apps not in git; `prune: false`; 4 secrets by hand | (c) | F |
+| 6 | Telemetry | OTel with `model.version` → Tempo | zero OTel; Perses/Tempo/COO installed with no data | (c) | F (post-ROSCon) |
+| 7 | Messaging | hub AMQ Streams + MM2 TLS | DIY Strimzi-image Deployment, privileged, plaintext NodePort; brief still says "AMQ Streams" | (c) | F (post-ROSCon) |
+| 8 | Model registry | MLflow (hand-backfilled) | none; version/digest/eval/dataset join only in PR body | (c) | E |
+| 9 | Serving | Deployment on MicroShift | Deployment `replicas: 0` in SNO; real serving = `docker run` on host; KServe enabled, unused | (b) | D (retired) |
+| 10 | Training | DSP/KFP | DSP triggers host runner | (b) | unchanged (Phase 4 `mode=cluster`) |
+| 11 | Host OS | CS10 bootc + podman | Ubuntu + docker; Fury RHEL 10.2 with no host-management story | (c) | B, G |
+| 12 | Multi-arch | arch-derived cosign download | `cosign-linux-amd64`, `Linux_x86_64` hardcoded (`pipeline/act_flywheel_pipeline.py:86,105`); `:latest` base images despite D022 | (c) | F |
+| 13 | Secrets | Secret-sourced | `minioadmin` in git; `COSIGN_PASSWORD=""` | (c) | F |
+| 14 | Sign time | cosign + RHTAS Rekor | cosign v2.6.5 + in-cluster Rekor, `--tlog-upload=true` — **correct, keep** | — | — |
+
+Letters in "Fixed in" are the Phase 4.5 items (BUILD-PLAN). The one that stings: **today the
+pipeline signs into RHTAS Rekor (index 0, 1 — D022) but the only verifier in the loop passes
+`--insecure-ignore-tlog`** (`src/swap-agent/swap_agent.py:66`; the runbook's manual check at
+`docs/DEMO_RUNBOOK.md:307` does the same), and **no container `policy.json` or `registries.d`
+existed anywhere in this repo** — the transparency log was written and never read.
+
+**Decision — fix before the Fury (Phase 4.5 C and F):**
+- **Node trust, for real.** The Fleet writes `/etc/containers/policy.json` (`sigstoreSigned` for
+  the modelcar and runtime repos with `keyPath` **and `rekorPublicKeyPath`**, so the Rekor SET is
+  enforced on the device, `signedIdentity: matchRepository`) and `registries.d` with
+  `use-sigstore-attachments: true` (thor D015/D018), plus `cosign.pub` and `rekor.pub`. Exit: a
+  deliberately unsigned tag fails to pull with a signature error; a tag signed *without*
+  `--tlog-upload` also fails; `--insecure-ignore-tlog` no longer exists in the repo.
+- **Tekton builds + signs the runtime images** (D028).
+- **Arch-derived tool downloads** (`platform.machine()` for crane/cosign URLs); **pinned base
+  images** (`ubi9/python-312`, `ubi-micro` — D022 said so, the code didn't); `platform` becomes a
+  list for multi-arch modelcars.
+- **Argo apps committed** (`argocd/{flywheel,minio,observability}-app.yaml` from `oc get app`),
+  `prune: true` everywhere, so `argocd app list` equals the files in `argocd/`.
+- **MinIO root creds out of git** (`gitops/flywheel/hub-credentials.yaml` → hand-created Secret).
+- **Docs corrected**: `gitops/operators/README.md` Tekton/KServe claims, RHEM + Model Registry
+  rows; `PROJECT-BRIEF.md:46` "Kafka (AMQ Streams)" → honest wording.
+
+**Decision — deferred past ROSCon, recorded here so they are deferrals rather than drift:**
+- **OTel re-emission** (row 6): a second quadlet app `otel-collector` in the Fleet (thor
+  `derived-image/config/otel-collector.yaml` shape, `model.version` resource attribute from
+  `MODEL_VERSION`, otlphttp → Tempo gateway); coordinator emits an episode span; Perses panels
+  stop being empty. ~1 day.
+- **AMQ Streams** (row 7): the operator + a `Kafka` CR (KRaft NodePool, external NodePort
+  listener) replacing `gitops/flywheel/edge-kafka.yaml`, and the consumers re-pointed. ~1 day.
+- **Why deferred:** neither changes what the booth shows, and both touch the running loop's
+  transport and telemetry in the two weeks before the Fury window. Booth stability wins; the brief
+  wording is corrected now so nothing claims them.
+
+**Consequences:** Phase 4 item 4's "node-side signature enforcement applied, not just documented"
+line is delivered by 4.5 C; rows 6–7 become open-question rows tagged post-ROSCon; the drift
+table is the checklist for the pre-Fury `F` day, and anything still (c) after the Fury gets its
+own decision or its own deferral.
+
+---
+
+## D027 — The pipeline's CatalogItem write is a deliberately removable seam; the Model Registry record is the durable handoff
+
+**Date:** 2026-09-08
+**Context:** BUILD-PLAN Phase 4 item 5 asked for a structured promotion record because RHEM
+engineering is building an RHOAI Model Registry → RHEM Catalog bridge, so Fleet rollout policies
+can carry promoted models. That bridge does not exist yet; the RHEM Catalog API is **v1alpha1
+upstream**. Phase 4.5 E puts both the registry record (E1) and a Catalog version graph (E2,
+stretch) in the promotion, and the question is which one the pipeline should own.
+
+**Decision:**
+- **Model Registry is the durable handoff.** New KFP component `register_model` between
+  `sign_modelcar` and the PR: `register_model("soarm-act", uri=<digest ref>,
+  model_format_name="lerobot-act", version=<candidate>, metadata={dataset_uri, incumbent, rates,
+  fixed/broken/net, p, rekor_index, pr_url})` — the five-way join item 5 asked for, pipeline-emitted
+  (the thor-testing gap was hand-backfilled MLflow entries). RHOAI `modelregistry` component
+  `Managed` in `gitops/operators-config/dsc.yaml`; `ModelRegistry` CR + MariaDB in
+  `gitops/operators-config/model-registry.yaml`.
+- **The CatalogItem write is one isolated function, `append_catalog_version(item_yaml, version,
+  digest, replaces)`**, editing `gitops/rhem/catalogitem-soarm-act.yaml` in the same promotion
+  commit. It is **designed to be deleted** the day RHEM engineering's registry → Catalog bridge
+  lands: nothing else in the pipeline depends on it, and removing it changes no other file.
+- The Fleet pins `volumes[].image.catalogItemRef {catalog, item, version}`; `channel: stable` is
+  the follow-on, not the demo.
+
+**Alternatives:** pipeline writes only the Fleet digest and skips the Catalog (keeps the product
+seam invisible on stage); pipeline writes only the Catalog and the Fleet follows a channel (moves
+the promotion decision out of git — Gate 3 is the human merge, keep it there).
+
+**Consequences:**
+- Flag to verify: docs show `references: {container: "<tag>"}`; **digest-form references are
+  unverified.** If tag-only, the digest-pinned Fleet stays the product path and the Catalog is
+  shown as the version graph only. Say "v1alpha1" on stage.
+- Flag: confirm the RHOAI version on SNO ships the `modelregistry` component
+  (`oc get csv -n redhat-ods-operator`) before E1 is scheduled.
+- Closes BUILD-PLAN Phase 4 item 5 when E1 lands; the PR body stays the human-readable view.
+
+---
+
+## D028 — OpenShift Pipelines (Tekton) reinstated for runtime image build + sign; ModelCar packaging stays in KFP
+
+**Date:** 2026-09-08
+**Context:** D022 fork 1 decided RHOAI DSP/KFP as the pipeline runtime "with Tekton tasks reused
+inside for build/sign as thor did", and `gitops/operators/README.md:8` says the Pipelines operator
+is there for exactly that. What actually happened: the modelcar is packaged and signed inside KFP
+(correct — `crane append` + cosign, Rekor index 0/1), but the **runtime images**
+(`Dockerfile.gpu-inference` and the rest) are built by `docker buildx` on the Ubuntu host and
+pushed to quay **unsigned**, amd64 only. The Pipelines operator was installed and never used; the
+README claimed otherwise (drift row 3, D026).
+
+**Decision:** Tekton builds and signs the runtime images, multi-arch, in-cluster.
+- `gitops/tekton/{buildah-cross-arch-task,cosign-sign-task,runtime-image-pipeline}.yaml` lifted
+  from thor `tekton/00-*.yaml` and `01-*.yaml`, namespace `flywheel`; `gitops/tekton/qemu-binfmt.yaml`
+  DaemonSet for the arm64 cross-build.
+- The `pipeline` SA is bound to the **privileged SCC** — thor D009: qemu segfaults under
+  `pipelines-scc`.
+- Build `--platform linux/amd64,linux/arm64 --manifest`; sign the **manifest digest** with cosign
+  v2.x `--rekor-url <RHTAS> --tlog-upload=true`. The Fleet references the runtime image **by
+  digest**, and the device's `policy.json` verifies it (D026).
+- ModelCar packaging stays a KFP component: it is one `crane append` on a ~200 MB directory and
+  belongs to the promotion run, not to an image build.
+
+**Alternatives:** keep `docker buildx` on the host and sign there (rejected — the host is the
+[desktop shim], the Fury has no Ubuntu host, and it leaves the operator installed for show);
+build runtime images inside KFP too (rejected — a colcon build is a Tekton-shaped job, and the
+thor tasks exist).
+
+**Consequences:**
+- Risk: colcon under qemu takes hours. Mitigation: a native `podman build` on the Fury during the
+  visit pushed to the same tag; Tekton remains the recorded path.
+- Flag: `torch==2.9.1+cu130` aarch64 wheels unverified (BUILD-PLAN open question).
+- Exit: `tkn pipelinerun` builds both arches, a Rekor entry is created, `crane manifest` shows
+  both platforms, the Fleet pins the digest. `gitops/operators/README.md` then tells the truth
+  (Phase 4.5 F).
+
+---
+
+## D029 — Pre-upgrade VM snapshot: libvirt internal qcow2 snapshot of the shut-off domain
+
+**Date:** 2026-09-08
+**Context:** D024 says "VM snapshot first" but not how. The SNO VM (`sno-flywheel`, qemu:///system)
+boots UEFI (`<loader type='pflash'>` + nvram). libvirt refuses internal snapshots of a *running*
+pflash domain, and `sudo` is unavailable on the desktop (so no direct `qemu-img snapshot` on the
+root-owned image). The host had ~180 GB free on `/`; the image is 235 GB allocated.
+**Decision:** graceful `virsh shutdown` (took ~2 min), then `virsh snapshot-create-as sno-flywheel
+pre-4.18-upgrade-2026-09-08` with the domain **shut off** — libvirt 10.0 accepts an internal
+disk-only snapshot of an inactive pflash domain (no memory state, NVRAM not captured). Verified with
+`virsh snapshot-list`. Then `virsh start` and waited for the node Ready + all clusteroperators
+Available/not Progressing/not Degraded before touching the upgrade.
+**Revert:** `virsh -c qemu:///system shutdown sno-flywheel` → wait for `shut off` →
+`virsh -c qemu:///system snapshot-revert sno-flywheel pre-4.18-upgrade-2026-09-08` → `virsh start`.
+Host `/etc/hosts`, the desktop containers and the Argo apps are unaffected (the snapshot is the
+whole guest disk, 4.17.56 + everything installed on it at 14:58 CDT).
+**Alternatives:** external overlay snapshot (`--disk-only --diskspec vda,snapshot=external`) —
+works on running pflash domains but revert is a manual XML edit + blockcommit on libvirt 10;
+`qemu-img snapshot -c` on the file — needs root; no snapshot — rejected by D024.
+**Consequences:** the qcow2 grows by every block rewritten after the snapshot (the two upgrades
+write tens of GB); free space on `/` must be watched. Delete the snapshot once 4.19 has been
+stable for a few days (`virsh snapshot-delete sno-flywheel pre-4.18-upgrade-2026-09-08`, domain
+running is fine for delete) to stop paying for it. A future snapshot needs the same shutdown.
+
+---
+
+## D030 — Upgrade path: `stable-4.18` → `--to-latest`, then `stable-4.19` → `--to-latest`; no admin-ack was required
+
+**Date:** 2026-09-08
+**Context:** D024 fixes the hops (4.17 → 4.18 → 4.19); channel and version within a hop were open.
+`oc adm upgrade` on 4.17.56 listed `stable-4.18`/`eus-4.18` (4.19 channels only appear once on
+4.18). `admin-gates` in `openshift-config-managed` was empty, so no acknowledgement gate exists on
+the 4.17→4.18 edge; the 4.18→4.19 gate check is repeated after the first hop.
+**Decision:** `stable-*` channels (not `fast-*`, not `eus-*`: EUS only matters for a skip-hop
+we are not doing on SNO), `--to-latest=true` inside each channel so the target is the newest
+*recommended* edge — if the newest is only "conditional", switch to `--to <version>` of the
+newest recommended one rather than `--allow-not-recommended`.
+**Operator compatibility evidence (checked before starting):** no installed CSV carries an
+`olm.maxOpenShiftVersion` property (all six checked via `operatorframework.io/properties`), so OLM
+has no block. Vendor matrices: RHOAI 2.25 supports OCP 4.16–4.20 (x86_64,
+access.redhat.com/articles/rhoai-supported-configs); GitOps 1.21.4 supports 4.18–4.22; Pipelines
+1.22 supports 4.14, 4.16–4.22; COO 1.5 / Tempo 0.22 are 4.x-generic; RHTAS 1.4 is documented for
+4.14+ (release-notes landing page did not carry the matrix; not a blocker on any 4.x we touch).
+Subscriptions stay on their current channels (`latest`/`stable`) — nothing needs a channel bump.
+**Consequences:** two SNO reboots (~15–20 min each of API absence). If `stable-4.19` offers a
+newer z than the one tested here, it is fine to take it — the RHEM chart constraint is
+`kubeVersion >= 1.32`, i.e. any 4.19.
+
+---
+
+## D031 — Argo renders the flightctl chart with `helm template`: pin every `lookup`-derived value, hold generated secrets with `ignoreDifferences`
+
+**Date:** 2026-09-08
+**Context:** D024 mandates the chart via an Argo Helm-OCI source. The chart is written for
+`helm install`: it `lookup`s the cluster `DNS` object for the base domain, the `oauth-openshift`
+Route for the OAuth URLs (and calls `fail` if not found), the `default-ingress-cert` ConfigMap for
+the auth CA, and the previously generated `flightctl-db-*`/`flightctl-kv-secret` Secrets and the
+`OAuthClient` so passwords survive upgrades. Argo CD's `helm template` returns nothing from
+`lookup`, so unpinned the render either fails outright (OAuth) or re-randomises passwords on every
+3-minute refresh and, with `selfHeal`, rotates them under the running DB.
+**Decision** (all in `argocd/rhem-app.yaml`, `helm.releaseName: flightctl`):
+- `global.baseDomain: flightctl.apps.sno-flywheel.local` — the chart's own OpenShift layout
+  (`<ns>.apps.<cluster domain>`), just made explicit. Routes are `ui.`, `api.`, `agent-api.` etc.
+  under it; one `/etc/hosts` line covers all eight.
+- `global.auth.type: openshift` with `authorizationUrl`/`tokenUrl` set to the SNO's
+  `oauth-openshift.apps.sno-flywheel.local` endpoints; `insecureSkipTlsVerify: true` (API and UI)
+  because the ingress CA is not `lookup`-able and the cluster is self-signed (D006 pattern).
+  `createAdminUser: true` keeps the chart's `flightctl-admin` SA.
+- `routeExternalCertificate: "false"` — `Route.spec.tls.externalCertificate` is behind a feature
+  gate that is not GA on 4.19; `helm template` sees `Release.IsInstall=true` and would emit it.
+- `generateCertificates: builtin`, `exposeServicesMethod: route`, `enableOpenShiftExtensions:
+  "true"`, `enableMulticlusterExtensions: "false"` — the `auto` values happen to resolve the same
+  way but depend on `.Capabilities`; pinning removes the dependence on how Argo passes
+  `--api-versions`.
+- `storageClassName: local-path` (DB PVC 60Gi, alertmanager PVC).
+- `imageBuilderApi/Worker.enabled: false` — bootc image building is not in scope (package-mode
+  devices, D024) and the worker needs a privileged SCC + RHSM secrets.
+- `ignoreDifferences` on `/data` of the four generated Secrets, on `/secret` of
+  `OAuthClient/flightctl-flightctl`, and on `/data` of the three ConfigMaps that embed the OAuth
+  client secret (`flightctl-api-config`, `flightctl-remote-access-config`,
+  `flightctl-alertmanager-proxy-config`), with `RespectIgnoreDifferences=true` so a sync writes
+  the live values back rather than the freshly randomised ones.
+- `managedNamespaceMetadata.labels: io.flightctl/instance=flightctl` — the namespace→organisation
+  label thor set by hand (`DEPLOYMENT_GUIDE.md:112`).
+- `prune: true` (D026 direction) — new app, nothing hand-made to lose.
+**Alternatives:** put `global.auth.openshift.clientSecret` in values (rejected: a credential in a
+public repo); `global.auth.type: k8s` (no OAuth client at all, token-paste UI login — kept as the
+fallback if the OAuth flow misbehaves on the demo box); `none` (rejected — it removes the RBAC
+story). Argo config-management plugin to run real `helm install` (rejected — heavy).
+**Consequences:** a chart bump that changes the service config needs the three ConfigMaps and
+the OAuthClient deleted together so Argo recreates them from one render (documented in the app
+file). Chart hooks (`pre-install`/`pre-upgrade` cert + encryption-key Jobs) run as Argo PreSync
+hooks; `post-delete` cleanup hooks are ignored by Argo — deleting the app leaves the PVC behind
+(intended). The `/etc/hosts` line in `argocd/README.md` is required on the Mac and the device VM.
+
+---
+
+## D032 — ResourceSync field is `targetRevision`, and `gitops/rhem/` may carry a README
+
+**Date:** 2026-09-08
+**Context:** BUILD-PLAN/D024 describe the ResourceSync loosely (`revision`). The flightctl 1.3
+core OpenAPI names the field `spec.targetRevision` (required, with `repository` and `path`;
+`type` defaults to `fleet`). The sync reads a directory flat, `*.yaml|*.yml|*.json` only, and
+skips other files (`internal/tasks/resourcesync.go`, `validFileExtensions`).
+**Decision:** `rhem/bootstrap/resourcesync.yaml` uses `targetRevision: desktop-gpu-split`,
+`path: gitops/rhem`, `type: fleet`; `gitops/rhem/README.md` stays in the directory. A second
+ResourceSync (`type: catalog`) is added in E2 if CatalogItems land in the same directory —
+a single sync only handles one type.
+**Consequences:** nothing until `gitops/rhem/` is pushed; until then the ResourceSync reports the
+path missing (expected).
+
+---
+
+## D033 — Device labels carry the zenoh router as two labels: `zenoh_router=<host>` + `zenoh_port=<port>`
+
+**Date:** 2026-09-08
+**Context:** D024 lists `zenoh_router=10.0.0.48:7447` as a device label. flightctl 1.3.0 validates
+label values server-side with Kubernetes `IsValidLabelValue`
+(`internal/util/validation/validation.go:91`; `api/core/v1beta1/validation.go` calls it for every
+resource's `metadata.labels` and for the approval's `labels`): ≤ 63 chars, `[A-Za-z0-9]` at both
+ends, `[-A-Za-z0-9_.]` inside. `:` is rejected, and so is `/`. The OpenAPI only says
+`additionalProperties: string`, so the CLI (`flightctl approve -l k=v`, `internal/cli/approve.go:62`)
+would accept it and the server would 400.
+**Decision:** two labels, `zenoh_router=10.0.0.48` and `zenoh_port=7447`; the Fleet's inline
+`/etc/act-inference/env` template joins them (`ZENOH_ROUTER={{ .zenoh_router }}:{{ .zenoh_port }}`).
+`arch` values are `amd64`/`arm64` (Go/OCI platform names, derived from `uname -m` in
+`device/enroll.sh`). Approval uses repeated `-l` flags (`docs/user/using/managing-devices.md:36`).
+**Alternatives:** encode as `10.0.0.48-7447` (rejected — a Go template would have to split it,
+and it reads as a hostname); put the router in the Fleet config instead of a label (rejected — the
+per-site difference is exactly what labels are for in D024).
+**Consequences:** BUILD-PLAN Phase 4.5 B/G label lists and D024's label example should read
+`zenoh_router=… zenoh_port=…`; `device/enroll.sh` validates every value against the rule before
+calling the API.
+
+---
+
+## D034 — CPU spike part 1 passes; the desktop stand-in runs ACT on 8 P-core threads
+
+**Date:** 2026-09-08
+**Context:** `act-v2-ft160` has `chunk_size = n_action_steps = 100` at 50 Hz → one forward pass
+per 2 s; D024's threshold is p95 < 1000 ms. Measured in a throwaway container from the production
+image with the VM's budget (`--cpus=8 --memory=16g`, `--cpuset-cpus=0,2,4,6,8,10,12,14`,
+`--network none`), mirroring lerobot's `policy_server` pipeline: forward p50/p95/p99 =
+75.0/83.2/101.0 ms at 8 threads; 78.2/98.2/150.0 ms at 16 threads (SMT siblings). Record:
+`docs/eval-records/cpu-spike.md`.
+**Decision:** criterion 1 is met with a 12× margin; proceed with the CPU stand-in (no VFIO, no
+RTF change, no `n_action_steps` change). The VM runs the policy container with
+`OMP_NUM_THREADS=8`; the VM stays unpinned by default (the SNO VM floats across all 32 threads),
+with `VCPU_CPUSET=0,2,4,6,8,10,12,14` available in `create-vm.sh` if part 2 shows chunk-boundary
+gaps. Criteria 2–3 stay open until a scheduled stop of the host `act-inference` (procedure in the
+record; GPU baseline on the same 20 seeds is 17/20 = 85%, pass is ≥ 15/20).
+**Alternatives:** measure inside the guest first (deferred — the guest has no image yet, F builds
+it; the script is in `device/spike/` to re-run there); 16 threads (rejected — slower and a fatter
+tail).
+**Consequences:** Phase 4.5 C is un-gated on compute grounds; the two live criteria move to the
+C cut-over window, where the host container stops anyway.
+
+---
+
+## D035 — The stand-in VM's disk is a libvirt-side copy of the guest image, not a backing chain
+
+**Date:** 2026-09-08
+**Context:** the `images` pool (`/var/lib/libvirt/images`) is root-owned and the desktop user has
+no sudo; a qcow2 backing file under `/home/jary` would also need to stay readable by the qemu
+user forever.
+**Decision:** `device/vm/create-vm.sh` does `virsh vol-create-as` (qcow2, 60 G) →
+`virsh vol-upload` of the RHEL 10.2 KVM guest image → `virsh vol-resize`, then
+`virt-install --import --cloud-init user-data=…,meta-data=…` with `--cpu host-passthrough`
+(the guest sees the full ISA for oneDNN), `--osinfo rhel10.1` (newest rhel10 entry in the
+desktop's osinfo db), bridged on `br0`, `--autostart`. cloud-init only creates the operator user
+with the desktop's key and grows the root fs; provisioning is a separate, explicit step.
+**Alternatives:** backing chain (rejected above); bootc image mode (rejected in D024).
+**Consequences:** rebuilding the VM is `virsh destroy; virsh undefine --remove-all-storage` then
+re-run; the base qcow2 at `/home/jary/images/` is untouched.
+
+---
+
+## D036 — Registration input is a root-only env file, sourced by `provision.sh` and shredded after use
+
+**Date:** 2026-09-08
+**Context:** the activation key must reach `subscription-manager register` on every device
+without ever appearing in a transcript, log, or repo file.
+**Decision:** `provision.sh --env-file <path>` (default `/root/activation-key` if present) sources
+`ORG_ID=`/`ACTIVATION_KEY=`; `RHSM_USER`/`RHSM_PASS` remain the documented alternative. The file
+is copied to the device as `root:root 0600`, and shredded on the device once
+`subscription-manager identity` succeeds (the desktop copy at `/home/jary/activation-key` stays).
+Registration output is piped through a redaction of UUIDs and org lines.
+**Consequences:** re-running `provision.sh` on a registered device skips registration and needs no
+key; the Fury run uses the same file.
+
+---
+
+## D037 — Benchmark methodology for CPU policy latency (reusable on the Fury)
+
+**Date:** 2026-09-08
+**Decision:** `device/spike/bench_cpu_forward.py` is the standard: same image as production,
+`--network none`, CUDA hidden, cgroup-limited to the device budget, one SMT thread per physical
+core, synthetic observation with the checkpoint's real keys/shapes, the `policy_server` pipeline
+(`preprocessor` → `predict_action_chunk` → `postprocessor`), 10 warm-up + 200 timed passes,
+nearest-rank percentiles, threshold computed from the checkpoint's `n_action_steps` and the
+contract's fps. Reports pre/forward/post/end-to-end and PASS/FAIL. Runs unchanged on aarch64.
+
+---
+
+## D038 — The ModelCar is a quadlet `.volume` with `Driver=image`, not an app-level `volumes[].image`
+
+**Date:** 2026-09-08
+**Context:** BUILD-PLAN flagged that flightctl's app-level image volumes are described as OCI
+*artifacts*. The v1.3.0 agent source confirms it and adds a harder problem: flightctl 1.3.0
+app-level `volumes[].image` on quadlet apps uses podman-artifact semantics, not a mount. For a
+quadlet app, `extractVolumeTargets` (`internal/agent/device/applications/provider/provider.go:1264`)
+sets the pull type of every `volumes[].image` entry to `OCITypePodmanArtifact` unconditionally, so
+the prefetch is `podman artifact pull <ref>` (`internal/agent/device/dependency/dependency.go:481-482`,
+`internal/agent/client/podman.go:187-233`). At install, `ensureArtifactVolumes`
+(`internal/agent/device/applications/lifecycle/quadlet.go:379-438`) creates a *local-driver* volume
+and runs `podman artifact extract <ref> <mountpoint>` (`client/podman.go:240-256`), i.e. each layer
+is copied out as a file named by its `org.opencontainers.image.title` — not mounted as a rootfs.
+The `mount` variant (`ImageMountVolumeProviderSpec`) is rejected for quadlet apps
+(`provider/app_handler.go:10-20`, `ErrUnsupportedVolumeType`). Our modelcar
+(`quay.io/jary/soarm-act-modelcar@sha256:bdb513ca…`) is a 2-layer Docker-v2 container image
+(ubi-micro + a `crane append` layer, no layer annotations at all), so title-based extraction has
+nothing to work with — this artifact-pull/extract path fails for a signed multi-layer container
+image regardless. Worse: on the VM (podman 5.8.2), `podman artifact pull` of a *signed* container
+image fails before extraction — `Error: copying system image from manifest list: Can not copy
+signatures to oci:/var/lib/containers/storage/artifacts:…: Pushing signatures for OCI images is not
+supported` (probed with `registry.access.redhat.com/ubi9/ubi-init:9.5`; the artifact store is an OCI
+layout and containers/image refuses to drop the signatures it just verified). Since D026 makes both
+of our repos sigstoreSigned, the artifact path is a dead end for a signed modelcar.
+
+The quadlet-native path works as documented: a `models.volume` with `[Volume] Driver=image
+Image=quay.io/jary/soarm-act-modelcar@sha256:…` plus `Volume=models.volume:/modelcar:ro` in the
+`.container`. The agent still tracks it as an image-backed application volume
+(`provider/volume.go:316-332`, `ReclaimPolicy: Retain`) and pre-pulls the reference with plain
+`podman pull` (the `.volume` `Image=` is collected by `extractQuadletTargets`), so `policy.json` is
+enforced and the signature is stored with the image. Verified on the VM: the volume unit creates
+`systemd-models-test` (`driver=image`), the container sees the modelcar rootfs read-only at the
+mount point, and the checkpoint is at `<mount>/models/act/{config.json,model.safetensors,…}`.
+`--mount type=volume,src=<vol>,dst=/models,subpath=models` also works on podman 5.8.2 if a
+`/models/act` path is ever wanted, but the documented `Volume=` form is what the Fleet uses.
+**Decision:** `fleet-act-inference.yaml` carries the modelcar as an inline `models.volume`
+(`Driver=image`, digest-pinned) mounted at `/modelcar`, with `POLICY_PATH=/modelcar/models/act`.
+Therefore the Fleet uses a quadlet `.volume` with `Driver=image` pinned by digest, and
+`catalogItemRef` (E2) is unavailable on that path — so E2's CatalogItem, if it lands, is a version
+graph shown beside the digest-pinned Fleet: documentation/provenance, not a live reference (the
+D027 fallback).
+**Alternatives:** repackage the modelcar as a real OCI artifact with titled layers (rejected — it
+would have to be unsigned to pass `podman artifact pull`, which defeats D026, and KFP would need a
+second packaging path); app-level `volumes[].image` (rejected above).
+**Consequences:** `reclaimPolicy: Retain` semantics come from podman: the image-driver volume is an
+overlay of the image and is removed by the agent on app removal (`lifecycle/quadlet.go:253-295`,
+"ephemeral" image-driver volumes), but the *image* stays in local storage, so a `git revert` rollback
+re-creates the volume from the already-present digest with no re-pull. Image pruning
+(`docs/user/using/managing-devices.md` "Image and Artifact Pruning") can remove the previous digest
+after a *successful* update — rollback within the same rollout is safe, rollback after a later
+promotion re-pulls. BUILD-PLAN "Flags to verify" bullet 2 is resolved. Cross-reference D027: this
+entry confirms the CatalogItem write remains the removable seam D027 designed for — the Fleet's
+digest pin is the durable path, the CatalogItem is not load-bearing.
+
+---
+
+## D039 — `quay.io/jary/soarm-act-modelcar` must be pullable by the device: make it public (or pre-place a pull secret)
+
+**Date:** 2026-09-08
+**Context:** the repo is private (`crane ls` unauthenticated → `UNAUTHORIZED`; `podman pull` on the
+VM → `unauthorized: access to the requested resource is not authorized`). `soarm-flywheel` is
+already public. flightctl does not deliver registry credentials: "Authentication must exist on the
+device before it can be consumed" — `/root/.config/containers/auth.json` for a rootful quadlet app
+(docs "Using Image Pull Secrets"). Putting an `auth.json` in the Fleet's inline config would put a
+quay token in git.
+**Decision:** make the modelcar repo public. It holds a sim-trained ACT checkpoint for an open
+upstream task; the security property we care about is integrity (signature + Rekor), not
+confidentiality, and a public repo keeps the Fury story "device pulls from quay.io, no mirror"
+(Phase 4.5 G) free of a secrets step.
+**Alternatives:** `device/provision.sh` gains an optional `--auth-file` (root-only, D036 pattern) that
+installs `/root/.config/containers/auth.json`; the Fury run then needs the token on site.
+**Consequences:** until one of these is done, the C exit criterion "an unsigned tag fails to pull with
+a signature error" is only half-provable: the negative half passes today on the VM
+(`quay.io/jary/soarm-flywheel:sim-only` → `Source image rejected: A signature was required, but no
+signature exists`); the positive half (signed + Rekor-logged digest pulls) is blocked on access.
+
+---
+
+## D040 — `/etc/act-inference/env` carries only what varies per device; coordinator settings are Fleet envVars; no `CURATOR_URL`
+
+**Date:** 2026-09-08
+**Context:** the episode emitter does not run in `act-inference` — it runs in the sim container
+(`docker/entrypoint.sh:72`, `so-arm-sim` on the host) and POSTs to the curator NodePort
+`http://10.0.0.49:30802/episode` (`src/episode-emitter/episode_emitter.py:31`,
+`gitops/flywheel/curator.yaml:228`). It takes the label from the latched `/flywheel/model_version`
+topic, which the VM's coordinator publishes over zenoh. The host `act-inference` had no
+`CURATOR_URL` either.
+**Decision:** the label-templated env file holds `ZENOH_ROUTER=<zenoh_router>:<zenoh_port>`,
+`POLICY_DEVICE`, and — only when `gpu=none` — `OMP_NUM_THREADS=8`/`TORCH_NUM_THREADS=8` (D034).
+`getOrDefault .metadata.labels "gpu" "none"` guards a device approved without the label (renders
+the CPU branch instead of failing the Fleet render). The lineage pair `MODEL_VERSION` + `POLICY_PATH`
+and the coordinator's sim-randomisation settings copied from the host `docker run`
+(`RECORD=true RESET_ARM=false EPISODE_LEN=60 RANDOMIZE_CUBES=true RANDOMIZE_ONLY=cube_medium
+RANDOM_RADIUS=0.03 REST_POSE=0,0,0,0,0,0`) are application `envVars`, so the promotion regex
+(D025) touches `MODEL_VERSION` in exactly one place. No `CURATOR_URL` is set anywhere in the Fleet.
+**Consequences:** if the emitter ever moves onto the device (post-ROSCon OTel/telemetry work),
+`CURATOR_URL` joins the env file as a per-site value (`curator_host` label) — not before.
+
+---
+
+## D041 — No `ShmSize=`; rootful `Network=host`; `HealthOnFailure=kill` with `Restart=always`
+
+**Date:** 2026-09-08
+**Context:** the host container runs with docker's default 64 MiB `/dev/shm`
+(`HostConfig.ShmSize=67108864`) and rmw_zenoh in client mode over TCP to the router; zenoh
+shared-memory transport is off by default and nothing in the loop uses it. podman's default is also
+64 MiB.
+**Decision:** omit `ShmSize=`; keep `Network=host` (zenoh client → `10.0.0.48:7447`, no port mapping
+to maintain). The container health is the image `HEALTHCHECK` (`docker/healthcheck.sh`: latched
+`/flywheel/model_version == $MODEL_VERSION` and `/run_policy` on `ros2 action list`), repeated in
+the quadlet as `HealthCmd`/`HealthStartPeriod=240s`/`HealthInterval=30s`/`HealthTimeout=10s`/
+`HealthRetries=3`; `HealthOnFailure=kill` + `Restart=always` makes an unhealthy container restart
+without an operator, which is what a demo wants and what RHEM's application status will show as a
+restart rather than a hang. The bind mount `/var/lib/act-inference/data:/data:z` (SELinux is
+Enforcing on the VM) gives the recorder `/data/bags` — i.e. `/var/lib/act-inference/data/bags`, not
+the `/var/lib/act-inference/bags` directory `provision.sh` also creates.
+**Alternatives:** `HealthOnFailure=none` (podman default) — RHEM would report Unhealthy but nothing
+would recover; rejected for the demo window. `ShmSize=1g` "just in case" — rejected, no evidence.
+**Consequences:** `healthcheck.sh` runs two `ros2` CLI calls under a 10 s budget (4 s each); if zenoh
+discovery makes it flaky on the VM, raise `HealthTimeout`/`HEALTH_STEP_TIMEOUT` in the Fleet, not
+the check. `provision.sh` may drop the unused `/var/lib/act-inference/bags` directory.
+
+---
+
+## D042 — Fleet trust files replace the RHEL defaults, so they must carry them
+
+**Date:** 2026-09-08
+**Context:** RHEL 10.2 ships `/etc/containers/policy.json` with `sigstoreSigned` entries for
+`registry.access.redhat.com` and `registry.redhat.io` (Red Hat release key + Rekor key under
+`/etc/pki/sigstore/`). An inline config file overwrites the whole file.
+**Decision:** the Fleet's `policy.json` keeps those two entries verbatim and adds
+`quay.io/jary/soarm-act-modelcar` and `quay.io/jary/soarm-flywheel` (`keyPath` + `rekorPublicKeyPath`,
+`signedIdentity: matchRepository`); `default` stays `insecureAcceptAnything` (ubi-micro, alpine and
+the flightctl test images keep pulling); `docker-daemon` stays open (thor). `registries.d/quay-jary.yaml`
+scopes `use-sigstore-attachments: true` to the `quay.io/jary` namespace so other quay pulls are not
+forced to look up attachments. The same four files are on the VM now, written by hand with
+identical content — the Fleet's first apply is a no-op there. The pre-existing distro file is kept at
+`/root/policy.json.rhel-default` on the VM.
+**Consequences:** a Fury host with a different RHEL point release could ship different default
+entries; the Fleet's copy wins — check `rpm -qf /etc/containers/policy.json` diffs on the Fury before
+enrolling.
+
+---
+
+## D043 — Desktop device VM records bags into the host's bag directory over virtiofs; bag port/prune stays a host flow
+
+**Date:** 2026-09-08
+**Context:** the C plan moves bag-watchdog semantics to `/var/lib/act-inference` on the device. The
+stand-in VM has a 60 GB disk; an episode bag is ~1.3 GB (408 bags = 644 GB on the host today), so
+the VM would fill in ~40 episodes. `assemble_all.sh` (ports curated successes into a LeRobot
+dataset, last run 2026-09-08 12:14, 450 episodes) and `prune_bags.py` (classifies bags
+proof/ported/unported/orphan; `--yes` deletes only the ported class) read bags from the host path
+`~/flywheel-data/bags`, and the curated JSON's `dataset_path` points at that host path.
+**Decision:** on the desktop the VM mounts the host's `~/flywheel-data/bags` via a libvirt virtiofs
+filesystem share at `/var/lib/act-inference/bags` (memoryBacking shared; no sudo needed for the
+domain XML edit as a libvirt-group user); the recorder inside the quadlet writes there, so
+`dataset_path` values stay valid for the host-side assembler and prune. Port-as-you-go:
+`after_assemble.sh` runs `prune_bags.py --yes` after a successful assembly instead of writing a
+dry-run file. On the Fury the host is the device with local disk; the bag directory is local and
+the same scripts run there. Operator authorization 2026-09-08: prune ported bags; keep
+proof/orphan.
+**Alternatives:** NFS from host (needs sudo to install the server); grow the VM disk (same physical
+disk, nothing gained, breaks the host-path contract); stream bags to the hub (post-ROSCon idea).
+**Consequences:** `device/vm/create-vm.sh` gains the virtiofs share; the Fleet's `.container` mounts
+`/var/lib/act-inference/bags:/data/bags`; `provision.sh`'s `/var/lib/act-inference/bags` becomes the
+mountpoint; bag-watchdog cap logic moves to the host-side prune, not the device.

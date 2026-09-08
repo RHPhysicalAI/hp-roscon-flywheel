@@ -23,6 +23,7 @@ Phase 3 closes it with governance; Phase 3+ makes the improvement autonomous.
 | 3 — Training + close the loop | **Complete** (2026-09-08) — eval harness (D020), self-improvement proof (D021: 73% → 86%, p=0.019), governed pipeline through RHOAI/RHTAS with PR #1 merged and swapped, loop closed on v2; static chart shipped | D015, D020–D022 |
 | 3+ — Bootstrap loop | Not started | `BOOTSTRAP-LOOP.md` |
 | 4 — Demo hardening + Fury prep | **In progress** — item 1 done (2026-09-08): `docs/DEMO_RUNBOOK.md`, Short Cut + Full Live, every screen verified live (D023) | D023 |
+| 4.5 — RHEM device plane | **Planned** (2026-09-08) — see Phase 4.5 below; runs before Phase 4 item 2 (the kit is recorded once, on the RHEM path) | D024–D028 |
 
 ---
 
@@ -283,6 +284,8 @@ Live elements are layered on top of that, never depended on.
    Document every x86-specific assumption. The GPU inference image (PyTorch cu130) on aarch64
    Blackwell is the highest-risk item. The eval dashboard is a plain-Python container and should
    be trivially multi-arch — or it runs on a laptop at the booth; either is acceptable.
+   Runtime images build and sign in-cluster via Tekton (OpenShift Pipelines), multi-arch, with a
+   Rekor entry per manifest (D028).
 
 4. **Fury porting checklist:**
    - Container stack builds/runs on aarch64 Blackwell
@@ -305,7 +308,7 @@ Live elements are layered on top of that, never depended on.
    answers the thor-testing gap where MLflow registry entries were hand-backfilled, never
    pipeline-emitted.
 
-5. **Stretch (only after 3–4 are green on the Fury):** a GB300-sized training run, a coding agent
+6. **Stretch (only after 3–4 are green on the Fury):** a GB300-sized training run, a coding agent
    on the box, or an NVIDIA playbook for the system — each with its own artifact for the kit if it
    happens. Not on the critical path; not in the narration unless done.
 
@@ -316,6 +319,147 @@ Live elements are layered on top of that, never depended on.
 - [ ] arm64 images build
 - [ ] Fury porting checklist written
 - [ ] Promotion record emitted to a registry for at least one promoted candidate
+
+---
+
+## Phase 4.5 — RHEM Device Plane
+
+**Goal:** the model plane runs on RHEM (flightctl 1.3) the way the product intends — hub under
+GitOps, a real managed device, Fleet-delivered runtime + ModelCar as an image volume, rollout
+policy, device health, a registry-backed promotion record, and node-side signature + Rekor
+enforcement — and the fidelity drift inventoried in D026 is repaired on the way. Decisions:
+D024 (topology), D025 (act-serving retired), D026 (drift), D027 (Catalog seam), D028 (Tekton).
+On the desktop a RHEL 10 KVM VM stands in for the device and runs ACT on CPU; the sim, camera
+bridge and host runner stay on the host GPU. On the Fury the RHEL 10.2 host *is* the device.
+
+**Sequencing (Sept 8 → Fury window Sept 20–25).** The contingency kit is recorded **once, on the
+RHEM path** (operator, 2026-09-08): no recording of the pre-RHEM version. Until Phase 4.5-D is
+green, the fallback is the Phase 3 durable artifacts already in `docs/demo-kit/`.
+
+| Days | Work | Why |
+|---|---|---|
+| 0–2 | **A** hub (incl. SNO upgrade) ∥ **B** device VM + CPU spike | Neither touches the running host `act-inference` |
+| 2–4 | **C** Fleet app; cut over host → VM | First point the loop changes |
+| 4–5 | **D** promotion rewrite; one promotion end to end | Proves Beat 5/6 on RHEM |
+| 5–7 | **F** Tekton multi-arch runtime image; **E1** Model Registry | arm64 runtime image is a Fury prerequisite; closes Phase 4 item 5 |
+| 7–9 | **E2** Catalog (stretch); runbook rewrite; **Phase 4 item 2: record the contingency kit**; rehearsal | |
+| 10–12 | Buffer; **F** ride-alongs (Argo apps, secrets, arch-derived binaries, docs) | |
+| Sept 20–25 | **G** Fury | Stand the flywheel up; everything else stretch (Phase 4 sequencing note) |
+
+OTel and AMQ Streams are post-ROSCon deferrals (D026), not part of this phase.
+
+A. **Hub: RHEM 1.3 on SNO under GitOps** (D024)
+   - Upgrade SNO 4.17 → 4.18 → 4.19 (two hops, VM snapshot first; `oc get csv -A` for RHOAI /
+     RHTAS / Pipelines / GitOps compat before starting). The chart's `kubeVersion >= 1.32` is a
+     hard prerequisite; no `helm.kubeVersion` override.
+   - `argocd/rhem-app.yaml`: Helm OCI source `quay.io/flightctl/charts`, chart `flightctl` 1.3.0,
+     ns `flightctl`, UI on a Route; Argo repo Secret with `enableOCI: "true"` documented in
+     `argocd/README.md`.
+   - `rhem/bootstrap/{repository,resourcesync}.yaml` (`path: gitops/rhem`), applied once with
+     `flightctl apply`; RBAC check with `flightctl login` — if 403, port thor D005 to
+     `gitops/rhem-config/rbac.yaml`. `/etc/hosts` entries for the new routes (D006).
+   - **Exit:** UI route serves; `flightctl get resourcesync` Synced against an empty `gitops/rhem/`;
+     a cached DSP run still works after the upgrade.
+
+B. **Desktop stand-in device: RHEL 10 VM + CPU spike** (D024)
+   - `device/provision.sh`, arch-neutral, runs on the VM and the Fury: `subscription-manager`,
+     podman ≥ 5.5, flightctl EPEL10 repo, `flightctl-agent-1.3.0*` package mode; Fury only:
+     `nvidia-container-toolkit` + `nvidia-ctk cdi generate`. Trust files come from the Fleet, not
+     the script.
+   - VM: 8 vCPU / 16 GiB / 60 GB, bridged like SNO so it reaches host zenoh `10.0.0.48:7447` and
+     the SNO NodePorts. Enroll (thor `DEPLOYMENT_GUIDE.md:160-181`) and approve with labels
+     `fleet=act-inference site=desktop gpu=none policy_device=cpu zenoh_router=10.0.0.48 zenoh_port=7447`.
+   - CPU spike (1 d, **gates C**): p95 forward latency, `ros2 topic hz` on the commanded-action
+     topic, 20-seed D020 eval vs GPU v2. Pass: p95 < 0.5 × (`n_action_steps`/50 s), no gap > 40 ms,
+     success within 10 points of 86%. Fallbacks: raise `n_action_steps` → lower RTF → VFIO last.
+     Record in `docs/eval-records/cpu-spike.md`.
+   - **Exit:** device Online in the RHEM UI with labels; spike record with numbers and a verdict.
+
+C. **Fleet-delivered application** (D024, D026)
+   - Image: `POLICY_DEVICE` env replaces the hard-coded `policy_device:=cuda`
+     (`docker/inference-entrypoint.sh`); new `docker/healthcheck.sh` checks `/flywheel/model_version`
+     equals `$MODEL_VERSION` and the action server is up (`--start-period=240s`). Built + signed by
+     Tekton (F), referenced by digest.
+   - `gitops/rhem/fleet-act-inference.yaml`: selector `fleet=act-inference`; BatchSequence
+     `[site=desktop, site=fury]`, `successThreshold: 100%`, `defaultUpdateTimeout: 30m`; inline
+     config writes `policy.json` (sigstoreSigned, `keyPath` + `rekorPublicKeyPath`),
+     `registries.d`, `cosign.pub`, `rekor.pub`, and `/etc/act-inference/env` templated from labels;
+     one quadlet app `act-inference` with the modelcar as an image volume (`reclaimPolicy: Retain`),
+     `Network=host`, GPU line templated on the `gpu` label, `HealthCmd`. Rootful for the demo.
+   - Cut-over: `docker stop act-inference` on the host; bag-watchdog semantics move to
+     `/var/lib/act-inference`.
+   - Desktop only: bags land on the host over virtiofs (D043) so `assemble_all.sh`/`prune_bags.py`
+     keep working; port-as-you-go prune after each assembly.
+   - **Exit:** `applicationsSummary: Healthy`; curator receives episodes stamped `act-v2-ft160`
+     from the VM; an unsigned tag fails to pull with a signature error; `--insecure-ignore-tlog`
+     is gone from the repo.
+
+D. **Promotion path rewrite** (D025)
+   - `open_promotion_pr` becomes a two-regex edit of the Fleet (digest + `MODEL_VERSION`); the same
+     commit bumps `COLLECTOR`/`INCUMBENT` in `gitops/flywheel/manifest-consumer.yaml`; PR body adds
+     the rollback command and the Fleet URL.
+   - Retire `gitops/act-serving/`, `argocd/act-serving-app.yaml`, `src/swap-agent/` after the first
+     RHEM promotion. Demo screens: RHEM UI rollout + device Applications tab; `flightctl get
+     fleet/device`; `flightctl console` tailing `podman logs` for `Published model_version:`.
+   - **Exit:** PR #2 merged → VM serving the new version with no human on the device; rollback
+     (`git revert`, no re-pull) rehearsed once.
+
+E. **Model Registry (E1) + Catalog (E2, stretch)** (D027)
+   - E1: `modelregistry` Managed in `gitops/operators-config/dsc.yaml`; `ModelRegistry` CR + MariaDB
+     in `gitops/operators-config/model-registry.yaml`; KFP `register_model` between sign and PR
+     carrying digest, dataset URI, eval numbers, Rekor index, PR URL. Closes Phase 4 item 5.
+   - E2: `rhem/bootstrap/catalog.yaml` + `gitops/rhem/catalogitem-soarm-act.yaml`; pipeline
+     `append_catalog_version(...)` as a removable seam; Fleet pins `catalogItemRef.version`.
+   - **Exit:** the registry shows the promoted version with digest + metrics for at least one
+     candidate; if E2 lands, the CatalogItem version graph matches the Fleet's pin.
+
+F. **Fidelity repairs, pre-Fury** (D026, D028)
+   - Tekton: `gitops/tekton/{buildah-cross-arch-task,cosign-sign-task,runtime-image-pipeline,
+     qemu-binfmt}.yaml`; `pipeline` SA on the privileged SCC (thor D009); multi-arch manifest
+     signed with `--tlog-upload=true`. Fallback: native `podman build` on the Fury.
+   - KFP hygiene: `platform.machine()`-derived crane/cosign URLs; pinned `ubi9/python-312` and
+     `ubi-micro`; `platform` as a list.
+   - GitOps completeness: commit `argocd/{flywheel,minio,observability}-app.yaml`; `prune: true`;
+     MinIO root creds out of `gitops/flywheel/hub-credentials.yaml`; `gitops/operators/README.md`
+     (RHEM + Model Registry rows, Tekton/KServe claims) and `PROJECT-BRIEF.md` "AMQ Streams" fixed.
+   - **Exit:** `tkn pipelinerun` builds both arches with a Rekor entry; `argocd app list` count
+     equals files in `argocd/`, every app Synced with `prune: true`; no `minioadmin` in git.
+
+G. **Fury port + runbook** (on site, Sept 20–25)
+   - `device/provision.sh` on aarch64 + `nvidia-ctk cdi generate`; enroll with Fury labels
+     (`site=fury gpu=nvidia arch=arm64 policy_device=cuda`); sim + camera bridge as host podman
+     containers from the arm64 images; fresh SNO 4.19+ with `argocd/*-app.yaml` +
+     `rhem/bootstrap/*` applied by hand. Device pulls from quay.io; no mirror.
+   - `docs/DEMO_RUNBOOK.md`: Beat 5 = PR + Rekor + RHEM Fleet rollout; Beat 6 = device Applications
+     tab + `flightctl console`; replace the "On GB10/GB300 Fury" table and the "Argo Degraded"
+     known-artifact line. Re-record the Beat 5/6 clips on the desktop **before travel**.
+   - **Exit:** the flywheel stands on the Fury with the host enrolled and the Fleet Healthy.
+
+### Flags to verify (first apply)
+- ~~podman ≥ 5.5 on RHEL 10.2 (image volumes)~~ **Verified 2026-09-08:** RHEL 10.2 AppStream ships podman 5.8.2 (D035)
+- quadlet `.container` referencing an app-level image volume by name — **documented** in flightctl 1.3.0 `managing-devices.md` (`Volume=my-data:/mnt/models/gpt2`); still to confirm on the VM. **New caution:** the docs describe app-level image volumes as OCI *artifacts* whose layers are copied out as files by `org.opencontainers.image.title`; our modelcar is a container image on a `ubi-micro` base. If artifact semantics mangle it, fall back to a quadlet `.volume` with `Driver=image` (loses `catalogItemRef`, keeps the digest pin) or repackage the modelcar as an artifact
+- ~~Go-template `if` inside inline config content~~ **Verified 2026-09-08 (docs):** `if`/`else`/`else if`/`with` supported, `range` not; placeholders allowed in inline config content/path, inline application content/path, env var values, and application-volume image *tag* only (we pin digests, so no templating there)
+- CatalogItem `references` in digest form — **docs say "tag or digest"** (v1alpha1, `managing-catalogs.md`); confirm on first apply (E2)
+- `torch==2.9.1+cu130` aarch64 wheels (Phase 4 open question) — unverified
+- ~~RHOAI on SNO ships the `modelregistry` component~~ **Verified 2026-09-08:** RHOAI 2.25.11 DSC lists `modelregistry` (currently `Removed`)
+- **New (B):** label values may not contain `:` (k8s `IsValidLabelValue` in flightctl 1.3.0) → labels are `zenoh_router=10.0.0.48` + `zenoh_port=7447` (D033); `flightctl-agent-1.3.0-1.el10` no longer requires greenboot (only Recommends `flightctl-greenboot`)
+
+### Exit criteria
+- [ ] `flightctl get devices` shows the desktop VM Online, labels correct, `applicationsSummary: Healthy`
+- [ ] Sim loop running against the VM: curator stamps episodes with the Fleet's `MODEL_VERSION`,
+  `episodes-curated/<mv>/` fills, `manifest-consumer` count advances
+- [ ] A DSP run on a pre-trained candidate (D023 path) opens a PR editing the Fleet (+ CatalogItem
+  if E2); Model Registry shows the version with digest + metrics; merge → ResourceSync Synced →
+  RHEM rollout completes → VM container restarts with the new `Published model_version:` → episodes
+  re-stamp
+- [ ] Negative test: an unsigned tag fails with a signature error; a tag signed *without*
+  `--tlog-upload` also fails on the VM (Rekor SET enforced)
+- [ ] Rollback: `git revert`, merge → previous version serving, no re-pull (Retain)
+- [ ] Tekton: runtime image built for both arches, Rekor entry created, `crane manifest` shows both
+  platforms, the Fleet references its digest
+- [ ] `grep -r insecure-ignore-tlog` returns nothing; `argocd app list` count equals files in
+  `argocd/`; every Argo app Synced with `prune: true`
+- [ ] Contingency kit recorded on the RHEM path (Phase 4 item 2); one full rehearsal of the Full Live cut on RHEM
 
 ---
 
@@ -332,10 +476,11 @@ Live elements are layered on top of that, never depended on.
 | `pai_data_collection` trigger interface — can it start/stop on our `episode_control` signals? | 2.5 | Resolved — it's a *contract*, not a recorder; `rosetta episode_recorder_node` records via a `RecordEpisode` action, `port_bags` → LeRobot (D018) |
 | LeRobot v2 shard layout and per-episode storage volume in MinIO | 2.5 | Resolved — hub stores the ported LeRobot dataset as one tarball (~4.5 MB/ep), not raw bags; raw bags stay on host (D019) |
 | Retain frames for rejected episodes, or metadata only? | 2.5 | Resolved — metadata only: the coordinator prunes a rollout's bag at episode end unless it reached 3/3 (curated); rejected episodes keep their JSON, not their frames (D018, prune commit) |
-| Model-plane delivery via RHEM Fleet/Catalog instead of an Argo selector flip? | 4 / post-ROSCon | Open. thor-testing used RHEM for enrollment + OS plane only (no Fleet CR or CatalogItem was ever written; model + runtime went Argo → MicroShift via ACM cluster-proxy). RHEM engineering (Assaf, 2026-09-08) has a Fleet → runtime + OCI ModelCar → edge VM flow proven and is bridging RHOAI registry metadata into the catalog. Out of ROSCon scope (single box, no fleet); candidate for the Fury phase or a follow-on. Prerequisite: item 5 above. |
-| Model deltas | 4 / post-ROSCon | Open. Modelcar is a single `crane append` layer; every promotion is a full-layer pull. Irrelevant at ACT checkpoint sizes, matters for Cosmos-class artifacts (thor-testing D029: 20.6 GB layer, ~10 min). Base-weights + adapter layering would give OCI-level dedup. |
+| Model-plane delivery via RHEM Fleet/Catalog instead of an Argo selector flip? | 4.5 | **In progress — Phase 4.5 (D024).** thor-testing used RHEM for enrollment + OS plane only (no Fleet CR or CatalogItem was ever written; model + runtime went Argo → MicroShift via ACM cluster-proxy). RHEM engineering (Assaf, 2026-09-08) has a Fleet → runtime + OCI ModelCar → edge VM flow proven and is bridging RHOAI registry metadata into the catalog (D027). Now in ROSCon scope: Beats 5/6 run on RHEM, desktop VM as the stand-in device. |
+| Model deltas | 4 / post-ROSCon | Open — post-ROSCon. Modelcar is a single `crane append` layer; every promotion is a full-layer pull. Irrelevant at ACT checkpoint sizes, matters for Cosmos-class artifacts (thor-testing D029: 20.6 GB layer, ~10 min). Base-weights + adapter layering would give OCI-level dedup. |
 | Dataset assembler: `lerobot-train` local-root vs. a synthetic `repo_id` | 2.5 | Resolved — local root via `port_bags --root`; `lerobot-train --dataset.root=<dir>` (D018) |
 | Eval-gate threshold (success-rate delta) for promotion | 3 | Resolved — paired on fixed seeds, N=100: promote iff net fixed−broken > 0 and sign-test p < 0.05 (D022) |
 | Expert grasp planning: MoveIt vs. direct IK for the SO-ARM gripper | 3+ | Open |
 | Curriculum schedule — what signal widens randomization | 3+ | Open |
 | aarch64 build of the cu130 PyTorch inference image | 4 | Open |
+| CPU ACT inference latency in the desktop device VM | 4.5 | Open — spike in B gates C (D024); fallbacks: raise `n_action_steps`, lower RTF, VFIO last |

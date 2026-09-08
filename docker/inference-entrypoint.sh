@@ -1,6 +1,7 @@
 #!/bin/bash
-# ACT inference entrypoint — runs on the desktop host with GPU.
-# Connects to the sim in SNO via zenoh.
+# ACT inference entrypoint — GPU host or CPU device VM, selected by POLICY_DEVICE.
+# Connects to the sim via zenoh.
+# This project was developed with assistance from AI tools.
 set -e
 
 source /opt/ros/"$ROS_DISTRO"/setup.bash
@@ -8,11 +9,13 @@ source /ws_pai/install/setup.bash
 
 ZENOH_ROUTER=${ZENOH_ROUTER:-"10.0.0.49:7447"}
 POLICY_PATH=${POLICY_PATH:-"francocipollone/rospai_act_sim_arm101_place_cubes_on_tray"}
+# cuda on the GPU host / Fury; cpu on the desktop device VM (D024)
+POLICY_DEVICE=${POLICY_DEVICE:-cuda}
 
-echo "[inference] Starting ACT policy inference (GPU)"
+echo "[inference] Starting ACT policy inference"
 echo "[inference] Zenoh router: $ZENOH_ROUTER"
 echo "[inference] Policy: $POLICY_PATH"
-echo "[inference] Device: cuda"
+echo "[inference] Device: $POLICY_DEVICE"
 
 # Configure zenoh to connect to the remote router (sim pod in SNO)
 # Create a zenoh session config that connects as a client to the remote router
@@ -58,12 +61,12 @@ print(f'[inference] Stripped contract written to $CONTRACT')
 "
 
 # Start Rosetta policy runner (includes action server + policy server)
-echo "[inference] Launching Rosetta client with ACT on GPU..."
+echo "[inference] Launching Rosetta client with ACT on ${POLICY_DEVICE}..."
 ros2 launch rosetta rosetta_client_launch.py \
   contract_path:=${CONTRACT} \
   pretrained_name_or_path:=${POLICY_PATH} \
   policy_type:=act \
-  policy_device:=cuda \
+  policy_device:=${POLICY_DEVICE} \
   &
 ROSETTA_PID=$!
 

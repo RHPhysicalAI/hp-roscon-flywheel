@@ -1,0 +1,16 @@
+# This project was developed with assistance from AI tools.
+#
+# Bootstrap once: flightctl apply -f rhem/bootstrap/resourcesync.yaml
+#
+# Renders every *.yaml in gitops/rhem/ (Fleets; type=fleet is the default) from the branch
+# below. Field names per the flightctl 1.3 core OpenAPI (ResourceSyncSpec: repository,
+# targetRevision, path). Non-YAML files in the directory (README.md) are skipped by the sync.
+apiVersion: flightctl.io/v1beta1
+kind: ResourceSync
+metadata:
+  name: rhem-fleets
+spec:
+  type: fleet
+  repository: hp-roscon-flywheel
+  targetRevision: desktop-gpu-split
+  path: gitops/rhem

@@ -74,10 +74,6 @@ RUN find /ws_pai -type d -name ".git" -exec rm -rf {} + 2>/dev/null || true
 # ---- Runtime ----
 ENV RMW_IMPLEMENTATION=rmw_zenoh_cpp
 
-# Patch Rosetta default device to cuda
-RUN sed -i 's/policy_device: "cuda"/policy_device: "cuda"/' \
-    /ws_pai/install/rosetta/share/rosetta/params/rosetta_client.yaml 2>/dev/null || true
-
 COPY src/sim-reset/sim_reset.py /ws_pai/sim_reset.py
 COPY src/inference-coordinator/coordinator.py /ws_pai/coordinator.py
 # coordinator's early-stop imports task_eval to confirm the task is complete
@@ -87,6 +83,11 @@ COPY src/dataset-assembler/assemble_dataset.py /ws_pai/assemble_dataset.py
 # operator tool: live cameras + joint readout, one-click rest-pose snapshot (D021 recovery)
 COPY src/pose-ui/pose_ui.py /ws_pai/pose_ui.py
 COPY docker/inference-entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY docker/healthcheck.sh /healthcheck.sh
+RUN chmod +x /entrypoint.sh /healthcheck.sh
+
+# Healthy = coordinator latched $MODEL_VERSION and the policy action server is up (Phase 4.5 C).
+# start-period covers sim discovery + rosetta launch + recorder (~60-90 s) with headroom for a CPU device.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=240s --retries=3 CMD ["/healthcheck.sh"]
 
 ENTRYPOINT ["/entrypoint.sh"]
