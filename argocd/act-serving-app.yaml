@@ -1,0 +1,19 @@
+# Bootstrap once: oc apply -f argocd/act-serving-app.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: act-serving
+  namespace: openshift-gitops
+spec:
+  destination:
+    namespace: flywheel
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    path: gitops/act-serving
+    repoURL: https://github.com/RHPhysicalAI/hp-roscon-flywheel.git
+    targetRevision: desktop-gpu-split
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true

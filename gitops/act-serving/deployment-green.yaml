@@ -1,0 +1,56 @@
+# GREEN — the candidate/promoted policy. See README for the promotion contract.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: act-policy-green
+  namespace: flywheel
+  labels:
+    app: act-policy
+    color: green
+spec:
+  replicas: 0            # desktop: 0 (host shim). target: 1 when green is live.
+  revisionHistoryLimit: 0
+  strategy:
+    type: Recreate       # one GPU — never RollingUpdate
+  selector:
+    matchLabels:
+      app: act-policy
+      color: green
+  template:
+    metadata:
+      labels:
+        app: act-policy
+        color: green
+    spec:
+      initContainers:
+        - name: modelcar
+          # Signed ACT modelcar, pinned BY DIGEST. The pipeline's promotion PR rewrites this line.
+          image: quay.io/jary/soarm-act-modelcar@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          command: ["sh", "-c", "cp -a /models/. /mnt/models/"]
+          volumeMounts:
+            - name: models
+              mountPath: /mnt/models
+      containers:
+        - name: policy
+          image: quay.io/jary/soarm-flywheel:act-inference   # multi-arch runtime image (Phase 4)
+          env:
+            - name: POLICY_PATH
+              value: /models/act
+            - name: MODEL_VERSION
+              value: upstream-act-teacher
+            - name: RMW_IMPLEMENTATION
+              value: rmw_zenoh_cpp
+            - name: ZENOH_ROUTER
+              value: so-arm-sim.flywheel.svc:7447
+          ports:
+            - name: policy-server
+              containerPort: 8080     # rosetta policy server port — verify against the image
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: models
+          emptyDir: {}
