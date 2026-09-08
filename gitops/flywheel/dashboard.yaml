@@ -1003,7 +1003,7 @@ data:
           <div id="prog-bar-wrap">
             <div id="prog-track"><div id="prog-fill" style="width:0%"></div></div>
             <div id="prog-label">
-              <span id="prog-text">0 / 10 curated episodes sent to hub</span>
+              <span id="prog-text">0 / 160 curated episodes sent to hub</span>
               <span id="prog-state" style="color:var(--txt3)">idle</span>
             </div>
           </div>
@@ -1735,7 +1735,7 @@ spec:
             - name: VLLM_NS
               value: "flywheel"
             - name: TRIGGER_THRESHOLD
-              value: "10"
+              value: "160"   # matches manifest-consumer (D022/D023); was thor-testing's 10
             - name: FRAMES_DIR
               value: "/data/frames"
             - name: HTML_FILE
