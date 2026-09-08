@@ -1,0 +1,9 @@
+# DSP run 6 (act-flywheel-promotion) - the governed promotion of act-v2-ft160, 2026-09-08 (UTC)
+promote-act-v2-ft160-1001 SUCCEEDED 2026-09-08 15:01:02+00:00 -> 2026-09-08 15:04:00+00:00
+params: {'candidate': 'act-v2-ft160', 'collector': 'upstream-act-teacher', 'eval_n': 100, 'eval_seed_base': 1000, 'incumbent': 'upstream-act-teacher', 'incumbent_checkpoint': 'hf', 'timeout_min': 240}
+  act-flywheel-promotion-tzzx4 SUCCEEDED  15:01:02 -> 15:04:00
+  trigger-and-wait       SUCCEEDED  15:01:22 -> 15:01:46
+  eval-gate              SUCCEEDED  15:01:56 -> 15:02:06
+  package-modelcar       SUCCEEDED  15:02:16 -> 15:02:52
+  sign-modelcar          SUCCEEDED  15:03:02 -> 15:03:24
+  open-promotion-pr      SUCCEEDED  15:03:34 -> 15:04:00

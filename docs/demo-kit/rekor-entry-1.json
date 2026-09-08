@@ -1,0 +1,20 @@
+{
+    [1m"06f19aeda42b56bd35cdfccb6e45cea57d44cc310b9850f89b13bbe5ee3eb3bc4467751ce3a959bb"[0m: {
+        [1m"body"[0m: [32m"eyJhcGlWZXJzaW9uIjoiMC4wLjEiLCJraW5kIjoiaGFzaGVkcmVrb3JkIiwic3BlYyI6eyJkYXRhIjp7Imhhc2giOnsiYWxnb3JpdGhtIjoic2hhMjU2IiwidmFsdWUiOiJkNDA0NjEyZDE0Y2JmN2M0YmRkNzFkMTYyYjFjOWMyYTEwOTgxYTQ4NTg4MGVjMjRjODhjOGE0NmNkMjdkODRiIn19LCJzaWduYXR1cmUiOnsiY29udGVudCI6Ik1FUUNJQ05qbWJmUE5YZUJsUVBVUUFuWG44QTF4V0I5MTE1cGh0M056RTFYVzRJcUFpQmMzZDV2Sm1odG5YMm12ZUEzbkVTUXJnZjBwMldyVVBMTGptM1ZvSytpZmc9PSIsInB1YmxpY0tleSI6eyJjb250ZW50IjoiTFMwdExTMUNSVWRKVGlCUVZVSk1TVU1nUzBWWkxTMHRMUzBLVFVacmQwVjNXVWhMYjFwSmVtb3dRMEZSV1VsTGIxcEplbW93UkVGUlkwUlJaMEZGT1VWSGFsaG5TVk5wZVRad1VUUTBRelkxWm5wbFZGbElkV0UxYXdveU0wcHVhVFZsV205UFVqQTJLMDAwUTJaWFNtODFTbTFHYjFZeWRtWTJUM3BwYmtab2JHTjNjMUJNUmxWSGJVcERaSFF6YUdOMU5EVkJQVDBLTFMwdExTMUZUa1FnVUZWQ1RFbERJRXRGV1MwdExTMHRDZz09In19fX0="[0m,
+        [1m"integratedTime"[0m: [33m1788879790[0m,
+        [1m"logID"[0m: [32m"37f4fa09cc7f385b6413536733d6da9f9aefd7159dd4f8634f4564d619c1a33f"[0m,
+        [1m"logIndex"[0m: [33m1[0m,
+        [1m"verification"[0m: {
+            [1m"inclusionProof"[0m: {
+                [1m"checkpoint"[0m: [32m"rekor-server-5fd646f6b-nxgv4 - 500351379067066045\n2\nYE86gNjMEbAt4oOXC97OLsK/Ilk6OwuqCIAQx4u5OCg=\n\n\u2014 rekor-server-5fd646f6b-nxgv4 N/T6CTBFAiEAlaMYVFVdZIH3d87CzmhrJMkByaDblurIZ+OKVpBXLmICIEGqgIjy8ayi5Etm6WRZ2h5o15X++GHEbRUumvV+Q1SJ\n"[0m,
+                [1m"hashes"[0m: [
+                    [32m"1f99d9e8182455bd21a868f314bafeb773f7bc76a29562d002dbfa32cb2c61fe"[0m
+                ],
+                [1m"logIndex"[0m: [33m1[0m,
+                [1m"rootHash"[0m: [32m"604f3a80d8cc11b02de283970bdece2ec2bf22593a3b0baa088010c78bb93828"[0m,
+                [1m"treeSize"[0m: [33m2[0m
+            },
+            [1m"signedEntryTimestamp"[0m: [32m"MEQCIHIpUhFDcE1Oknb8Ml2zpugEuBy/vd3g0VQfO7VmyP6eAiA/K/2rTuoJKMv3UgTHUBdnWrPwrYn+IfIoIy3kaWa9yQ=="[0m
+        }
+    }
+}

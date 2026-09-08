@@ -1,0 +1,6 @@
+09-08 10:01 [runner] trigger: {'run_id': '07aaf328-1376-4146-bd4d-8b2a558936db', 'candidate': 'act-v2-ft160', 'incumbent': 'upstream-act-teacher', 'collector': 'upstream-act-teacher', 'incumbent_checkpoint': 'hf', 'steps_per_frame': 0.25, 'eval_n': 100, 'eval_seed_base': 1000}
+09-08 10:01 [runner] checkpoint for act-v2-ft160 exists — skipping assemble/train
+09-08 10:01 [runner] eval eval-act-v2-ft160: reusing existing record
+09-08 10:01 [runner] eval eval-upstream-act-teacher: reusing existing record
+09-08 10:01 [runner] loop was parked before the eval — leaving it parked
+09-08 10:01 [runner] run 07aaf328-1376-4146-bd4d-8b2a558936db: PASS — upstream-act-teacher 0.73 -> act-v2-ft160 0.86, fixed 20 broken 7 p=0.0192

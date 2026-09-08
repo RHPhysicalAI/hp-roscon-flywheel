@@ -241,6 +241,14 @@ belong here; retraining on the policy's own successes is not one of them (D015).
 
 **Goal:** demo-ready on the desktop; arm64 images build; Fury porting checklist ready.
 
+**Sequencing on the Fury (operator, 2026-09-08).** When the box arrives the first and only committed
+job is to **stand the flywheel up on it** (items 3–4). Anything further — a training run sized for
+the GB300, a coding agent on the box, NVIDIA's playbooks for the system — is **stretch, time
+permitting**, and none of it is promised for the booth. Nothing live is guaranteed at the venue:
+the demo must be able to run entirely from **contingency recordings and durable artifacts** that
+convey the narrative and the results (`docs/DEMO_RUNBOOK.md` § *Contingency kit*, `docs/demo-kit/`).
+Live elements are layered on top of that, never depended on.
+
 1. **Adapt the demo runbook** ✅ — `docs/DEMO_RUNBOOK.md` (2026-09-08, D023). Re-skin the 6-beat narrative for SO-ARM:
    - Beat 1: "Here's the sim — SO-ARM placing cubes, running a trained policy"
    - Beat 2: "The curator is watching — this is the curation stream"
@@ -265,8 +273,11 @@ belong here; retraining on the policy's own successes is not one of them (D015).
    and the N=100 gate take ~2 h — D023); reset-to-v1 procedure included. The end-to-end Full Live
    cycle is marked *not rehearsed* and belongs to item 2's recording session.
 
-2. **Record a fallback run** — clean end-to-end captured on the desktop for venue-link /
-   Fury-slip insurance. Non-negotiable.
+2. **Record the contingency kit** — the plan of record, not insurance: the full Short Cut screen
+   recording on the desktop plus the per-beat clips and screenshots listed in the runbook's
+   *Contingency kit* table (text artifacts already in `docs/demo-kit/`). Copies on the presenting
+   laptop and a USB stick. Non-negotiable. The Full Live cycle (reset → run → merge → swap) gets
+   its one rehearsal in this session and stays conditional (D023).
 
 3. **Multi-arch image prep:** every custom image builds for `linux/amd64` and `linux/arm64`.
    Document every x86-specific assumption. The GPU inference image (PyTorch cu130) on aarch64
@@ -279,12 +290,32 @@ belong here; retraining on the policy's own successes is not one of them (D015).
    - SO-ARM sim + camera stream on aarch64
    - ACT policy serves on aarch64
    - All x86 assumptions resolved
+   - Node-side signature enforcement applied, not just documented: `policy.json` `sigstoreSigned`
+     + `registries.d` `use-sigstore-attachments: true` (thor-testing D015/D018; today only
+     described in `gitops/act-serving/README.md`)
+
+5. **Structured promotion record.** Today the join across model version, modelcar digest,
+   dataset URI, eval report, and Rekor index exists only in the PR body and git history
+   (`open_promotion_pr` in `pipeline/act_flywheel_pipeline.py`; `eval_report.json` carries no
+   digest or dataset URI). Add a pipeline step that writes one record per candidate binding all
+   five, into Kubeflow Model Registry on RHOAI (add the `modelregistry` component to
+   `gitops/operators-config/dsc.yaml`). The PR body stays as the human-readable view.
+   Motivation: RHEM engineering is building an RHOAI-registry → RHEM-catalog bridge so Fleet
+   rollout policies can carry promoted models; a registry record is the handoff point. Also
+   answers the thor-testing gap where MLflow registry entries were hand-backfilled, never
+   pipeline-emitted.
+
+5. **Stretch (only after 3–4 are green on the Fury):** a GB300-sized training run, a coding agent
+   on the box, or an NVIDIA playbook for the system — each with its own artifact for the kit if it
+   happens. Not on the critical path; not in the narration unless done.
 
 ### Exit criteria
+- [ ] Demo runs from the contingency kit alone (recording + artifacts), no cluster or link needed
 - [ ] Demo-ready on desktop with runbook — *runbook done (D023); "demo-ready" waits on one full rehearsal of the Full Live cut (item 2)*
-- [ ] Fallback recording captured
+- [ ] Contingency kit recorded (Short Cut recording + per-beat clips/screenshots)
 - [ ] arm64 images build
 - [ ] Fury porting checklist written
+- [ ] Promotion record emitted to a registry for at least one promoted candidate
 
 ---
 
@@ -301,6 +332,8 @@ belong here; retraining on the policy's own successes is not one of them (D015).
 | `pai_data_collection` trigger interface — can it start/stop on our `episode_control` signals? | 2.5 | Resolved — it's a *contract*, not a recorder; `rosetta episode_recorder_node` records via a `RecordEpisode` action, `port_bags` → LeRobot (D018) |
 | LeRobot v2 shard layout and per-episode storage volume in MinIO | 2.5 | Resolved — hub stores the ported LeRobot dataset as one tarball (~4.5 MB/ep), not raw bags; raw bags stay on host (D019) |
 | Retain frames for rejected episodes, or metadata only? | 2.5 | Resolved — metadata only: the coordinator prunes a rollout's bag at episode end unless it reached 3/3 (curated); rejected episodes keep their JSON, not their frames (D018, prune commit) |
+| Model-plane delivery via RHEM Fleet/Catalog instead of an Argo selector flip? | 4 / post-ROSCon | Open. thor-testing used RHEM for enrollment + OS plane only (no Fleet CR or CatalogItem was ever written; model + runtime went Argo → MicroShift via ACM cluster-proxy). RHEM engineering (Assaf, 2026-09-08) has a Fleet → runtime + OCI ModelCar → edge VM flow proven and is bridging RHOAI registry metadata into the catalog. Out of ROSCon scope (single box, no fleet); candidate for the Fury phase or a follow-on. Prerequisite: item 5 above. |
+| Model deltas | 4 / post-ROSCon | Open. Modelcar is a single `crane append` layer; every promotion is a full-layer pull. Irrelevant at ACT checkpoint sizes, matters for Cosmos-class artifacts (thor-testing D029: 20.6 GB layer, ~10 min). Base-weights + adapter layering would give OCI-level dedup. |
 | Dataset assembler: `lerobot-train` local-root vs. a synthetic `repo_id` | 2.5 | Resolved — local root via `port_bags --root`; `lerobot-train --dataset.root=<dir>` (D018) |
 | Eval-gate threshold (success-rate delta) for promotion | 3 | Resolved — paired on fixed seeds, N=100: promote iff net fixed−broken > 0 and sign-test p < 0.05 (D022) |
 | Expert grasp planning: MoveIt vs. direct IK for the SO-ARM gripper | 3+ | Open |

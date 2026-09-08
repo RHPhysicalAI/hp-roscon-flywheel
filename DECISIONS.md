@@ -1156,3 +1156,11 @@ happened on stage. Rejected: (a) train live — 25 min of nothing to watch, then
 - Not executed in this session (documented as **[not rehearsed]**): the reset-to-v1 →
   live-run → merge → swap cycle end to end, and the sim-container restart. Both belong to the
   fallback-recording rehearsal (Phase 4 item 2).
+
+> **Revised the same day (operator).** Nothing live is promised at the booth. Once the Fury
+> arrives the committed work is standing the flywheel up on it; a GB300 training run, a coding
+> agent or NVIDIA playbooks are stretch only. The **Short Cut backed by contingency recordings and
+> durable artifacts is the plan of record**; the Full Live is conditional on the flywheel standing
+> on the presenting box and a same-day rehearsal there. `docs/demo-kit/` holds the text artifacts
+> that back each beat (run 6 logs and task states, PR #1, Rekor entry 1); the recordings and
+> screenshots are Phase 4 item 2, now framed as the kit rather than as insurance.

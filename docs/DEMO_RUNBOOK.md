@@ -4,14 +4,23 @@
 > command below was run against the live desktop system on 2026-09-08 unless marked
 > **[not rehearsed]**. The narration claims only what D020–D022 record. Phase 4 item 1.
 
-Two ways to run this:
+## Plan of record (operator, 2026-09-08)
 
-- **Short Cut (~4–5 min)** — the pinned governed run (run 6, PR #1) and the pre-loaded v1 vs v2
-  comparison. Nothing is started; you walk through what the loop already produced while it keeps
-  running in the background. Use this for stakeholder walkthroughs. **Start here.**
-- **Full Live (~10–12 min)** — the sim and curation live, then a **live pipeline run** that gates,
-  packages, signs and opens a promotion PR, which you merge on stage, and the swap lands live.
-  The candidate is pre-trained and pre-evaluated (D023) — see *The one honest shortcut*.
+**Nothing live is promised at the booth.** When the Fury arrives the first job is standing the
+flywheel up on it; anything beyond that (a training run on the GB300, a coding agent, NVIDIA's
+playbooks for the box) is stretch, time permitting. So the demo must stand on **contingency
+recordings and durable artifacts** that convey the narrative and the results with no cluster, no
+sim and no network — and every live element is a bonus layered on top, never a dependency.
+
+- **Short Cut (~4–5 min) — the plan of record.** The pinned governed run (run 6, PR #1) and the
+  pre-loaded v1 vs v2 comparison. Nothing is started; you walk through what the loop already
+  produced. Every screen in it has a recorded/artifact stand-in (§ *Contingency kit*), so the
+  same cut plays from the kit alone if the desktop, the Fury or the venue link is down.
+- **Full Live (~10–12 min) — conditional.** Run it only if the flywheel is standing on the box you
+  present from **and** the whole cycle has been rehearsed there that day. It is the sim and curation
+  live, then a **live pipeline run** that gates, packages, signs and opens a promotion PR, which you
+  merge on stage, and the swap lands live. The candidate is pre-trained and pre-evaluated (D023) —
+  see *The one honest shortcut*. If any precondition is missing, present the Short Cut and say so.
 
 ---
 
@@ -66,6 +75,32 @@ the host, training/eval run on the host (**host runner**), and the blue/green fl
 host container by a **swap agent**. Those two are marked `[desktop shim]` and are deleted by the
 Fury port; the pipeline, gate, packaging, signing, PR and `gitops/act-serving/` are written for
 GB10/GB300 where the GPU is in-cluster. Per-beat differences are in § *On GB10 / GB300 Fury*.
+
+**What to say about the Fury if asked:** the results shown were produced on the desktop stand-in;
+the Fury work is, in order, (1) stand the same flywheel up on the GB300, (2) if time allows, use the
+box for what the desktop can't — a larger training run, a coding agent, NVIDIA's playbooks for the
+system. Don't promise (2) on stage; if it happened, it has its own artifact in the kit.
+
+---
+
+## Contingency kit — what backs each beat when nothing is live
+
+The kit lives in `docs/demo-kit/` (text artifacts committed; recordings and screenshots to be added
+by Phase 4 item 2) plus the repo files listed. **Rule:** if a beat's live screen is not up 10 minutes
+before you start, present its kit item and do not try to fix it on stage.
+
+| beat | live screen | kit item (exists) | to capture (item 2) |
+|---|---|---|---|
+| 1 | camera stream | — | 30–60 s clip of the arm placing cubes (v2), overhead + wrist |
+| 2 | dashboard | `docs/data-contract-eval-dashboard.md` (what the stream contains) | 60 s screen recording of the dashboard with pass/reject rows landing; MinIO console screenshot of `episodes-curated/act-v2-ft160/` |
+| 3 | runner / poller logs, KFP task list | `docs/demo-kit/run6-task-states.txt`, `docs/demo-kit/run6-host-runner.log`, `docs/demo-kit/run6-pipeline-run.log` | screenshot of the terminal; a live run recording if the Full Live is ever rehearsed |
+| 4 | static chart | `docs/phase3-ladder.html`, `docs/eval-records/phase3-ladder/`, `src/eval-report/ladder_report.py`, published chart https://claude.ai/code/artifact/84a1ec60-403d-4a34-ba3f-a0cbb69e5e71 | PNG export of the chart for slides |
+| 5 | PR #1, Rekor UI, Argo | `docs/demo-kit/pr1.md` (title, body, files), `docs/demo-kit/rekor-entry-1.json`, `gitops/act-serving/` (the merged flip) | screenshots of PR #1 *Files changed*, the Rekor UI entry, Argo `act-serving` |
+| 6 | swap-agent log, badge | `docs/demo-kit/run6-swap-agent.log`, `gitops/act-serving/README.md` | screenshot of the badge flipping; clip of v2's first episode |
+| all | — | HP status brief https://claude.ai/code/artifact/5359ed44-5028-4ba5-b7bf-d13914e4d0cc; private HF copies of datasets and checkpoints (`jeremyary/soarm-*`) | **the full Short Cut screen recording** (non-negotiable, Phase 4 item 2) |
+
+Keep the recording and the screenshots on the presenting laptop **and** on a USB stick; the venue
+network is not part of the plan.
 
 ---
 
@@ -310,7 +345,12 @@ Stop recording.
 
 ---
 
-## Full Live — live pipeline on a pre-trained candidate (~10–12 min)
+## Full Live — live pipeline on a pre-trained candidate (~10–12 min) — *conditional*
+
+**Preconditions, all required:** the flywheel is standing on the box you present from (desktop
+today; the Fury only once its port is done); the reset → run → merge → swap cycle below was
+rehearsed on that box the same day; the contingency kit is open in a second window. Otherwise
+present the Short Cut. Nothing in the booth plan depends on this cut.
 
 **What is live:** the sim and curation; the pipeline run (trigger → gate → package → sign → PR),
 which produces a **new Rekor entry** and a **new PR number**; your merge; Argo's sync; the swap
@@ -514,4 +554,4 @@ components and need the arm64 equivalents.
 | Swap agent `REFUSING: signature verification failed` | the digest in `deployment-*.yaml` isn't the one the pipeline signed — check the PR diff; never edit the digest by hand |
 | Argo `act-serving` OutOfSync after a manual `oc apply` | selfHeal reverts it (gotcha 9): commit to the branch, hard-refresh |
 | Rekor UI shows nothing | browser can't resolve `rekor-server-…` → hosts entry; API URL in the cheat-sheet as fallback |
-| Catastrophic | switch to the fallback recording (Phase 4 item 2 — **not yet captured**; until it exists, the Short Cut on the pinned run is the fallback for the Full Live) |
+| Catastrophic (no desktop, no Fury, no link) | present from the **contingency kit** (§ above): the Short Cut screen recording plus the per-beat artifacts in `docs/demo-kit/`. Until the recording exists (Phase 4 item 2), the text artifacts, the chart and PR #1 carry the results |
