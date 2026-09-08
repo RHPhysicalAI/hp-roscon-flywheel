@@ -178,12 +178,24 @@ def upload_json(obj: dict, key: str) -> str:
     return f"s3://{BUCKET}/{key}"
 
 
+_LOOP_WAS_RUNNING = False
+
+
 def loop_park():
-    subprocess.run(["docker", "stop", "act-inference"], capture_output=True)
+    """Stop the collection loop for the eval (it and the eval both drive /run_policy). Remembers
+    whether it was running so restore doesn't start a loop the operator had parked (e.g. for disk)."""
+    global _LOOP_WAS_RUNNING
+    r = subprocess.run(["docker", "ps", "-q", "-f", "name=^act-inference$"], capture_output=True, text=True)
+    _LOOP_WAS_RUNNING = bool(r.stdout.strip())
+    if _LOOP_WAS_RUNNING:
+        subprocess.run(["docker", "stop", "act-inference"], capture_output=True)
 
 
 def loop_restore():
-    subprocess.run(["docker", "start", "act-inference"], capture_output=True)
+    if _LOOP_WAS_RUNNING:
+        subprocess.run(["docker", "start", "act-inference"], capture_output=True)
+    else:
+        log("loop was parked before the eval — leaving it parked")
 
 
 # ---------------------------------------------------------------- run
