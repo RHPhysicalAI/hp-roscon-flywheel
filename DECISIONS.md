@@ -1097,3 +1097,10 @@ definition, gate, packaging, signing, PR, and gitops manifests are written once,
   `nvidia.com/gpu`) schedules. Rollback is the same three edits reversed; the other side keeps the
   previous digest. (Fixed 2026-09-08: the first version always wrote green, which would have
   overwritten the live side in place on the second promotion.)
+- **Artifacts on Hugging Face (private, `jeremyary/`, 2026-09-08)** — LeRobot-native, so they load the
+  same way the upstream ones do (`LeRobotDataset("jeremyary/…")`, `--policy.path=jeremyary/…`),
+  and the only copies that don't share the desktop's single disk: datasets
+  `soarm-flywheel-teacher-all-2026-09-08` (450 eps) and `soarm-flywheel-ladder-160` (the proof corpus,
+  with `rung_plan.json`); models `soarm-act-v2-ft160` (the promoted v2), `soarm-act-ft-ladder-{20,40,80}ep`
+  and `soarm-act-teacher-ft40-round1` (the ladder evidence). Raw bags stay on the host (355 GB, D019).
+  Phase 4 idea: the package step pushes each *promoted* checkpoint to HF as part of promotion.
