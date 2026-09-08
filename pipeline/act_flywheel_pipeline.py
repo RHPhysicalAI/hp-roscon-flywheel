@@ -86,10 +86,15 @@ def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, pl
     with tarfile.open("/tmp/layer.tar", "w") as t: t.add("/tmp/layer/models", arcname="models")
     url = f"https://github.com/google/go-containerregistry/releases/download/{crane_version}/go-containerregistry_Linux_x86_64.tar.gz"
     urllib.request.urlretrieve(url, "/tmp/crane.tgz"); subprocess.run(["tar", "-xzf", "/tmp/crane.tgz", "-C", "/tmp", "crane"], check=True)
-    os.environ["DOCKER_CONFIG"] = "/etc/quay"   # secret mounted as /etc/quay/config.json
-    out = subprocess.run(["/tmp/crane", "append", "--platform", platform, "-b", "registry.access.redhat.com/ubi9/ubi-micro:latest",
-                          "-f", "/tmp/layer.tar", "-t", f"{registry_repo}:{candidate}"], check=True, capture_output=True, text=True).stdout
-    ref = out.strip().splitlines()[-1]; print("pushed", ref); return ref
+    # quay-push is a kubernetes.io/dockerconfigjson Secret: the mounted file is .dockerconfigjson,
+    # while crane/cosign look for $DOCKER_CONFIG/config.json.
+    import shutil; os.makedirs("/tmp/docker", exist_ok=True)
+    shutil.copy("/etc/quay/.dockerconfigjson", "/tmp/docker/config.json"); os.environ["DOCKER_CONFIG"] = "/tmp/docker"
+    r = subprocess.run(["/tmp/crane", "append", "--platform", platform, "-b", "registry.access.redhat.com/ubi9/ubi-micro:latest",
+                        "-f", "/tmp/layer.tar", "-t", f"{registry_repo}:{candidate}"], capture_output=True, text=True)
+    if r.returncode != 0:
+        print("crane append failed:", r.stderr[-1500:]); raise SystemExit(1)
+    ref = r.stdout.strip().splitlines()[-1]; print("pushed", ref); return ref
 
 
 @dsl.component(base_image=PY_IMG)
@@ -97,7 +102,9 @@ def sign_modelcar(image_ref: str, rekor_url: str, cosign_version: str) -> str:
     """cosign v2.x sign by digest; Rekor transparency log when rekor_url is set (RHTAS)."""
     import os, subprocess, urllib.request
     urllib.request.urlretrieve(f"https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-amd64", "/tmp/cosign")
-    os.chmod("/tmp/cosign", 0o755); os.environ["DOCKER_CONFIG"] = "/etc/quay"; os.environ["COSIGN_PASSWORD"] = ""
+    os.chmod("/tmp/cosign", 0o755); os.environ["COSIGN_PASSWORD"] = ""
+    import shutil; os.makedirs("/tmp/docker", exist_ok=True)
+    shutil.copy("/etc/quay/.dockerconfigjson", "/tmp/docker/config.json"); os.environ["DOCKER_CONFIG"] = "/tmp/docker"
     cmd = ["/tmp/cosign", "sign", "--key", "/etc/cosign/cosign.key", "-y", image_ref]
     cmd += ["--rekor-url", rekor_url, "--tlog-upload=true"] if rekor_url else ["--tlog-upload=false"]
     subprocess.run(cmd, check=True); print("signed", image_ref); return image_ref
