@@ -176,6 +176,9 @@ it reads as distillation ("the good policy trained a worse copy of itself"), not
 4. **KFP training pipeline** (shape from thor-testing, code new): assemble dataset → `lerobot-train`
    → eval-gate on success-rate improvement vs. the incumbent → package as a KServe modelcar with
    `crane append` → cosign-sign (v2.4.1, RHTAS) → open a promotion PR.
+   **Design decided in D022** (2026-09-08): RHOAI DSP/KFP runtime, RHTAS signing, paired N=100
+   eval gate (net > 0, p < 0.05), trigger at 160 new curated successes; built for the in-cluster-GPU
+   target with the desktop's host-GPU pieces as marked shims.
 
 5. **Blue/green hot-swap** of the served ACT policy, mirroring the `vllm-cosmos3` service-selector
    flip. GPU deployments use `Recreate`, never `RollingUpdate`.

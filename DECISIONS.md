@@ -920,3 +920,103 @@ this to Fury-prep — it just arrived early).
 - **Eval:** identical D020 harness for every rung (N=50, seeds 1000–1049); loop parked once for the
   batch of four. If rung deltas sit inside N=50 noise, bump to N=100 for the top and bottom rungs.
 
+
+---
+
+## D022 — The governed promotion pipeline: build for the target (GB10/GB300), shim the desktop
+
+**Date:** 2026-09-08
+**Context:** Phase 3 steps 4–5 (BUILD-PLAN). The v1→v2 improvement is proven (D021); what remains
+is the governance that carries a candidate from curated data to a running policy: assemble →
+train → eval-gate → package → sign → promotion PR → blue/green swap. thor-testing supplies the
+shape (surveyed: `tekton/`, `pipeline/cosmos3_finetune_pipeline.py`, `gitops/vllm-cosmos3/`,
+`hub-training/manifest-consumer`). Two facts from that survey drive this design: its Gate 1 was
+a **training-loss floor** (not task success), and its one real outage was a **partial blue/green
+flip** (two of three files edited — commit 5e3e87a made the flip atomic). The operator's steer:
+the deliverable lands on GB10 (proof) and GB300 Fury (demo), where the GPU is *inside* the
+cluster — the desktop's host-GPU split (D013) is a stand-in, not the architecture.
+
+## Design principle: build for the target, shim the desktop
+
+The deliverable lands on **GB10 (proof) and GB300 Fury (demo)** — single boxes with the GPU
+**inside the cluster**. On those, thor-testing's pipeline shape transfers almost directly:
+in-cluster training job → eval gate → `crane append` modelcar → `cosign sign` (RHTAS Rekor) →
+promotion PR that flips blue/green → human merge → Argo sync → `Recreate` rollout on the one GPU.
+
+The desktop is the stand-in where the GPU is *outside* the cluster (D013). Everything
+desktop-specific below is marked **[desktop shim]** and is deleted by the Fury port. The pipeline
+definition, gate, packaging, signing, PR, and gitops manifests are written once, for the target.
+
+## Stages (one pipeline, KFP v2 on RHOAI Data Science Pipelines — see fork 1)
+
+| # | stage | target (GB10/GB300) | [desktop shim] | contract out |
+|---|---|---|---|---|
+| 0 | **trigger** | `manifest-consumer` (thor-testing shape) on `episode-manifests`; fires when ≥ `TRIGGER_THRESHOLD` new curated successes since the last promoted version | same (runs in SNO already-compatible) | pipeline run with `model_version`, `incumbent` |
+| 1 | **assemble** | `assemble_dataset.py --from-minio --model-version <collector>` inside the pipeline pod; pushes tarball + manifest (already built, Phase 2.5) | same, but bags are on the host → run the assembler on the host, push to MinIO; the pipeline pod *pulls the tarball* | `episodes-data/<mv>/<repo_id>.tar.gz` + Kafka manifest |
+| 2 | **train** | KFP component, `nvidia.com/gpu: 1`, `lerobot-train --policy.path=<incumbent checkpoint> --dataset.root=<pulled tarball>`; steps = 0.25 × frames (D021 recipe); emits `training_meta.json` | **host runner** (`~/ft_chain.sh` lineage) trains on the RTX 5090 and uploads the checkpoint dir to MinIO `checkpoints/<mv>/`; the pipeline's train component becomes "wait for + pull checkpoint" | checkpoint dir (~200 MB) + `training_meta.json` |
+| 3 | **eval gate** | KFP component drives the D020 harness against the sim **in-cluster** (sim + policy both in-cluster on the target): candidate and incumbent, same seeds, N=100; writes `eval_report.json`; **`sys.exit(1)` on fail** (thor's hard-stop pattern — downstream never runs) | harness runs on the host (`eval_policy.sh`), report uploaded; component pulls and judges | `eval_report.json` {rates, paired fixed/broken/net, p, verdict} |
+| 4 | **package** | `crane append` (pinned version, not `:debug`/latest): flat copy of the checkpoint dir → `models/act/` on `ubi-micro`, **`--platform linux/arm64`** (Grace is aarch64; desktop is amd64 → build both or per-target) | same component; amd64 on the desktop | image by **digest** |
+| 5 | **sign** | `cosign sign --key --rekor-url <RHTAS Rekor> --tlog-upload=true`, **cosign v2.x pinned** (v3's OCI-1.1 referrers scheme breaks the internal registry — thor D014/D022; our brief says 2.4.1, thor moved to 2.6.5 for a CVE) | same | Rekor entry |
+| 6 | **promote** | PyGithub: branch `promote/<mv>`, **one commit** editing the three files atomically (green digest+replicas 1, blue replicas 0, service selector) + PR body carrying `eval_report.json` | same | PR URL; **human merge = Gate 3** |
+| 7 | **swap** | Argo syncs; KServe-style modelcar Deployment pair, `strategy: Recreate`, `revisionHistoryLimit: 0`, one side `replicas: 1` at a time; Service selector `color:` picks the live one | **host swap agent**: a small host loop watches `gitops/act-serving/` for the promoted digest and recreates `act-inference` from it (Recreate semantics; the zenoh action server is the "service") | new policy live; its rollouts flow with the new `MODEL_VERSION` (Phase 3 step 7) |
+
+## The eval gate — specified from our own data (D021)
+
+- **Predicate:** candidate vs incumbent on the **same fixed seed set** (D020), **N=100**
+  (seeds 1000–1099). Promote iff `net = fixed − broken > 0` **and** paired sign-test `p < 0.05`.
+  Also record success-rate delta and mean-cubes delta; a demo-friendly restatement is
+  "≥ +10 points and it must not break more than it fixes" — both rules pass v2, both reject the
+  20/40/80 rungs.
+- **Why paired, why N=100:** at N=50 the +12-point v2 gain was p≈0.11; paired at N=100 it was
+  p=0.019. Unpaired rate deltas at N=50 cannot resolve the effect sizes one round produces.
+- **Why a gate at all is the story:** fine-tuning on 20 or 40 successes *degraded* the policy
+  (net −7/−9). A flywheel without this gate makes the fleet worse. thor-testing's Gate 1 was a
+  training-loss floor — necessary, not sufficient; ours is task success against the incumbent.
+- **Trigger threshold:** `TRIGGER_THRESHOLD` ≈ **160 new curated successes** (thor's default was 10 —
+  that would fire a degrading retrain every few minutes at our rates).
+
+## What transfers from thor-testing unchanged
+- Three-file atomic flip; `Recreate`; one replica at a time (the 5e3e87a outage is the lesson).
+- `crane append` for the layer (D017), `cosign sign … --tlog-upload` (v2.x), `policy.json` **and**
+  `registries.d` `use-sigstore-attachments: true` on the device (D015+D018).
+- Promotion-PR shape (branch → commit → PR with evidence body); human merge as the last gate.
+- `manifest-consumer` as the trigger.
+
+## What changes
+- Train/eval components are the D021 recipe, not Cosmos SFT; no HF-cache staging, no guardrail
+  bundle; the artifact is a flat 200 MB directory (workspace 1 Gi, timeouts minutes not hours).
+- The gate is a paired success-rate comparison, not a loss floor.
+- Pin `crane` and `cosign` versions; no runtime `curl … latest`.
+- Multi-arch: the modelcar and the runtime images must build for `linux/arm64` (GB10/GB300) and
+  `linux/amd64` (desktop). `Dockerfile.gpu-inference` on aarch64 Blackwell is the Phase 4 risk item.
+
+## Forks — decided 2026-09-08 (operator)
+
+1. **Pipeline runtime.** (a) **RHOAI Data Science Pipelines (KFP v2)** — thor-testing's choice,
+   one implementation for desktop and target, the on-message "same governed pipeline" story;
+   cost: the `rhods-operator` install on SNO (headroom is fine: node at 7% CPU / 39% mem).
+   (b) OpenShift Pipelines (Tekton) only — lighter, every stage a Task; but train/eval as Tekton
+   tasks is awkward and it diverges from thor-testing. **Decided: (a) RHOAI DSP / KFP**, with Tekton tasks reused inside for build/sign as thor did.
+2. **Signing.** (a) **RHTAS** (`rhtas-operator` in the catalog: Fulcio/Rekor/TUF in-cluster) —
+   the brief's choice, transparency log for the demo; (b) key-only cosign, no Rekor — simpler,
+   weaker story. **Decided: (a) RHTAS.**
+3. **Desktop serving swap.** (a) **host swap agent** watching gitops (keeps "GitOps promote →
+   swap" honest on the desktop with no in-cluster GPU); (b) CPU KServe in-cluster (works, slow,
+   and not what ships). **Decided: (a) host swap agent**, deleted on Fury.
+4. **Gate rule.** (a) **paired net > 0 with p < 0.05 at N=100**; (b) "≥ +10 points and broken ≤
+   fixed" at N=50. **Decided: (a)** as the rule, (b) as the plain-English restatement on stage.
+5. **Trigger threshold.** 160 new curated successes (evidence-based). Tunable. **Decided: 160.**
+
+## Build order (once decided)
+1. Install operators: OpenShift Pipelines, RHTAS, RHOAI (DSP + KServe). Clean the stale
+   `dreamer`/`robot-sim` resources so the `flywheel` Argo app is Synced.
+2. `gitops/act-serving/`: blue + green Deployments (modelcar initContainer, `Recreate`), Service
+   with `color` selector — written for the target; [desktop shim] host swap agent reads the same
+   files.
+3. `pipeline/act_flywheel_pipeline.py` (KFP): the 7 stages above; components thin, calling the
+   scripts we already have (assembler, harness, report).
+4. `tekton/`: package-modelcar + cosign-sign tasks adapted (flat layer, pinned images, arm64+amd64).
+5. `manifest-consumer` re-pointed at our Kafka with the new threshold.
+6. Run it end-to-end on the desktop: v2 (already trained + evaluated) as the first candidate —
+   package → sign → PR → merge → swap. Then let the loop run v2 (round B) and let the pipeline
+   fire on its own for v3.
