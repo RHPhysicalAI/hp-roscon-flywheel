@@ -8,6 +8,10 @@ kind: OperatorGroup
 metadata:
   name: rhods-operator
   namespace: redhat-ods-operator
+  annotations:
+    # SNO VM pulls bundle images slowly; OLM's default unpack deadline (10m) expired for every
+    # operator on first try (BundleUnpackFailed: DeadlineExceeded).
+    operatorframework.io/bundle-unpack-timeout: "60m"
 spec: {}
 ---
 apiVersion: operators.coreos.com/v1alpha1
