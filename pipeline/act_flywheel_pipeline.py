@@ -1,10 +1,10 @@
-"""ACT flywheel promotion pipeline (KFP v2, RHOAI Data Science Pipelines) — D022.
+"""ACT flywheel promotion pipeline (KFP v2, RHOAI Data Science Pipelines) - D022.
 
   trigger+wait -> gate -> package -> sign -> open_promotion_pr        (human merge = last gate)
 
 Written for the in-cluster-GPU target. `mode="desktop"` is the [desktop shim]: train + eval are
 delegated to the host runner over Kafka (training-triggers / training-results) and the pipeline
-waits for the artifacts in MinIO. `mode="cluster"` runs them in-pod (GB10/GB300 — Phase 4).
+waits for the artifacts in MinIO. `mode="cluster"` runs them in-pod (GB10/GB300 - Phase 4).
 Every artifact contract (checkpoint tar, eval_report.json, image digest) is identical in both.
 
 Compile:  python pipeline/act_flywheel_pipeline.py  -> pipeline/act_flywheel_pipeline.yaml
@@ -53,7 +53,7 @@ def trigger_and_wait(run_id: str, candidate: str, incumbent: str, collector: str
 @dsl.component(base_image=PY_IMG, packages_to_install=["boto3==1.35.36"])
 def eval_gate(eval_report_uri: str, s3_endpoint: str, report_out: dsl.OutputPath(str)) -> str:
     """Gate: candidate vs incumbent on the same fixed seeds. Promote iff net > 0 and p < 0.05 (D022).
-    Fails the pipeline (sys.exit 1) otherwise — downstream never runs (thor-testing's hard-stop)."""
+    Fails the pipeline (sys.exit 1) otherwise - downstream never runs (thor-testing's hard-stop)."""
     import json, os, sys, boto3
     s3 = boto3.client("s3", endpoint_url=s3_endpoint, aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
                       aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"])
@@ -132,9 +132,9 @@ def open_promotion_pr(image_ref: str, candidate: str, report: dsl.InputPath(str)
     body = (f"## Promotion: `{candidate}` replaces `{rep['incumbent']}`\n\n"
             f"| | success | mean cubes |\n|---|---|---|\n| incumbent `{rep['incumbent']}` | {rep['incumbent_success_rate']:.0%} | {rep['incumbent_mean_cubes']:.2f} |\n"
             f"| candidate `{candidate}` | {rep['candidate_success_rate']:.0%} | {rep['candidate_mean_cubes']:.2f} |\n\n"
-            f"Paired on {rep['n_paired']} identical seeded scenes: **{rep['fixed']} fixed / {rep['broken']} broken, net {rep['net']:+d}, sign-test p = {rep['sign_test_p']}** — gate rule: {rep['rule']} → **{rep['verdict']}**.\n\n"
-            f"Signed modelcar: `{image_ref}`\n\nMerging flips blue/green atomically (green replicas 1, blue 0, Service → green); Argo syncs it; the swap agent applies it on the desktop.")
-    pr = repo.create_pull(title=f"Promote {candidate} ({rep['incumbent_success_rate']:.0%} → {rep['candidate_success_rate']:.0%})", body=body, base=gitops_branch, head=head)
+            f"Paired on {rep['n_paired']} identical seeded scenes: **{rep['fixed']} fixed / {rep['broken']} broken, net {rep['net']:+d}, sign-test p = {rep['sign_test_p']}** - gate rule: {rep['rule']} -> **{rep['verdict']}**.\n\n"
+            f"Signed modelcar: `{image_ref}`\n\nMerging flips blue/green atomically (green replicas 1, blue 0, Service -> green); Argo syncs it; the swap agent applies it on the desktop.")
+    pr = repo.create_pull(title=f"Promote {candidate} ({rep['incumbent_success_rate']:.0%} -> {rep['candidate_success_rate']:.0%})", body=body, base=gitops_branch, head=head)
     print(pr.html_url); return pr.html_url
 
 

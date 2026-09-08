@@ -149,7 +149,7 @@ deploymentSpec:
           \ *\n\ndef eval_gate(eval_report_uri: str, s3_endpoint: str, report_out:\
           \ dsl.OutputPath(str)) -> str:\n    \"\"\"Gate: candidate vs incumbent on\
           \ the same fixed seeds. Promote iff net > 0 and p < 0.05 (D022).\n    Fails\
-          \ the pipeline (sys.exit 1) otherwise \u2014 downstream never runs (thor-testing's\
+          \ the pipeline (sys.exit 1) otherwise - downstream never runs (thor-testing's\
           \ hard-stop).\"\"\"\n    import json, os, sys, boto3\n    s3 = boto3.client(\"\
           s3\", endpoint_url=s3_endpoint, aws_access_key_id=os.environ[\"AWS_ACCESS_KEY_ID\"\
           ],\n                      aws_secret_access_key=os.environ[\"AWS_SECRET_ACCESS_KEY\"\
@@ -224,12 +224,12 @@ deploymentSpec:
           \ |\\n\"\n            f\"| candidate `{candidate}` | {rep['candidate_success_rate']:.0%}\
           \ | {rep['candidate_mean_cubes']:.2f} |\\n\\n\"\n            f\"Paired on\
           \ {rep['n_paired']} identical seeded scenes: **{rep['fixed']} fixed / {rep['broken']}\
-          \ broken, net {rep['net']:+d}, sign-test p = {rep['sign_test_p']}** \u2014\
-          \ gate rule: {rep['rule']} \u2192 **{rep['verdict']}**.\\n\\n\"\n      \
-          \      f\"Signed modelcar: `{image_ref}`\\n\\nMerging flips blue/green atomically\
-          \ (green replicas 1, blue 0, Service \u2192 green); Argo syncs it; the swap\
+          \ broken, net {rep['net']:+d}, sign-test p = {rep['sign_test_p']}** - gate\
+          \ rule: {rep['rule']} -> **{rep['verdict']}**.\\n\\n\"\n            f\"\
+          Signed modelcar: `{image_ref}`\\n\\nMerging flips blue/green atomically\
+          \ (green replicas 1, blue 0, Service -> green); Argo syncs it; the swap\
           \ agent applies it on the desktop.\")\n    pr = repo.create_pull(title=f\"\
-          Promote {candidate} ({rep['incumbent_success_rate']:.0%} \u2192 {rep['candidate_success_rate']:.0%})\"\
+          Promote {candidate} ({rep['incumbent_success_rate']:.0%} -> {rep['candidate_success_rate']:.0%})\"\
           , body=body, base=gitops_branch, head=head)\n    print(pr.html_url); return\
           \ pr.html_url\n\n"
         image: registry.access.redhat.com/ubi9/python-312:latest
