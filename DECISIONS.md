@@ -1065,3 +1065,7 @@ definition, gate, packaging, signing, PR, and gitops manifests are written once,
   dockerconfigjson Secret key name, and the host docker config using `credsStore: pass` with empty
   `auths` (the quay login had to be extracted from the credential helper). All recorded in the ops
   runbook gotchas.
+- **Run 5 signed into Rekor** — `tlog entry created with index: 0`, the first entry in this cluster's
+  transparency log (RHTAS), for `sha256:83984b5f…`. The PR step then failed with GitHub 403 *"Resource
+  not accessible by personal access token"* on `git/trees`: the fine-grained PAT lacked Contents write
+  (and org access) — a token-scope issue, not the pipeline. Re-issued token → run 6.
