@@ -51,7 +51,7 @@ def trigger_and_wait(run_id: str, candidate: str, incumbent: str, collector: str
 
 
 @dsl.component(base_image=PY_IMG, packages_to_install=["boto3==1.35.36"])
-def eval_gate(eval_report_uri: str, s3_endpoint: str, report_out: dsl.OutputPath(str)) -> str:
+def eval_gate(eval_report_uri: str, s3_endpoint: str) -> str:
     """Gate: candidate vs incumbent on the same fixed seeds. Promote iff net > 0 and p < 0.05 (D022).
     Fails the pipeline (sys.exit 1) otherwise - downstream never runs (thor-testing's hard-stop)."""
     import json, os, sys, boto3
@@ -60,13 +60,12 @@ def eval_gate(eval_report_uri: str, s3_endpoint: str, report_out: dsl.OutputPath
     b, k = eval_report_uri[5:].split("/", 1)
     rep = json.loads(s3.get_object(Bucket=b, Key=k)["Body"].read())
     print(json.dumps(rep, indent=1))
-    with open(report_out, "w") as f: json.dump(rep, f)
     ok = rep["net"] > 0 and rep["sign_test_p"] < 0.05
     print(f"GATE {'PASS' if ok else 'FAIL'}: {rep['incumbent']} {rep['incumbent_success_rate']:.2f} -> "
           f"{rep['candidate']} {rep['candidate_success_rate']:.2f}; fixed {rep['fixed']} broken {rep['broken']} "
           f"net {rep['net']:+d} p={rep['sign_test_p']}")
     if not ok: sys.exit(1)
-    return "PASS"
+    return json.dumps(rep)  # the report travels downstream as a parameter
 
 
 @dsl.component(base_image=PY_IMG, packages_to_install=["boto3==1.35.36"])
@@ -115,7 +114,7 @@ def sign_modelcar(image_ref: str, rekor_url: str, cosign_version: str) -> str:
 
 
 @dsl.component(base_image=PY_IMG, packages_to_install=["PyGithub==2.4.0"])
-def open_promotion_pr(image_ref: str, candidate: str, report: dsl.InputPath(str), github_repo: str,
+def open_promotion_pr(image_ref: str, candidate: str, report_json: str, github_repo: str,
                       gitops_branch: str) -> str:
     """ONE commit editing the three act-serving files atomically (thor-testing 5e3e87a), then a PR
     whose body carries the eval report. Human merge is the last gate; Argo does the rest."""
@@ -132,7 +131,7 @@ def open_promotion_pr(image_ref: str, candidate: str, report: dsl.InputPath(str)
     green = green.replace("replicas: 0", "replicas: 1", 1)
     blue = blue.replace("replicas: 1", "replicas: 0", 1)
     svc = svc.replace("color: blue", "color: green", 1)
-    rep = json.load(open(report))
+    rep = json.loads(report_json)
     elems = [InputGitTreeElement("gitops/act-serving/deployment-green.yaml", "100644", "blob", content=green),
              InputGitTreeElement("gitops/act-serving/deployment.yaml", "100644", "blob", content=blue),
              InputGitTreeElement("gitops/act-serving/service.yaml", "100644", "blob", content=svc)]
@@ -174,7 +173,7 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
     sg = sign_modelcar(image_ref=pk.output, rekor_url=rekor_url, cosign_version=cosign_version); sg.set_caching_options(False)
     k8s.use_secret_as_volume(sg, secret_name="quay-push", mount_path="/etc/quay")
     k8s.use_secret_as_volume(sg, secret_name="cosign-signing-key", mount_path="/etc/cosign")
-    pr = open_promotion_pr(image_ref=sg.output, candidate=candidate, report=g.outputs["report_out"], github_repo=github_repo, gitops_branch=gitops_branch)
+    pr = open_promotion_pr(image_ref=sg.output, candidate=candidate, report_json=g.output, github_repo=github_repo, gitops_branch=gitops_branch)
     pr.set_caching_options(False)
     k8s.use_secret_as_volume(pr, secret_name="github-token", mount_path="/etc/github")
 
