@@ -1045,3 +1045,23 @@ definition, gate, packaging, signing, PR, and gitops manifests are written once,
   trigger at 160, inert until `DSP_URL`/`TRAINING_PIPELINE_ID` are set.
 - Gotcha recorded: lerobot writes checkpoints root-owned 0600; the runner `chmod -R a+rX`s them so the
   host user can tar/package them.
+
+**Verified end-to-end on the cluster (2026-09-08, afternoon):**
+- Operators installed via GitOps after two SNO-specific blockers: OLM bundle unpacks need a longer
+  deadline on this VM (`operatorframework.io/bundle-unpack-timeout: 60m` on the OperatorGroups) and the
+  cluster had **no StorageClass** — `gitops/storage/` adds `local-path-provisioner` as the default
+  (lab only; the target uses the platform's storage). RHOAI `DataScienceCluster` (pipelines + KServe
+  only) and the `DataSciencePipelinesApplication` in `flywheel` are Ready; RHTAS `Securesign` is fully
+  Ready (Rekor in-cluster at `http://rekor-server.trusted-artifact-signer.svc`, now the pipeline's
+  default `rekor_url`; sub-CRs that failed before storage existed had to be recreated).
+- Pipeline `act-flywheel-promotion` uploaded to DSP (id `99ec0aab-…`); `manifest-consumer` running
+  against it (threshold 160). Access recipe in the ops runbook (port-forward + SA token, https).
+- **First governed promotion run (`act-v2-ft160` vs `upstream-act-teacher`):** the host runner received
+  the trigger over Kafka in seconds, reused the trained checkpoint and the N=100 records, and the
+  pipeline's **gate PASSED on the real report (73% → 86%, 20 fixed / 7 broken, p = 0.019)**; the
+  modelcar was **packaged by `crane append` in-cluster and pushed to quay, then signed by cosign** in
+  the pipeline. The run pauses at the promotion-PR step until the `github-token` Secret exists.
+  Earlier attempts failed on, in order: host boto3 inheriting an AWS config (S3 Accelerate), the
+  dockerconfigjson Secret key name, and the host docker config using `credsStore: pass` with empty
+  `auths` (the quay login had to be extracted from the credential helper). All recorded in the ops
+  runbook gotchas.

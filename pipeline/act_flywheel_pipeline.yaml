@@ -16,7 +16,7 @@
 #    mode: str [Default: 'desktop']
 #    platform: str [Default: 'linux/amd64']
 #    registry_repo: str [Default: 'quay.io/jary/soarm-act-modelcar']
-#    rekor_url: str [Default: '']
+#    rekor_url: str [Default: 'http://rekor-server.trusted-artifact-signer.svc']
 #    s3_endpoint: str [Default: 'http://minio.minio.svc:9000']
 #    steps_per_frame: float [Default: 0.25]
 #    timeout_min: int [Default: 600.0]
@@ -563,7 +563,7 @@ root:
         isOptional: true
         parameterType: STRING
       rekor_url:
-        defaultValue: ''
+        defaultValue: http://rekor-server.trusted-artifact-signer.svc
         isOptional: true
         parameterType: STRING
       s3_endpoint:

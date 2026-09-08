@@ -155,7 +155,7 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
                           eval_seed_base: int = 1000, mode: str = "desktop",
                           kafka_bootstrap: str = "edge-kafka.flywheel.svc:9092", s3_endpoint: str = "http://minio.minio.svc:9000",
                           registry_repo: str = "quay.io/jary/soarm-act-modelcar", platform: str = "linux/amd64",
-                          rekor_url: str = "", crane_version: str = "v0.20.3", cosign_version: str = "v2.6.5",
+                          rekor_url: str = "http://rekor-server.trusted-artifact-signer.svc", crane_version: str = "v0.20.3", cosign_version: str = "v2.6.5",
                           github_repo: str = "RHPhysicalAI/hp-roscon-flywheel", gitops_branch: str = "desktop-gpu-split",
                           timeout_min: int = 600):
     run_id = dsl.PIPELINE_JOB_ID_PLACEHOLDER
