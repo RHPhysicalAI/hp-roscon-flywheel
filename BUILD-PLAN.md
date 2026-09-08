@@ -392,9 +392,10 @@ C. **Fleet-delivered application** (D024, D026)
      `/var/lib/act-inference`.
    - Desktop only: bags land on the host over virtiofs (D043) so `assemble_all.sh`/`prune_bags.py`
      keep working; port-as-you-go prune after each assembly.
-   - **Exit:** `applicationsSummary: Healthy`; curator receives episodes stamped `act-v2-ft160`
-     from the VM; an unsigned tag fails to pull with a signature error; `--insecure-ignore-tlog`
-     is gone from the repo.
+   - **Exit (2026-09-08, partial):** `applicationsSummary: Healthy` met (device `act-device`, Fleet
+     renderedVersion 3); curator receives `act-v2-ft160` episodes from the VM (lineage met; task
+     outcomes invalid until the C3 role split lands — gz-transport reset/judge is host-local);
+     unsigned tag fails to pull met (C-prep); `--insecure-ignore-tlog` removal pending item D.
 
 D. **Promotion path rewrite** (D025)
    - `open_promotion_pr` becomes a two-regex edit of the Fleet (digest + `MODEL_VERSION`); the same
@@ -448,7 +449,7 @@ G. **Fury port + runbook** (on site, Sept 20–25)
 - **New (C0b):** `virtiofsd` must be installed from the distro package on the desktop (AppArmor pins the path) — D046; bag recording on the VM is off until then (D044)
 
 ### Exit criteria
-- [ ] `flightctl get devices` shows the desktop VM Online, labels correct, `applicationsSummary: Healthy`
+- [x] `flightctl get devices` shows the desktop VM Online, labels correct, `applicationsSummary: Healthy` (2026-09-08 22:52Z, device s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg)
 - [ ] Sim loop running against the VM: curator stamps episodes with the Fleet's `MODEL_VERSION`,
   `episodes-curated/<mv>/` fills, `manifest-consumer` count advances
 - [ ] A DSP run on a pre-trained candidate (D023 path) opens a PR editing the Fleet (+ CatalogItem

@@ -1930,3 +1930,244 @@ the organisation — plausible, untested, and adds hand-made RBAC the chart does
 **Consequences:** the user token expires (24 h); re-login before a demo. Routes still need the
 `/etc/hosts` line on the Mac; until then `oc port-forward svc/flightctl-api 3443:3443` on the
 desktop is the working path (used today).
+
+---
+
+## D049 — Device provisioning installs `skopeo`; flightctl-agent 1.3.0 needs it to prefetch application images
+
+**Date:** 2026-09-08
+**Context:** the first rendered spec on the enrolled VM failed before anything was written:
+`Marking template version 1 as failed: before update: prefetch: prefetch collector 0 failed:
+extracting oci: act-inference: application dependency: required commands not found: "skopeo"`
+(`agent/device/device.go:213`, 22:46:21Z). The device rolled back to renderedVersion 0 and reported
+`OutOfDate` / `NoApplications`. `flightctl-agent-1.3.0-1.el10` does not *require* skopeo in its RPM
+metadata (device/README.md "Flags verified" lists its Requires: bash, jq, sudo, flightctl-selinux,
+libresolv, glibc) — the dependency is a runtime `exec.LookPath` in the application prefetch path, so
+`provision.sh`'s pinned, weak-deps-off install left it out.
+**Decision:** `device/provision.sh` installs `podman skopeo` in one `dnf` call (working-tree edit,
+uncommitted, for the runner to fold in). On the live VM `skopeo-2:1.22.2-5.el10_2` was installed by
+hand (22:46:47Z) and the agent restarted; the same rendered version was then retried without a spec
+change (`New spec version received: 0 -> 1`, `Started quadlet application`, 22:46:51Z).
+**Alternatives:** wait for the agent to retry on its own (rejected — a version marked failed is not
+retried until the spec changes or the agent restarts); mark skopeo as a Fleet-delivered package
+(rejected — package mode has no package provider; this belongs to provisioning).
+**Consequences:** the Fury provisioning gets skopeo for free from the same script. A failed
+prefetch on an otherwise healthy device leaves the app *absent*, not degraded — the runbook should
+read `flightctl get device -o yaml` `.status.updated.info` before anything device-side.
+
+---
+
+## D050 — While `RECORD=false`, the Fleet ships no bags `Volume=`; a quadlet host-path volume is a hard mount dependency
+
+**Date:** 2026-09-08
+**Context:** with skopeo present, renderedVersion 1 wrote the config and the quadlet, but
+`act-inference-128875-act-inference.service` stayed `inactive (dead)`: `Dependency failed …
+Job act-inference-128875-act-inference.service/start failed with result 'dependency'`. The podman
+quadlet generator turns every host-path `Volume=` into `RequiresMountsFor=<path>`; the VM's fstab
+carries the D043 virtiofs entry `bags /var/lib/act-inference/bags virtiofs …,nofail,…`, so systemd
+owns a `var-lib-act\x2dinference-bags.mount` unit, tries it, and fails (no virtiofs tag — the share
+is blocked on D046). `nofail` only keeps the boot from failing; it does not make `RequiresMountsFor=`
+tolerate a failed mount. The Fleet was correct for the desktop-with-share and for the Fury (no fstab
+entry, `RequiresMountsFor` satisfied by the root fs); the pre-placed fstab line was the defect.
+The agent's guest `/etc/fstab` edit was refused by the session's permission classifier, so the
+device-side fix was not available to this run.
+**Decision:** `Fleet fix:` commit `ffff8a3` removes `Volume=/var/lib/act-inference/bags:/data/bags`
+for the D044 interim, with the line kept as a comment to be restored **in the same commit** that
+flips `RECORD` to `"true"`. Nothing writes bags while `RECORD=false`, so the interim Fleet is
+self-consistent. The fstab line stays on the VM: it becomes correct the moment `virtiofsd` +
+`bags-share.sh` attach the share (D046), and `provision.sh` only ever appends it when the tag exists.
+Rollout: ResourceSync observed `ffff8a3` at 22:51:59Z, Fleet generation 2, device renderedVersion 2
+at 22:52:08Z, container up 22:52:08Z, `applicationsSummary: Healthy` at 22:52:55Z.
+**Alternatives:** `PodmanArgs=-v …` to dodge `RequiresMountsFor=` (rejected — a failed share would
+silently record into the VM disk under the mountpoint, exactly what D043/D044 exist to prevent);
+`systemctl mask` the mount unit (rejected — a masked `Requires=` dependency fails the same way).
+**Consequences:** re-enabling recording is now a three-line Fleet change (`RECORD`, the `Volume=`
+line, and nothing else); the operator step list for D046 gains "confirm the mount is active before
+flipping RECORD". For the Fury, where the bags dir is local disk, the restored line needs no fstab.
+With the C3 role split the recorder no longer runs on the device, so the desktop bags share
+(D043/D044/D046/D047) is no longer needed; those entries stay as history.
+
+---
+
+## D051 — Interim health probe runs `/healthcheck.sh` with its `set -u` neutralised; the image script is fixed for F
+
+**Date:** 2026-09-08
+**Context:** with the app running, every podman health probe exited 1:
+`/opt/ros/kilted/setup.bash: line 8: AMENT_TRACE_SETUP_FILES: unbound variable`.
+`docker/healthcheck.sh` runs `set -u` *before* sourcing the ROS and colcon setup scripts, which
+reference unbound variables (`AMENT_TRACE_SETUP_FILES`, then `AMENT_PYTHON_EXECUTABLE`,
+`AMENT_PREFIX_PATH`, … — presetting them just walks the chain). With the Fleet's
+`HealthOnFailure=kill` + `Restart=always` that is a kill 240 s after every start (observed: start
+22:52:08Z → killed and restarted 22:57:28Z) — a 6-minute crashloop that RHEM still reported as
+`Healthy` (its summary follows container state, not the podman health status). The runtime image is
+digest-pinned (D045) and cannot change before F.
+**Decision:** `Fleet fix:` commit `a8fbe3b` sets
+`HealthCmd=sed 's/^set -u/set +u/' /healthcheck.sh | bash -s` (a string `HealthCmd=` runs under
+`sh -c`; identical checks, trap disabled; no `$` so nothing for systemd/quadlet to escape). Verified
+inside the container before committing: `healthy: model_version=act-v2-ft160 action=/run_policy`,
+rc 0. Rollout: ResourceSync observed `a8fbe3b` 22:57:59Z, Fleet generation 3, renderedVersion 3,
+container started 22:58:19Z, podman health `healthy` from 22:58:49Z, no further restarts.
+`docker/healthcheck.sh` is fixed at the source (sources first, then `set -u`; working-tree edit,
+uncommitted) so F's image carries the correct script and the Fleet line reverts to
+`HealthCmd=/healthcheck.sh` in the same F commit that re-pins the digest.
+**Alternatives:** `HealthOnFailure=none` until F (rejected — hides the failure and loses the
+self-recovery D041 chose); env-var presets in `envVars` (rejected — the chain of unbound names is
+open-ended).
+**Consequences:** two `Fleet fix:` iterations were used of the three allowed. RHEM's
+`applicationsSummary: Healthy` is necessary but not sufficient for "the probe passes" — the runbook
+screen should pair it with `podman ps` showing `(healthy)` (via `flightctl console … sudo -n podman ps`).
+
+---
+
+## D052 — `flightctl console` runs as `flightctl-console` (uid 990); device commands that need podman go through `sudo -n`
+
+**Date:** 2026-09-08
+**Context:** the console session the agent spawns is unprivileged: `id` → `uid=990(flightctl-console)`,
+`HOME=/var/lib/flightctl`. A bare `podman logs …` fails with `stat /var/lib/flightctl/.config: no such
+file or directory` (podman looks for a per-user config in `$HOME`), and `HOME=/root` gives
+`permission denied`. `sudo -n` works for that user (the agent package ships the sudoers rule).
+Separately, each console session tears down the `oc port-forward` that stands in for the
+unresolvable `api.` route on the desktop (`error: lost connection to pod`).
+**Decision:** the runbook's Beat-6 invocation is
+`flightctl console device/<name> --notty -- sudo -n podman logs --tail 20 act-inference-128875-act-inference`
+(quadlet-namespaced container name: `<app>-<id>-<ContainerName>`); `--notty` for scripted
+capture, `--tty` for a live tail. The port-forward on the desktop is kept in a retry loop
+(`while true; do oc port-forward -n flightctl svc/flightctl-api 3443:3443; sleep 1; done`, log
+`~/flightctl-pf.log`) so it survives console sessions.
+**Alternatives:** resolve `api.flightctl.apps.sno-flywheel.local` on the desktop (needs sudo for
+`/etc/hosts` — not available to the agent); run the console from the Mac (same resolution gap).
+**Consequences:** the `/etc/hosts` entries for the three routes on the demo laptop remain an
+operator step (D006 port); until then every `flightctl` demo command runs on the desktop over ssh.
+
+---
+
+## D053 — Spike part 2 fails as written: CPU inference on the VM leaves 6% of command intervals over 40 ms; success rate is the arbiter (part 3)
+
+**Date:** 2026-09-08
+**Context:** measured inside the Fleet-managed container on the VM (probe subscribed to
+`/forward_position_controller/commands`, windowed by the coordinator's `start`/`end` signals, first
+59.5 s of each window; `device/spike` probe, run 23:00:50Z–23:05:50Z), three full episodes:
+
+| ep | msgs | rate (wall) | gap p50 | p95 | p99 | max | > 40 ms | > 100 ms | > 200 ms |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 2156 | 36.3 Hz | 20.2 ms | 57.1 | 211.1 | 335.2 | 134 | 64 | 28 |
+| 2 | 2134 | 35.9 Hz | 20.2 ms | 54.9 | 229.2 | 313.4 | 135 | 62 | 46 |
+| 3 | 2121 | 35.8 Hz | 20.2 ms | 54.6 | 229.9 | 325.3 | 129 | 62 | 42 |
+
+All episodes: 6408 intervals, max 335.2 ms, 398 (6.21 %) over 40 ms. `ros2 topic hz -w 3000`
+over the same period: average 33.1 Hz (window spans an inter-episode idle, so its `max` 5.24 s is
+not a within-window number). The rosetta client's own watchdog agrees: `Action timeout - sending
+safety action` (`rosetta.py:324`, 2 frame periods = 40 ms at the contract's 50 Hz) fired 67 times
+in episode 1's window, ~1.1/s. Mechanism: the policy server logs ~4 forward passes per second
+(`Running inference for observation #… (must_go: True)`), i.e. the live node parameters `actions_per_chunk=30` and
+`chunk_size_threshold=0.95` (from the launch file's `params_file`; node defaults 50 / 0.5) re-request
+a chunk almost as soon as one lands, while an in-guest forward takes 170–250 ms (cpu-spike.md part 1, in-guest row) — the queue runs dry at every chunk boundary.
+The 2 s / 1000 ms budget in D024 assumed one forward per `n_action_steps=100`; the client asks for
+30 at a time, so the real chunk window is 0.6–0.8 s and the compute margin is ~3×, not 12×.
+The host GPU container had no usable baseline in its logs (every instance since 20:xx was cycled
+by the watchdog inside 18–42 s). The sim itself runs at speed: `/clock` RTF 0.990 and
+`/joint_states` 49.6 Hz wall measured from the same VM (23:09Z), so the gaps are policy-side
+wall-time stalls, not a slow sim or the VM's network.
+**Decision:** record part 2 as **FAIL** against the criterion as written, and let part 3 (20-seed
+D020 eval, ≥ 15/20) decide the stand-in: the live loop since cut-over produced 10 curated successes
+and 1 reject in its first 13 minutes, so the gaps are not obviously costing task success. D024's
+first fallback maps to `actions_per_chunk` (rosetta client parameter, default 50, launched at 30 —
+`rosetta_client_node.py:169`), not to the policy's `n_action_steps`: raising it to 100 (the
+checkpoint's chunk) and lowering `chunk_size_threshold` toward 0.5 turns the ~4 forwards/s into
+~0.5/s with ~1 s of queue to hide a 250 ms forward. Both live in the `params_file` that
+`rosetta_client_launch.py` consumes (the entrypoint's `key:=value` arguments are not declared by
+that launch file), so the change rides with F's image; the Fleet can then carry it per `gpu` label.
+**Alternatives:** pin the VM's vCPUs (`VCPU_CPUSET`, D034) — expected ~2× on the forward, still
+inside the 0.6 s chunk only marginally; lower the Gazebo RTF (changes the sim for the host GPU path
+too); VFIO (last resort, D024).
+**Consequences:** cpu-spike.md parts 2–3 carry these numbers; the runbook should not promise
+"no visible stutter" for the desktop stand-in. On the Fury (GPU, `policy_device=cuda`) the same
+Fleet has no such gap. Superseded the same evening by the C3 role split (see the next decisions):
+the coordinator, recorder and sim reset move back to the host beside the simulator; the device runs
+the policy role only; chunk params move to the params file (`actions_per_chunk=100`,
+`chunk_size_threshold=0.5`).
+
+---
+
+## D054 — Enrollment identity and Fleet label set for the desktop stand-in (as enrolled)
+
+**Date:** 2026-09-08
+**Context:** `device/enroll.sh` ran unchanged against the live hub (flightctl CLI/server 1.3.0):
+certificate request `act-device-8e8e4333` (signer `flightctl.io/enrollment`, embedded config),
+agent started 22:46:10Z, enrollment request `s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg`,
+approved 22:46:10Z with `fleet=act-inference site=desktop gpu=none policy_device=cpu arch=amd64
+zenoh_router=10.0.0.48 zenoh_port=7447` (plus the agent's `alias=act-device.localdomain`), device
+visible at 22:46:10Z, owner `Fleet/act-inference`. Cut-over on the host preceded the label:
+swap agent (pid 3483061) and bag watchdog (pid 3507013) killed and `docker stop act-inference`
+at 17:45:46–17:45:58 CDT (22:45:46–22:45:58Z); `docker ps` then showed only `so-arm-sim`,
+`pose-ui` and the unrelated `competent_chatelet`.
+**Decision:** the device name RHEM uses is the agent's fingerprint, not the CSR name; the runbook
+addresses it by alias in the UI and by name on the CLI. `enroll.sh` needs no change for the Fury.
+**Consequences:** the `flightctl login` on the desktop still uses the item-A user token (the
+kubeconfig is cert-based, `oc whoami -t` returns none); when it expires, mint a token from the OCP
+OAuth route or `oc create token` for a user that maps to an org.
+
+---
+
+## D055 — `POLICY_DEVICE` does not reach the rosetta client node; CPU on the VM is the CUDA-unavailable fallback
+
+**Date:** 2026-09-08
+**Context:** the managed container logs `[inference] Launching Rosetta client with ACT on cpu...`
+(entrypoint, `policy_device:=${POLICY_DEVICE}` on the `ros2 launch rosetta rosetta_client_launch.py`
+line) and then `[rosetta_client]: Requested policy device 'cuda' but the requested backend is
+unavailable; using 'cpu' instead.` (`rosetta_client_node.py:568-572`: the node reads its own
+`policy_device` parameter, default `cuda`, and `_resolve_policy_device` downgrades it). The
+`rosetta_hil_launch.py` file declares `policy_device` / `actions_per_chunk` /
+`chunk_size_threshold` launch arguments; `rosetta_client_launch.py` (the one the entrypoint uses)
+declares `params_file`, `contract_path`, `pretrained_name_or_path`, `server_address`,
+`launch_local_server`, `use_sim_time`, `log_level`, `configure`, `activate` — no `policy_device`
+(`ros2 param get /rosetta_client policy_device` → `cuda` on the live VM, 23:12Z; likewise
+`actions_per_chunk=30`, `chunk_size_threshold=0.95`).
+The checkpoint's `config.json` also carries `"device": "cuda"`. Net effect: on the VM the policy
+runs on CPU because CUDA is absent, not because the Fleet's `POLICY_DEVICE=cpu` was honoured; on a
+GPU host `POLICY_DEVICE=cpu` would silently run on CUDA. The BUILD-PLAN 4.5 C bullet "`POLICY_DEVICE`
+env replaces the hard-coded `policy_device:=cuda`" is therefore only half true.
+**Decision:** F's image fixes the plumbing where the node actually reads it — pass
+`--ros-args -p policy_device:=$POLICY_DEVICE` (and `actions_per_chunk`, see the part-2 decision)
+to the client node, or a generated params file, and assert the setting from the log line the node
+prints. Until then the stand-in is correct by accident and the Fury (`policy_device=cuda`) is
+unaffected.
+**Consequences:** `docs/eval-records/cpu-spike.md` notes the fallback; the runbook's "Device: cpu"
+screen should quote the *node's* resolved-device line, not the entrypoint echo.
+
+---
+
+## D056 — The coordinator's sim reset and cube judge use Gazebo transport, which is host-local; from the device they are silent no-ops
+
+**Date:** 2026-09-08
+**Context:** spike part 3 on the VM returned `cubes=0/3 success=False` for five consecutive seeds
+(1000–1004; the GPU baseline passes four of them) with ~400 `steps` per 64 s window, and was
+stopped. `sim_reset.py` repositions cubes with `gz service …/set_pose`; `task_eval.evaluate_task()`
+reads `gz topic -e -t /world/pai_world/pose/info -n 1` (8 s timeout, returns `{}` on any failure);
+the coordinator's peak-cube poll swallows exceptions. From inside the VM container: `gz topic -l`
+lists the pose topic (multicast discovery crosses `br0`) but `gz topic -e … -n 1` receives nothing
+in 20 s and `gz service -l` shows no `set_pose` — the data/service path back to the guest never
+comes up (`so-arm-sim` is `--network host` on `jary-ubuntu`). Consequences already visible in the
+live loop: after the first post-cut-over episode the cubes were never re-randomised, so
+`ba0d930c` (3/3 two seconds after `start`, 30 steps) and the later "successes" inherited cubes
+already on the tray. Separately, in eval mode the coordinator counts `/joint_states` itself from a
+starved Python thread (~6 Hz on the torch-saturated VM vs 20–43 Hz on the GPU host), so `steps`
+is not comparable either.
+**Decision:** criterion 3 stays open; the desktop stand-in's episodes are lineage evidence
+(VM coordinator → `/flywheel/model_version` → host emitter → curator → MinIO) and not task
+evidence, and the runbook must not quote a success rate from them. Fix owner: the reset + judge
+must run where Gazebo transport is local or move behind ROS services — options in order of
+preference: (c) host-side ROS services for reset and cube poses that the device coordinator calls
+over zenoh (also the right contract for the Fury, where the sim is on another box); (a) a
+host-only "coordinator" mode driving the device's `/run_policy` while the device runs the rosetta
+client only (entrypoint switch, F); (b) `GZ_IP`/`GZ_PARTITION` plumbing across the bridge
+(untested, touches `so-arm-sim`). Interim for the demo: the host GPU `act-inference` can be left
+stopped only if a reset path exists; otherwise Beat 6's live loop from the VM shows lineage but a
+static scene.
+**Alternatives:** run the 20-seed eval on the host against the VM's action server with two
+coordinators alive (rejected — both send `/run_policy` goals; the device container cannot drop its
+coordinator without an image change).
+**Consequences:** Phase 4.5 C exit "curator receives `act-v2-ft160` episodes from the VM" is met
+in the lineage sense only; D024's part-3 criterion moves to whichever of (a)/(b)/(c) lands; the
+`eval-*` discard (D020) and `RECORD=false` (D044) kept the corpus clean throughout — the five
+invalid episodes never reached the emitter.
