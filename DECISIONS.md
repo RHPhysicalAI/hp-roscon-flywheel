@@ -1771,3 +1771,129 @@ disk, nothing gained, breaks the host-path contract); stream bags to the hub (po
 **Consequences:** `device/vm/create-vm.sh` gains the virtiofs share; the Fleet's `.container` mounts
 `/var/lib/act-inference/bags:/data/bags`; `provision.sh`'s `/var/lib/act-inference/bags` becomes the
 mountpoint; bag-watchdog cap logic moves to the host-side prune, not the device.
+
+---
+
+## D044 — Interim: bag recording disabled on the desktop device VM (`RECORD=false` in the Fleet) until the virtiofs share is mounted
+
+**Date:** 2026-09-08
+**Context:** `virtiofsd` is not installed on the Ubuntu 24.04 desktop — it is a separate package
+(`1.10.0-1ubuntu0.1`, candidate but not installed) — and AppArmor blocks both a non-package binary
+path and the unprivileged socket mode; `<seclabel type='none'>` was rejected because it drops VM
+confinement (D043-a). Installing the package needs the operator's sudo. The VM has a 60 GB disk
+with the 11.4 GB runtime image already on it; a bag is ~1.3 GB.
+**Decision:** the Fleet ships `RECORD: "false"` for now; the episode emitter still posts episodes
+with `dataset_path: null` (contract in `docs/data-contract-eval-dashboard.md`), so the C exit
+criteria still hold — the curator receives `act-v2-ft160` episodes from the VM and
+`episodes-curated/<mv>/` fills — and D's promotion uses a pre-trained candidate (D023 path), so no
+new bags are needed before then. Flip `RECORD` to `"true"` in the same Fleet once
+`sudo apt install virtiofsd` + `device/vm/bags-share.sh` + the guest mount are done and the write
+test shows host ownership.
+**Alternatives:** record to the VM's local disk (rejected — fills after ~25 episodes, and the bags
+would be hidden under the later virtiofs mount); grow the VM disk (rejected — same physical disk,
+nothing gained).
+**Consequences:** spike part 3 (20-seed eval) runs unrecorded; a follow-up todo tracks re-enabling
+`RECORD` once the share is mounted.
+
+---
+
+## D045 — Interim amd64 runtime image built on the host, signed into Rekor, digest-pinned in the Fleet until Tekton (F) replaces it
+
+**Date:** 2026-09-08
+**Context:** D028 makes OpenShift Pipelines the recorded build + sign path for the runtime images,
+but Phase 4.5 C (Fleet-delivered application) needs a signed, digest-pinned `act-inference` image
+now — the Fleet's `Image=quay.io/jary/soarm-flywheel@sha256:TODO-F` is the last blocker to a
+`Healthy` application on the stand-in device, and F is scheduled days later (BUILD-PLAN 4.5, days
+5–7). The only existing runtime image is local docker `act-inference:latest` on the desktop,
+unsigned, never pushed. D026 row 3 already names host `docker buildx` as drift; doing it once more
+*without a record* would deepen that.
+**Decision:** build the image **once** on the desktop host from the same context that produced
+`act-inference:latest` (host checkout `~/redhat/git/hp-roscon-flywheel`, `docker build --platform
+linux/amd64`, default build args, today's `POLICY_DEVICE` + `HEALTHCHECK` changes rsync'd in), push
+it under a **dated tag** (`act-inference-amd64-2026-09-08`, never `:latest`), sign the manifest
+digest with the same cosign key the pipeline uses into the RHTAS Rekor with `--tlog-upload=true`,
+verify with the transparency log (no `--insecure-ignore-tlog`), and pin the Fleet to the digest:
+`quay.io/jary/soarm-flywheel@sha256:29955e4e9422b194f950ba66d43689a2815a3670e5e0b398921d78501d5bb140`
+(Rekor index 2). Evidence: `docs/eval-records/interim-runtime-image.md`.
+
+Rules that make it an interim rather than a new path:
+- Dated tag + digest pin; the tag is never moved and no `:latest` is pushed from the host.
+- Signed with the *same* key and *same* Rekor as the pipeline, so the device `policy.json` written by
+  the Fleet (`keyPath` + `rekorPublicKeyPath`) verifies it exactly as it will verify the Tekton image
+  — no second trust root, no policy exception.
+- Nothing about it lands in code: no build script, no Makefile target, no docs claiming host builds
+  are supported. The build command lives only in the eval record.
+- Superseded the moment F's multi-arch manifest is signed: the Fleet re-pins to that digest; this tag
+  and Rekor entry stay as history.
+
+**Alternatives:** wait for Tekton (rejected — C, D and the cut-over stall behind it, and the
+contingency-kit recording (Phase 4 item 2) is downstream of C); `docker save | podman load` onto the
+VM as the cpu-spike did (rejected — bypasses the registry, the signature and `policy.json`, i.e. the
+exact thing C exists to prove); sign with `--tlog-upload=false` because the SNO was mid-upgrade
+(rejected — the device policy requires the Rekor SET; an unlogged signature fails to pull by design).
+**Consequences:**
+- amd64 only: the Fury still needs F (or the native `podman build` fallback in D028); this image
+  cannot be a Fury fallback.
+- Host-side cosign needs `--add-host` for the Rekor route (no sudo, not in `/etc/hosts`), the ingress
+  CA via `SSL_CERT_FILE`, and `SIGSTORE_REKOR_PUBLIC_KEY` for `verify` with a custom `--rekor-url` —
+  without it, `verify` consults the public Sigstore TUF root instead of the in-cluster Rekor and
+  fails with "rekor log public key not found for payload". F's Tekton verify step needs the same env
+  var — record it in `cosign-sign-task.yaml`.
+- The upstream `demos` checkout inside the image is the morning's cached layer, not a fresh clone;
+  F rebuilds from scratch.
+- D026 row 3 stays open until F; this decision does not close it.
+
+---
+
+## D046 — The desktop virtiofs share needs the host `virtiofsd` package (one sudo step); the VM's own XML edit stays unprivileged
+
+**Date:** 2026-09-08
+**Context:** D043 says the domain-XML edit needs no sudo, which holds, but libvirt must also launch
+`virtiofsd` and Ubuntu 24.04 does not ship it with QEMU 8.2.2 (`apt-cache policy virtiofsd`:
+candidate 1.10.0-1ubuntu0.1, not installed). Everything tried without sudo failed for the same
+reason, AppArmor:
+- `<binary path='/home/jary/act-device/virtiofsd/virtiofsd'/>` (binary extracted from the .deb with
+  `apt-get download` + `dpkg-deb -x`): libvirtd's enforced profile only allows
+  `/usr/{lib,lib64,lib/qemu,libexec}/virtiofsd PUx` (`/etc/apparmor.d/usr.sbin.libvirtd:97`) →
+  "virtiofsd died unexpectedly".
+- Unprivileged socket mode (`virtiofsd --sandbox=none` as jary in a user unit + `<source
+  socket=…>`): DAC verified OK as uid 64055 (`DAC-write-ok`), yet QEMU got `Permission denied` on
+  the socket — the per-VM QEMU profile (virt-aa-helper) adds no rule for a virtiofs socket source,
+  and the shared abstraction deliberately gives no blanket rw under /tmp or /home. Disabling the
+  VM's AppArmor label (`<seclabel type='none' model='apparmor'/>`) would work but weakens the host's
+  policy; not applied.
+**Decision:** `sudo apt install virtiofsd` on the desktop (the .deb is already at
+`~/act-device/virtiofsd/virtiofsd_1.10.0-1ubuntu0.1_amd64.deb` for `sudo dpkg -i`), then
+`device/vm/bags-share.sh` attaches the share unprivileged. libvirt-managed virtiofsd runs as root
+with `--sandbox namespace`, so guest-root writes land as **host root** — the same ownership the
+host `docker run` produces today (every bag dir under `~/flywheel-data/bags` is `root:root`), so the
+assemble/prune flow, which already runs inside root containers, is unchanged.
+**Consequences:** `create-vm.sh` and `bags-share.sh` exit 2 with that instruction when the package is
+missing (same pattern as the missing base image). `<memoryBacking memfd/shared>` is already defined
+on `act-device` (cold restart done 2026-09-08), so attaching the share later is define + one more
+cold restart. All socket-mode artefacts were removed from the host; `/home/jary` is back to 0750.
+Port-as-you-go log and safety details recorded alongside this: `after_assemble.sh` keeps writing to
+`~/prune-dryrun.txt` (name kept so the retention log stays in one file; entries are now appended
+under a timestamp header) and judges the **last** `[assemble-all] DONE|FAILED` marker, not any DONE
+in the log's history. `prune_bags.py --yes` prints each deleted bag with its size, so that file is a
+real record of what went. Credentials only from `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY` (fail-clear,
+verified); the host keeps them in `~/.minio-env` (0600), sourced by `after_assemble.sh` and passed
+into the container with `-e`. Not run today (SNO MinIO/Kafka down) — `~/assemble-all.log` already
+ends with the 12:14 DONE, so `~/after_assemble.sh` will prune immediately when started.
+
+---
+
+## D047 — SELinux: label the bags mount with `context=` and mount it without `:z`
+
+**Date:** 2026-09-08
+**Context:** the guest is Enforcing. libvirt does not pass `--xattr` to virtiofsd by default, so the
+guest cannot store SELinux labels on the share and podman's `:z` relabel has nothing to write to.
+**Decision:** the fstab entry carries `context=system_u:object_r:container_file_t:s0`; the Fleet's
+bags line is `Volume=/var/lib/act-inference/bags:/data/bags` (no `:z`, unlike `data`). On the Fury,
+where the directory is local disk, `provision.sh` labels it with `chcon -R -t container_file_t` so
+the same Fleet line works there.
+**Status:** untested on the device because the share could not be brought up (D046). Verify once
+attached: `sudo podman run --rm -v /var/lib/act-inference/bags:/data/bags
+registry.access.redhat.com/ubi9/ubi-micro:9.5 touch /data/bags/.podman-test` then
+`ausearch -m avc -ts recent`. If `:z` turns out to be harmless on virtiofs, the two Volume lines can
+be made uniform again.

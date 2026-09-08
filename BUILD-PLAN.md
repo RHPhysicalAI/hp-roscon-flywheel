@@ -379,7 +379,8 @@ C. **Fleet-delivered application** (D024, D026)
    - Image: `POLICY_DEVICE` env replaces the hard-coded `policy_device:=cuda`
      (`docker/inference-entrypoint.sh`); new `docker/healthcheck.sh` checks `/flywheel/model_version`
      equals `$MODEL_VERSION` and the action server is up (`--start-period=240s`). Built + signed by
-     Tekton (F), referenced by digest.
+     Tekton (F), referenced by digest. Interim amd64 image built + signed on the host (D045) is
+     pinned until F's Tekton build replaces it.
    - `gitops/rhem/fleet-act-inference.yaml`: selector `fleet=act-inference`; BatchSequence
      `[site=desktop, site=fury]`, `successThreshold: 100%`, `defaultUpdateTimeout: 30m`; inline
      config writes `policy.json` (sigstoreSigned, `keyPath` + `rekorPublicKeyPath`),
@@ -443,6 +444,7 @@ G. **Fury port + runbook** (on site, Sept 20–25)
 - `torch==2.9.1+cu130` aarch64 wheels (Phase 4 open question) — unverified
 - ~~RHOAI on SNO ships the `modelregistry` component~~ **Verified 2026-09-08:** RHOAI 2.25.11 DSC lists `modelregistry` (currently `Removed`)
 - **New (B):** label values may not contain `:` (k8s `IsValidLabelValue` in flightctl 1.3.0) → labels are `zenoh_router=10.0.0.48` + `zenoh_port=7447` (D033); `flightctl-agent-1.3.0-1.el10` no longer requires greenboot (only Recommends `flightctl-greenboot`)
+- **New (C0b):** `virtiofsd` must be installed from the distro package on the desktop (AppArmor pins the path) — D046; bag recording on the VM is off until then (D044)
 
 ### Exit criteria
 - [ ] `flightctl get devices` shows the desktop VM Online, labels correct, `applicationsSummary: Healthy`
