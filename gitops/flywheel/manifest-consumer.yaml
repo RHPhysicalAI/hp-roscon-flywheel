@@ -62,7 +62,7 @@ spec:
       containers:
         - name: consumer
           image: registry.access.redhat.com/ubi9/python-312:latest
-          command: ["sh", "-c", "pip install -q kafka-python==2.0.2 && python /code/consumer.py"]
+          command: ["sh", "-c", "pip install -q "kafka-python>=2.2,<4" && python /code/consumer.py"]
           env:
             - {name: KAFKA_BOOTSTRAP, value: "edge-kafka.flywheel.svc:9092"}
             - {name: TRIGGER_THRESHOLD, value: "160"}

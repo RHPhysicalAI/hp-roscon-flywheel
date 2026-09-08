@@ -17,7 +17,7 @@ from kfp import kubernetes as k8s
 PY_IMG = "registry.access.redhat.com/ubi9/python-312:latest"
 
 
-@dsl.component(base_image=PY_IMG, packages_to_install=["kafka-python==2.0.2", "boto3==1.35.36"])
+@dsl.component(base_image=PY_IMG, packages_to_install=["kafka-python>=2.2,<4", "boto3==1.35.36"])
 def trigger_and_wait(run_id: str, candidate: str, incumbent: str, collector: str,
                      incumbent_checkpoint: str, steps_per_frame: float, eval_n: int,
                      eval_seed_base: int, kafka_bootstrap: str, timeout_min: int,
