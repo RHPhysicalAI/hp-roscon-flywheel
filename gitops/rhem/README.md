@@ -9,11 +9,15 @@ What lands here in Phase 4.5:
 - `fleet-act-inference.yaml` (C) — selector `fleet=act-inference`, the quadlet app with the
   signed modelcar as an image volume, rollout policy, health check. A promotion (D025) is a
   two-regex edit of this file.
-- `catalogitem-soarm-act.yaml` (E2, stretch) — the model catalog entry the Fleet pins.
+- ~~`catalogitem-soarm-act.yaml` (E2, stretch)~~ — moved to `gitops/rhem-catalog/` (own
+  `ResourceSync/rhem-catalog`, `type: catalog`): a sync handles one resource type (D032), and the
+  Fleet cannot pin a `catalogItemRef` on the `.volume Driver=image` path anyway (D038), so the
+  CatalogItem is a version graph beside the digest-pinned Fleet, written by the pipeline's
+  removable seam (D027).
 
 Rules for files in this directory: flat (the sync does not descend into subdirectories),
 `*.yaml` only for resources (this README is skipped), one or more flightctl resources per file,
-`apiVersion: flightctl.io/v1beta1`.
+`apiVersion: flightctl.io/v1beta1`, Fleets only (`type: fleet` sync).
 
 ## `fleet-act-inference.yaml` — draft status (2026-09-08, Phase 4.5 C prep)
 

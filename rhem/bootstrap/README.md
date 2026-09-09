@@ -2,17 +2,22 @@
 
 Fleets and CatalogItems are flightctl **API objects**, not Kubernetes CRs, so Argo CD cannot
 apply them (D024). RHEM has its own GitOps loop for that: a `Repository` pointing at this repo
-and a `ResourceSync` that renders everything in `gitops/rhem/` from branch `desktop-gpu-split`.
-The two files here bootstrap that loop and are applied **once by hand** with `flightctl apply`,
-the same role `argocd/*-app.yaml` plays for Argo.
+and two `ResourceSync`s — one renders the Fleets in `gitops/rhem/`, the other the CatalogItems in
+`gitops/rhem-catalog/` (a sync handles one resource type, D032) — both from branch
+`desktop-gpu-split`. The files here bootstrap that loop and are applied **once by hand** with
+`flightctl apply`, the same role `argocd/*-app.yaml` plays for Argo.
 
 | File | Object | What it does |
 |---|---|---|
 | `repository.yaml` | `Repository/hp-roscon-flywheel` | `type: git`, public HTTPS URL, no auth |
 | `resourcesync.yaml` | `ResourceSync/rhem-fleets` | `type: fleet`, `path: gitops/rhem`, `targetRevision: desktop-gpu-split` |
+| `catalog.yaml` | `Catalog/physical-ai-models` (**v1alpha1**) | the software catalog the promoted model versions live in (E2, D027); hand-applied and unowned, so the catalog sync may put items in it |
+| `resourcesync-catalog.yaml` | `ResourceSync/rhem-catalog` | `type: catalog`, `path: gitops/rhem-catalog`, `targetRevision: desktop-gpu-split`; accepts only `Catalog`/`CatalogItem` kinds |
 
 Field names follow the flightctl 1.3 core OpenAPI (`GitRepoSpec.{type,url}`,
-`ResourceSyncSpec.{type,repository,targetRevision,path}`).
+`ResourceSyncSpec.{type,repository,targetRevision,path}`, `ResourceSyncType` = `fleet | catalog`)
+and, for the Catalog, `api/core/v1alpha1/openapi.yaml` (`CatalogSpec`). The Catalog API is alpha
+in flightctl 1.3.0 and may change.
 
 ## Apply
 
@@ -27,7 +32,10 @@ KUBECONFIG=$(mktemp) oc login https://api.sno-flywheel.local:6443 -u kubeadmin \
 flightctl login https://api.flightctl.apps.sno-flywheel.local --token "$(oc whoami -t)" --insecure-skip-tls-verify
 flightctl apply -f rhem/bootstrap/repository.yaml
 flightctl apply -f rhem/bootstrap/resourcesync.yaml
+flightctl apply -f rhem/bootstrap/catalog.yaml
+flightctl apply -f rhem/bootstrap/resourcesync-catalog.yaml
 flightctl get repository,resourcesync
+flightctl get catalogs; flightctl get catalogitems --catalog physical-ai-models
 ```
 
 Verified 2026-09-08: `flightctl get fleets` answers as kubeadmin without any RBAC workaround.
@@ -50,7 +58,7 @@ Two things that do **not** work:
 ## Expectations
 
 - `Repository` becomes `Accessible` as soon as GitHub answers.
-- `ResourceSync` reaches `Synced` only when `gitops/rhem/` exists **on the pushed branch**. Until
+- `ResourceSync` reaches `Synced` only when its path (`gitops/rhem/`, `gitops/rhem-catalog/`) exists **on the pushed branch**. Until
   the directory is committed and pushed it reports a path error; that is the expected state
   right after bootstrap, not a fault. An empty directory (README only) syncs cleanly — the sync
   reads `*.yaml`/`*.yml`/`*.json` and skips other files.
