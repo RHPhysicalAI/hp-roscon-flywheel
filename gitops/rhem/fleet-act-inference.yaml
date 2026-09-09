@@ -32,7 +32,10 @@
 #                                             (Rekor SET enforced on the device), signedIdentity matchRepository;
 #                                             the RHEL default entries for registry.access.redhat.com /
 #                                             registry.redhat.io are preserved because this file REPLACES the
-#                                             distro file; default stays insecureAcceptAnything for everything else
+#                                             distro file; the default is REJECT (review W-10): any reference
+#                                             outside the four enumerated registries/repos — a renamed repo, a
+#                                             typo in a promotion edit, a mirror, docker.io — is refused before
+#                                             any signature is even looked at (third negative test, D091 + Case 3)
 #   /etc/containers/registries.d/quay-jary.yaml  use-sigstore-attachments for quay.io/jary — without it
 #                                             containers/image never looks for the cosign attachment and every
 #                                             pull fails with "A signature was required, but no signature exists"
@@ -90,7 +93,7 @@ spec:
                 {
                     "default": [
                         {
-                            "type": "insecureAcceptAnything"
+                            "type": "reject"
                         }
                     ],
                     "transports": {
