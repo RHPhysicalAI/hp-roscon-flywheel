@@ -1,10 +1,13 @@
 <!-- This project was developed with assistance from AI tools. -->
 # Model Registry — the durable promotion record (Phase 4.5 E1, D027)
 
-**Date:** 2026-09-09. **State:** registry live on the hub under GitOps; pipeline `register_model` +
-`record_pr_url` written, compiled, uploaded (`v-202609090850-registry`); the proof run
-`3afee844-007a-4c97-ab70-5f9cc38b9853` is **parked on a cluster fault** (Multus `Unauthorized`, below) —
-the registered-version JSON and PR #4 sections are filled in once it completes.
+**Date:** 2026-09-09. **State: exit criterion met.** Registry live on the hub under GitOps; the pipeline
+registers the candidate (`register_model`), opens the PR and writes the PR URL back (`record_pr_url`).
+Run **`9015ecd4-5524-45cf-b6c7-f045a17860bc`** (version `v-202609091102-registry2`) went
+`trigger+wait -> gate -> package -> sign -> register_model -> open_promotion_pr -> record_pr_url` in 4 m 10 s
+and left version `act-v2-ft160-rhem` in the registry with the signed digest, the metrics, Rekor index and
+PR **#4** (rehearsal, not merged). The first proof run `3afee844-…` registered the version and then failed
+in `open_promotion_pr` — see *Two fixes* below.
 
 ## What is live
 
@@ -50,40 +53,114 @@ no token → **403**. From a pod in `flywheel` with client 0.3.11 against the Se
   terminated. (Copying the key from Tekton's `cosign-signing` Secret was blocked for the agent.)
 - New pipeline param `model_registry_url` (default `https://flywheel.rhoai-model-registries.svc:8443`).
 - Versions uploaded: `v-202609090836-registry` (0.3.16, superseded), `v-202609090839-registry`
-  (`e372c403-…`, env-secret path, superseded), **`v-202609090850-registry` (`29400621-5531-429b-80b5-8e24f613f240`)**.
+  (`e372c403-…`, env-secret path, superseded), `v-202609090850-registry` (`29400621-…`, run `3afee844`),
+  **`v-202609091102-registry2` (`3f700dc3-7f0f-4366-9073-a05624e7722a`, run `9015ecd4`)**.
 
-## Proof run — pending a cluster repair
+### Two fixes after the first proof run (commit `8d90222`)
 
-Run **`3afee844-007a-4c97-ab70-5f9cc38b9853`** (created 13:50:42Z), D1's parameters
-(`candidate=act-v2-ft160-rhem incumbent=upstream-act-teacher collector=upstream-act-teacher incumbent_checkpoint=hf`).
-Its `root-driver` pod cannot get a network sandbox: since **13:45:03Z** every new pod in `flywheel`
-fails with `Multus: […]: error waiting for pod: Unauthorized` (586 such lines in the `multus-4rzbb`
-log in 40 min; the `rejected-mirror` CronJob pods fail identically). Stale Multus API token; the
-repair is a restart of the Multus daemonset pod — an operator action:
+Run `3afee844-007a-4c97-ab70-5f9cc38b9853` (after the Multus repair) reached `register_model` —
+`registered_model_id: 1`, version id 2, `rekor_index: 5`, modelcar
+`quay.io/jary/soarm-act-modelcar@sha256:2879ddae…` (Rekor [5, 6, 7]) — then `open_promotion_pr` died:
+`github.GithubException 422 Reference already exists` at `repo.create_git_ref("refs/heads/promote/act-v2-ft160-rhem")`.
+Merged PR #2's head branch still exists on GitHub, so D066's fixed branch name collides with itself on any
+second run for the same candidate. `record_pr_url` never ran; the version sat with `pr_url: ""` (exactly the
+state D083 wanted visible — but self-inflicted).
 
-```bash
-oc delete pod -n openshift-multus -l app=multus      # daemonset recreates it in ~20 s
-oc get events -n flywheel --sort-by=.lastTimestamp | tail -3   # FailedCreatePodSandBox should stop
+1. **`open_promotion_pr`**: takes `run_id` (the same `dsl.PIPELINE_JOB_ID_PLACEHOLDER` `register_model`
+   records as `dsp_run_id`); head = **`promote/<candidate>-<run_id[:8]>`** (UTC timestamp if empty). If the
+   ref exists anyway it is force-moved (`get_git_ref(...).edit(sha, force=True)`); an open PR for the same
+   head is reused. Retry-safe.
+2. **`register_model`**: client 0.3.11 raises `StoreError("Version … already exists")` on a second
+   registration (it checks `get_model_version_by_params` and never updates). A rerun for a candidate whose
+   version exists now **updates** that version — custom properties, description, and the artifact `uri` if
+   the digest changed — instead of failing. One version row per candidate (D027); the row reflects the
+   latest run. Log: `"action": "updated (previous dsp_run_id=3afee844-…)"`.
+
+## Proof run `9015ecd4-5524-45cf-b6c7-f045a17860bc` — SUCCEEDED
+
+Submitted 16:02:47Z through the DSP API (`POST /apis/v2beta1/runs`, port-forward on the host, SA token),
+D1's parameters (`candidate=act-v2-ft160-rhem incumbent=upstream-act-teacher collector=upstream-act-teacher
+incumbent_checkpoint=hf`, D023 pre-trained path), experiment `flywheel-promotions`; finished 16:06:57Z.
+
+| task | result |
+|---|---|
+| trigger-and-wait | host runner reused the checkpoint + eval (`dataset_uri: reused`) |
+| eval-gate | 0.73 → 0.86, fixed 20 / broken 7, net +13, p = 0.0192 → PASS |
+| package-modelcar | re-packaged: **new** index digest `sha256:18cc4412a21bfdd48d27b654558d1268e7c95f168f28b50873c4e2417369e61a` (amd64 `1668097979…`, arm64 `e83b7e17…`) — same weights, but the D079 multi-arch build is not byte-reproducible, so every run yields a new index digest; expected |
+| sign-modelcar | Rekor `tlog entry created with index: 8` (index manifest) + 9, 10 (per-arch, recursive) → `rekor_index: 8` |
+| register-model | `updated (previous dsp_run_id=3afee844-…)`, `registered_model_id: 1`, version id 2, artifact uri → `18cc4412…` |
+| open-promotion-pr | https://github.com/RHPhysicalAI/hp-roscon-flywheel/pull/4 on `promote/act-v2-ft160-rhem-9015ecd4`, commit `b33b5133` |
+| record-pr-url | `pr_url recorded on soarm-act act-v2-ft160-rhem 2 -> …/pull/4` |
+
+The first run's earlier `3afee844` state (`FAILED` at `open-promotion-pr`) and the first modelcar
+`2879ddae…` (Rekor 5–7) remain in DSP / Quay / Rekor; the registry does not reference them any more.
+
+### Registered version
+
+Captured after the run via the Route (`--resolve flywheel-rest.apps.sno-flywheel.local:443:10.0.0.49`,
+runner-SA bearer token, `GET /api/model_registry/v1alpha3/...`), trimmed:
+
+```json
+// GET /registered_models
+{"items": [{"id": "1", "name": "soarm-act", "owner": "act-flywheel-pipeline", "state": "LIVE",
+            "customProperties": {}, "createTimeSinceEpoch": "1788964667330"}], "size": 1}
+
+// GET /model_versions
+{"items": [{
+  "id": "2", "name": "act-v2-ft160-rhem", "registeredModelId": "1", "author": "act-flywheel-pipeline", "state": "LIVE",
+  "description": "upstream-act-teacher 0.73 -> act-v2-ft160-rhem 0.86, net +13, p=0.0192",
+  "createTimeSinceEpoch": "1788964667349", "lastUpdateTimeSinceEpoch": "1788970005032",
+  "customProperties": {
+    "dataset_uri":            {"string_value": "reused"},
+    "checkpoint_uri":         {"string_value": "s3://episodes-data/checkpoints/act-v2-ft160-rhem/pretrained_model.tar.gz"},
+    "eval_report_uri":        {"string_value": "s3://episodes-data/eval/9015ecd4-5524-45cf-b6c7-f045a17860bc/eval_report.json"},
+    "incumbent":              {"string_value": "upstream-act-teacher"},
+    "incumbent_success_rate": {"double_value": 0.73},
+    "candidate_success_rate": {"double_value": 0.86},
+    "n_paired": {"int_value": "100"}, "fixed": {"int_value": "20"}, "broken": {"int_value": "7"}, "net": {"int_value": "13"},
+    "sign_test_p":            {"double_value": 0.0192},
+    "gate_rule":              {"string_value": "promote iff net > 0 and p < 0.05 (D022)"},
+    "verdict":                {"string_value": "PASS"},
+    "rekor_index":            {"int_value": "8"},
+    "rekor_url":              {"string_value": "http://rekor-server.trusted-artifact-signer.svc"},
+    "pr_url":                 {"string_value": "https://github.com/RHPhysicalAI/hp-roscon-flywheel/pull/4"},
+    "dsp_run_id":             {"string_value": "9015ecd4-5524-45cf-b6c7-f045a17860bc"}
+  }}], "size": 1}
+
+// GET /model_artifacts
+{"items": [{"id": "1", "artifactType": "model-artifact", "name": "soarm-act", "state": "UNKNOWN",
+            "modelFormatName": "lerobot-act", "modelFormatVersion": "1",
+            "uri": "quay.io/jary/soarm-act-modelcar@sha256:18cc4412a21bfdd48d27b654558d1268e7c95f168f28b50873c4e2417369e61a",
+            "createTimeSinceEpoch": "1788964667371", "lastUpdateTimeSinceEpoch": "1788969937722"}], "size": 1}
 ```
 
-The run needs no resubmission — the kubelet retries the sandbox and Argo continues. Expected: PR **#4**
-re-promoting `act-v2-ft160 → act-v2-ft160-rhem` (rehearsal, **do not merge**), then:
+(`metadataType` fields elided; each custom property carries `MetadataStringValue` / `MetadataIntValue` /
+`MetadataDoubleValue`. `int_value` is a string on the wire.) The five-way join D027 asked for is one
+GET: digest (`model_artifacts[0].uri`), metrics, Rekor index, PR URL, DSP run id.
 
-```bash
-H=flywheel-rest.apps.sno-flywheel.local; T=$(oc create token pipeline-runner-dspa -n flywheel --duration=10m)
-curl -sk --resolve $H:443:10.0.0.49 -H "Authorization: Bearer $T" https://$H/api/model_registry/v1alpha3/registered_models
-curl -sk --resolve $H:443:10.0.0.49 -H "Authorization: Bearer $T" "https://$H/api/model_registry/v1alpha3/model_versions"
-curl -sk --resolve $H:443:10.0.0.49 -H "Authorization: Bearer $T" "https://$H/api/model_registry/v1alpha3/model_artifacts"
+### PR #4 — rehearsal, **do not merge**
+
+https://github.com/RHPhysicalAI/hp-roscon-flywheel/pull/4 — `Promote act-v2-ft160-rhem (73% -> 86%)`, head
+`promote/act-v2-ft160-rhem-9015ecd4`, base `desktop-gpu-split`, one commit `b33b5133`. Diff is the D066 shape:
+
+```
+gitops/rhem/fleet-act-inference.yaml
+-  Image=quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b
++  Image=quay.io/jary/soarm-act-modelcar@sha256:18cc4412a21bfdd48d27b654558d1268e7c95f168f28b50873c4e2417369e61a
+-  MODEL_VERSION: act-v2-ft160
++  MODEL_VERSION: act-v2-ft160-rhem
+gitops/flywheel/manifest-consumer.yaml
+-  INCUMBENT / COLLECTOR: act-v2-ft160;  INCUMBENT_CHECKPOINT: s3://…/act-v2-ft160/pretrained_model.tar.gz
++  INCUMBENT / COLLECTOR: act-v2-ft160-rhem;  INCUMBENT_CHECKPOINT: s3://…/act-v2-ft160-rhem/pretrained_model.tar.gz
 ```
 
-### Registered version (to fill in)
+The base currently serves `act-v2-ft160` @ `bdb513ca…` (the D2 rollback, PR #3), so the diff re-promotes the
+same weights the Fleet ran under PR #2, under a fresh digest. Merging would roll the device again for no
+behavioural change — leave it open as the "PR waiting for the human gate" screen or close it unmerged.
 
-_pending the run: `registered_models[0]` (`soarm-act`), `model_versions[0]` (`act-v2-ft160-rhem`, custom
-properties incl. `rekor_index`, `pr_url`), `model_artifacts[0].uri` (= the signed index digest)._
-
-### PR #4
-
-_pending._
+**Exit criterion (BUILD-PLAN item E, "the registry shows the promoted version with digest + metrics for at
+least one candidate"): met** — version `act-v2-ft160-rhem` carries the signed digest, the paired-eval metrics,
+Rekor index 8 and PR #4.
 
 ## Also observed
 
