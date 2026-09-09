@@ -205,8 +205,8 @@ spec:
                 Description=ACT policy inference (RHEM-managed, Fleet act-inference)
 
                 [Container]
-                # Runtime image: built + signed by Tekton (Phase 4.5 F), referenced by digest. Interim host build (D045 record, 2026-09-08b) until F lands.
-                Image=quay.io/jary/soarm-flywheel@sha256:2ad1fb1c393a6a5c5281abab83187d9e4aeecc05fdca8e12b7d247ced0009e11
+                # Runtime image: built + signed by Tekton (Phase 4.5 F), referenced by the multi-arch manifest-list digest (docs/eval-records/runtime-image-tekton.md: tag act-inference-aa7392f, Rekor 11/12/13).
+                Image=quay.io/jary/soarm-flywheel@sha256:3d67f4246fd0915278b419bf4a3c67c3c9e0f8a07c553305a7445f65fc2cb4af
                 ContainerName=act-inference
                 Network=host
                 EnvironmentFile=/etc/act-inference/env
