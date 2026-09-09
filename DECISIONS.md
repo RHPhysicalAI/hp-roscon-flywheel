@@ -3791,3 +3791,77 @@ verified via `oc get applications.argoproj.io -n openshift-gitops -o custom-colu
 Application objects are two separate actions taken together deliberately (see C6 above); no
 Application was deleted or resynced to test the finalizer, per the "nothing destructive" constraint
 on this pass.
+
+---
+
+## D118 — C10/C12 closed: camera health checks liveness not presence; joint-index gripper/wrist bug fixed by name across three call sites plus sim_reset.py's own arm-homing parse bug
+
+**Date:** 2026-09-09
+**Context:** consolidated review findings C10 (`.changes/reviews/code-review-reliability.md`) and
+C12 (`.changes/reviews/code-review-domain.md`). The operator asked specifically to "be careful with
+C12" since it touches robot motion-settle logic; this entry documents the exact joint set used and
+the live verification performed, so a future reader can audit it without re-deriving the
+alphabetical-order reasoning from scratch.
+
+**C10 — `src/camera-bridge/camera_bridge.py`:** `/health` reported `_latest[cam] is not None`,
+which stayed true forever after the first frame, even if the sim froze. Added `_last_seen[cam] =
+time.time()` on every successfully decoded frame; `/health` now reports freshness
+(`now - last_seen < HEALTH_STALE_S`, default 3.0s — generous against the "up to 30 fps" source rate
+so a transient hiccup doesn't false-positive, tight enough to catch a real freeze in a few seconds)
+instead of presence, returns HTTP 503 (not 200) when neither camera is fresh, and adds an `age_s`
+field to the JSON body. Checked for other consumers of this endpoint first (`docs/DEMO_RUNBOOK.md`,
+`gitops/flywheel/dashboard.yaml`) — only human `curl` usage in the runbook's recovery flow, no
+scripted status-code dependency, so changing the status code semantics is safe.
+
+**C12 — joint-index bug, three call sites in `coordinator.py` plus `sim_reset.py`:**
+`/joint_states` publishes joints alphabetically: `elbow_flex_joint(0), gripper_joint(1),
+shoulder_lift_joint(2), shoulder_pan_joint(3), wrist_flex_joint(4), wrist_roll_joint(5)`.
+`CTRL_JOINTS` (the controller's expected order) is `shoulder_pan, shoulder_lift, elbow_flex,
+wrist_flex, wrist_roll, gripper`. A raw `positions[:5]` slice against the alphabetical order
+therefore contains `{elbow_flex, gripper, shoulder_lift, shoulder_pan, wrist_flex}` — includes the
+gripper, excludes `wrist_roll_joint` entirely — the opposite of the "skip gripper" comment's intent.
+- `coordinator.py`: added `_arm_joint_positions(positions)`, a name-keyed helper (`dict(zip(names,
+  positions))`, filtered to `CTRL_JOINTS` minus `GRIPPER_JOINT`) mirroring the pattern already
+  proven correct in `_learn_rest_pose`/`_recover_arm` in the same file. Applied it to all three
+  call sites: `_arm_at_home()` (used by `_wait_for_home`), `run_forever()`'s step-4 "is the arm
+  still moving" rest-detector, and `_policy_window()`'s identical eval-harness copy. The fixed
+  joint set for every "home/settled" check: `shoulder_pan_joint, shoulder_lift_joint,
+  elbow_flex_joint, wrist_flex_joint, wrist_roll_joint` (5 joints, gripper excluded, wrist_roll
+  included).
+- `sim_reset.py`'s `arm_is_home()` had no name source at all — it shells out to `ros2 topic echo
+  --once --field position /joint_states` with no `name` field. It cannot import `coordinator.py`'s
+  `CTRL_JOINTS` (this script ships in a separate image, `docker/Dockerfile`, which does not carry
+  `coordinator.py`), so a local `ARM_JOINTS`/`GRIPPER_JOINT` pair was added with the identical
+  default string and the same `CTRL_JOINTS`/`GRIPPER_JOINT` env-var names, so a shared override
+  stays consistent across both scripts. Added a second `ros2 topic echo --field name` call and
+  paired the two outputs by name via the same `dict(zip(...))` idiom.
+- **Live-verified against the real running sim** (`so-arm-sim` container, read-only): `ros2 topic
+  echo --once --field name /joint_states` confirmed the alphabetical order exactly as documented.
+  Discovered along the way — `ros2 topic echo` appends a trailing `---\n` YAML document separator
+  even in `--once --field` mode; the position field's existing loose regex (`[-\d.eE]+`) captured
+  it as a spurious `"---"` token, and the pre-existing filter (`not in ("", ".", "-")`) never
+  excluded a 3-character string, so `float("---")` raised inside every call and `arm_is_home()` fell
+  through to `except: return False` **on every invocation, unconditionally, independent of this
+  fix** — a second, pre-existing bug, not introduced here. Fixed by parsing each numeric candidate
+  defensively (try/except per token) rather than trusting the character class. Copied the current
+  file into the live container at a throwaway path (`/tmp/sim_reset_test.py`, not overwriting the
+  resident copy) and ran the real `arm_is_home()` function against the live topic twice — once
+  before the `---` fix (returned `False`, arm was actually at ~1e-10 rad, i.e. home) and once after
+  (returned `True`, correct) — then deleted the test file from both the container and the host.
+**Decision:** both fixes land as-is. Not live yet — `camera_bridge.py` and `sim_reset.py` are baked
+into `docker/Dockerfile` (the host sim image, `quay.io/jary/soarm-flywheel:sim-only`); `coordinator.py`
+and `sim_reset.py` are also baked into `docker/Dockerfile.gpu-inference` (the Tekton-built RHEM
+image). Deployment is tracked separately: a host-side `docker build` for the sim image (batched with
+D115's `episode_emitter.py` fix, same image) and the Tekton multi-arch rebuild the operator
+authorized as C11.
+**Confidence:** high on C10 (simple, verified logic, low blast radius). High on C12's joint-set
+correctness (verified against real captured live data twice, including the newly-found `---` bug —
+not just code-read reasoning). Medium-high on behavioral impact: the "is it still moving"
+rest-detector fix could plausibly change early-stop timing in either direction (previously ignored
+real wrist-roll motion and reacted to gripper motion instead) — worth one supervised sim run before
+the next rehearsal to confirm episode timing looks sane, not just that the code is correct.
+**Consequences:** the `RECOVER_ON_FAIL` comment block (coordinator.py:86-89) notes a previously
+undiagnosed loop-breakage when `RESET_ARM=true` was tried; this joint-index bug is a plausible
+contributor (gripper motion during grasp/release could have falsely extended "still moving," or
+missed wrist-roll settling), not confirmed as the root cause — worth revisiting if that path is
+tried again.

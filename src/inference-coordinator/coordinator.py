@@ -384,11 +384,26 @@ class Coordinator(Node):
             else:
                 self.get_logger().warn(f"Arm did not reach rest pose (max err {err:.3f} rad)")
 
+    def _arm_joint_positions(self, positions):
+        """Return {name: value} for CTRL_JOINTS' 5 real arm joints (excludes the
+        gripper), keyed by name via self._latest_names — never by raw index.
+        /joint_states publishes alphabetically, not in CTRL_JOINTS order, so a
+        positions[:5] slice silently checks the gripper (alphabetical index 1) and
+        drops wrist_roll_joint (alphabetical index 5) entirely (D118/C12). Mirrors
+        the name-keyed pattern already used by _learn_rest_pose/_recover_arm."""
+        names = self._latest_names
+        if not names or len(names) != len(positions):
+            return {}
+        pose = dict(zip(names, positions))
+        return {j: pose[j] for j in CTRL_JOINTS if j != GRIPPER_JOINT and j in pose}
+
     def _arm_at_home(self) -> bool:
-        if not self._latest_positions:
+        if not (self._latest_positions and self._latest_names):
             return False
-        # First 5 are arm joints (skip gripper)
-        return all(abs(p) <= HOME_TOLERANCE for p in self._latest_positions[:5])
+        arm = self._arm_joint_positions(self._latest_positions)
+        if len(arm) < len(CTRL_JOINTS) - 1:  # expect all 5 non-gripper joints present
+            return False
+        return all(abs(p) <= HOME_TOLERANCE for p in arm.values())
 
     def _wait_for_home(self):
         """Block until the arm reaches home or HOME_WAIT_MAX elapses."""
@@ -478,24 +493,26 @@ class Coordinator(Node):
             #    and the arm has settled, so good runs don't wait out the clock.
             t_end = time.time() + EPISODE_LEN
             window_start = time.time()
-            prev_pos = None
+            prev_arm = None
             rest_since = None
             while time.time() < t_end:
                 rclpy.spin_once(self, timeout_sec=0.2)
                 now = time.time()
                 # Track when the arm last moved (rest = motion stopped, not a
-                # specific joint pose — home is not all-zeros).
-                if self._latest_positions:
-                    if prev_pos and len(prev_pos) == len(self._latest_positions):
+                # specific joint pose — home is not all-zeros). Name-keyed, not
+                # positions[:5] (D118/C12) — see _arm_joint_positions.
+                if self._latest_positions and self._latest_names:
+                    arm_now = self._arm_joint_positions(self._latest_positions)
+                    if prev_arm and arm_now:
                         moved = max(
-                            abs(a - b)
-                            for a, b in zip(self._latest_positions[:5], prev_pos[:5])
+                            abs(arm_now[j] - prev_arm[j])
+                            for j in arm_now if j in prev_arm
                         )
                         if moved > REST_EPS:
                             rest_since = None
                         elif rest_since is None:
                             rest_since = now
-                    prev_pos = list(self._latest_positions)
+                    prev_arm = arm_now
                 # Only run the (costly) cube check once the arm has held still
                 # past the window floor.
                 if (
@@ -546,22 +563,24 @@ class Coordinator(Node):
         Early-stop ends a run once 3/3 cubes are placed and the arm has settled."""
         t_end = time.time() + EPISODE_LEN
         window_start = time.time()
-        prev_pos = None
+        prev_arm = None
         rest_since = None
         while time.time() < t_end:
             rclpy.spin_once(self, timeout_sec=0.2)
             now = time.time()
-            if self._latest_positions:
-                if prev_pos and len(prev_pos) == len(self._latest_positions):
+            # Name-keyed, not positions[:5] (D118/C12) — see _arm_joint_positions.
+            if self._latest_positions and self._latest_names:
+                arm_now = self._arm_joint_positions(self._latest_positions)
+                if prev_arm and arm_now:
                     moved = max(
-                        abs(a - b)
-                        for a, b in zip(self._latest_positions[:5], prev_pos[:5])
+                        abs(arm_now[j] - prev_arm[j])
+                        for j in arm_now if j in prev_arm
                     )
                     if moved > REST_EPS:
                         rest_since = None
                     elif rest_since is None:
                         rest_since = now
-                prev_pos = list(self._latest_positions)
+                prev_arm = arm_now
             if (
                 EARLY_STOP
                 and rest_since is not None

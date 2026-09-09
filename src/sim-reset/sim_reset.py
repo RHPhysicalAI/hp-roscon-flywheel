@@ -84,26 +84,59 @@ def reset_cubes(randomize=False, rng=None):
 # considered already at rest and we skip the reset.
 HOME_TOLERANCE = float(os.environ.get("HOME_TOLERANCE", "0.15"))
 
+# Same names/env-var shape as coordinator.py's CTRL_JOINTS/GRIPPER_JOINT (not
+# imported — this script ships in a separate image, docker/Dockerfile, that
+# doesn't carry coordinator.py). /joint_states publishes alphabetically, not in
+# this order; arm_is_home() below looks joints up by name, never by raw index
+# (D118/C12 — a positions[:5] slice silently checked the gripper instead of
+# wrist_roll_joint).
+ARM_JOINTS = [j.strip() for j in os.environ.get(
+    "CTRL_JOINTS",
+    "shoulder_pan_joint,shoulder_lift_joint,elbow_flex_joint,"
+    "wrist_flex_joint,wrist_roll_joint,gripper_joint").split(",") if j.strip()]
+GRIPPER_JOINT = os.environ.get("GRIPPER_JOINT", "gripper_joint")
+
 
 def arm_is_home() -> bool:
-    """Check current joint positions. True if all joints are near home (0).
+    """Check current joint positions. True if all (non-gripper) arm joints are
+    near home (0).
 
     The policy returns the arm to rest when it completes the task, so on
     successful episodes the arm is already home and no reset is needed.
     On failed episodes the arm is left mid-reach and does need homing.
     """
     try:
-        result = subprocess.run(
-            ["ros2", "topic", "echo", "--once", "--field", "position",
-             "/joint_states"],
+        names_out = subprocess.run(
+            ["ros2", "topic", "echo", "--once", "--field", "name", "/joint_states"],
             capture_output=True, timeout=8, text=True,
         )
-        # Output is a list like: [0.01, -0.02, 0.0, ...]
-        nums = re.findall(r"[-\d.eE]+", result.stdout)
-        positions = [float(n) for n in nums if n not in ("", ".", "-")]
-        if not positions:
+        pos_out = subprocess.run(
+            ["ros2", "topic", "echo", "--once", "--field", "position", "/joint_states"],
+            capture_output=True, timeout=8, text=True,
+        )
+        # name field prints as a Python list repr: ['elbow_flex_joint', ...]
+        names = re.findall(r"'([^']+)'", names_out.stdout)
+        # position field prints as array('d', [0.01, -0.02, ...]) followed by a
+        # trailing YAML '---' document separator — `ros2 topic echo` emits it even
+        # in --once --field mode. A loose "[-\d.eE]+" scan captures '---' as a
+        # spurious token; float() on it raises and this whole function used to
+        # silently fall through to `except: return False` every time (found live —
+        # the pre-existing filter only rejected "", ".", "-", never "---"). Parse
+        # each candidate token defensively instead of trusting the character class.
+        candidates = re.findall(r"[-\d.eE]+", pos_out.stdout)
+        positions = []
+        for tok in candidates:
+            try:
+                positions.append(float(tok))
+            except ValueError:
+                pass
+        if not names or len(names) != len(positions):
             return False  # can't tell — reset to be safe
-        return all(abs(p) <= HOME_TOLERANCE for p in positions[:5])  # arm joints (skip gripper)
+        pose = dict(zip(names, positions))
+        arm = {j: pose[j] for j in ARM_JOINTS if j != GRIPPER_JOINT and j in pose}
+        if len(arm) < len(ARM_JOINTS) - 1:  # expect all 5 non-gripper joints present
+            return False  # can't tell — reset to be safe
+        return all(abs(p) <= HOME_TOLERANCE for p in arm.values())
     except Exception:
         return False  # can't tell — reset to be safe
 

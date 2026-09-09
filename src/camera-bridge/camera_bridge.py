@@ -24,6 +24,13 @@ PORT = int(os.environ.get("CAMERA_BRIDGE_PORT", "8081"))
 
 # Latest frame storage — lock-free via GIL for single-writer
 _latest = {"wrist": None, "static": None}
+# Wall-clock time of the last successfully decoded frame per camera, so /health can
+# report liveness (is the stream still moving) rather than mere presence (has a
+# frame ever arrived) — a frozen sim otherwise reads healthy forever (D118/C10).
+_last_seen = {"wrist": 0.0, "static": 0.0}
+# Generous vs. the "up to 30 fps" source rate (comment above) so transient encode/QoS
+# hiccups don't false-positive, but still catches a real freeze within a few seconds.
+HEALTH_STALE_S = float(os.environ.get("CAMERA_HEALTH_STALE_S", "3.0"))
 
 
 def _init_ros():
@@ -65,6 +72,7 @@ def _init_ros():
                     arr = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, -1)
                 _, jpeg = cv2.imencode(".jpg", arr, [cv2.IMWRITE_JPEG_QUALITY, 60])
                 _latest[name] = jpeg.tobytes()
+                _last_seen[name] = time.time()
             except Exception:
                 pass
 
@@ -131,8 +139,13 @@ class MJPEGHandler(BaseHTTPRequestHandler):
 
     def _health(self):
         import json
-        data = json.dumps({"wrist": _latest["wrist"] is not None, "static": _latest["static"] is not None})
-        self.send_response(200)
+        now = time.time()
+        # Liveness (last frame within HEALTH_STALE_S), not mere presence — a frozen sim
+        # otherwise reads healthy forever once a single frame has ever arrived (D118/C10).
+        fresh = {cam: (_last_seen[cam] > 0 and now - _last_seen[cam] < HEALTH_STALE_S) for cam in _latest}
+        age = {cam: (round(now - _last_seen[cam], 2) if _last_seen[cam] > 0 else None) for cam in _latest}
+        data = json.dumps({**fresh, "age_s": age})
+        self.send_response(200 if any(fresh.values()) else 503)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(data.encode())
