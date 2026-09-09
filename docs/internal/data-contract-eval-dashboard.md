@@ -12,7 +12,7 @@ is produced by the flywheel itself; nothing here is hand-made.
 | Live stream of curated records | Kafka `episode-manifests` (`10.0.0.49:30903`, PLAINTEXT) — `{episode_id, s3_uri, score, model_version, …}` | same host/port |
 | Assembled training datasets | MinIO `episodes-data/<model_version>/<repo_id>.tar.gz` + Kafka `dataset-manifests` | same |
 | Promotion evidence per pipeline run | MinIO `episodes-data/eval/<run_id>/eval_report.json` (+ the two raw harness records) | same |
-| Frozen Phase-3 evidence (for the booth, no cluster needed) | repo `docs/eval-records/phase3-ladder/*.json`; table via `src/eval-report/ladder_report.py`; chart `docs/phase3-ladder.html` | git |
+| Frozen Phase-3 evidence (for the booth, no cluster needed) | repo `docs/eval-records/phase3-ladder/*.json`; table via `src/eval-report/ladder_report.py`; chart `docs/internal/phase3-ladder.html` | git |
 | Promotions | GitHub PRs on `RHPhysicalAI/hp-roscon-flywheel` titled `Promote <candidate> (…)`; Rekor entries at `rekor-server-trusted-artifact-signer.apps.sno-flywheel.local` | git / cluster route |
 
 ## Lineage (`model_version`) — the grouping key

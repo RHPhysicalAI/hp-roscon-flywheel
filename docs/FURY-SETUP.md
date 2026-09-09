@@ -1,17 +1,12 @@
 # Standing This Up on the Fury
 
 A pre-flight guide for whoever has hands-on access to the physical HP ZGX Fury and is bringing the
-flywheel up on it for the first time. Everything here has been built and rehearsed on a stand-in;
-what's actually been run on aarch64 hardware itself is called out explicitly — this project has
-been deliberately honest throughout about what's verified versus what's designed-but-untested, and
-this doc keeps that same discipline.
+flywheel up on it for the first time. What has been exercised on aarch64 hardware is called out
+explicitly.
 
 ## The hardware
 
-HP ZGX Fury — Grace Blackwell (GB300), 748 GB unified memory, aarch64, RHEL 10.2. Remote SSH
-access is coordinated through HP (Rick Gosalvez); as of this writing that access window is
-targeted for Sept 20–25. If you're reading this before that access exists, the honest status is:
-designed and rehearsed on a stand-in, not yet run on the real box.
+HP ZGX Fury — Grace Blackwell (GB300), 748 GB unified memory, aarch64, RHEL 10.2.
 
 ## The one thing to understand before anything else: the device *is* the host
 
@@ -76,8 +71,7 @@ Verified, not just designed:
   emulation) to be faster, not slower, but this hasn't been measured yet.
 - `torch` and its CUDA build for aarch64/Blackwell: aarch64 wheels exist, but only the base
   `torch` package carries the `+cu130` suffix on arm64 (torchvision/torchaudio don't) — the build
-  already accounts for this with per-architecture pins. See `docs/internal/DECISIONS.md` for the specific
-  finding.
+  accounts for this with per-architecture pins in `docker/Dockerfile.gpu-inference`.
 - RHEL 10.2's AppStream repo ships a podman version (5.8.2) that satisfies the image-volume
   feature RHEM 1.3 needs.
 
@@ -88,23 +82,16 @@ assumptions to build on:
 - The aarch64 Blackwell CUDA path has never actually served an inference request — the runtime
   image builds and is signed for arm64, but nothing has run it on real Grace Blackwell silicon yet.
 - A from-scratch SNO bring-up applying all bootstrap Applications by hand, back to back, has not
-  been rehearsed end to end anywhere (the desktop's hub was built up incrementally over the life of
-  the project, not from a clean slate in one sitting).
+  been rehearsed end to end.
 
 ## Known gaps worth planning around
 
-- The dashboard's camera-stream host is currently hardcoded to the desktop's IP; it needs to become
-  configurable before Beat 1 works unmodified on the Fury (tracked as a `TODO` in
-  `gitops/flywheel/dashboard.yaml`).
-- Two people outside this project are named as dependencies and haven't been re-confirmed close to
-  the travel date: Rick Gosalvez (HP) for the SSH access window itself, and Manny (HP) for on-site
-  booth logistics. Neither has a recorded status as of this writing — worth confirming directly
-  before relying on either.
+- The dashboard's camera-stream host is hardcoded; it needs to become configurable before Beat 1
+  works unmodified on the Fury (a `TODO` in `gitops/flywheel/dashboard.yaml`).
 
 ## If something breaks
 
 `docs/DEMO_RUNBOOK.md`'s "Failure recovery" table covers the operational failure modes already
-seen on the desktop stand-in (loop restart, dashboard hangs, port-forward drops, rollout stalls).
-Most of it transfers directly — the underlying components are identical, only their physical
-location changes. `docs/internal/DECISIONS.md` is the fuller record of what's already gone wrong once and how it
-was actually fixed, searchable by symptom.
+seen on the development stand-in (loop restart, dashboard hangs, port-forward drops, rollout
+stalls). Most of it transfers directly — the underlying components are identical, only their
+physical location changes.

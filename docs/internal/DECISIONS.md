@@ -3987,3 +3987,22 @@ pushed history is not rewritten.
 **Consequences:** `docs/internal/` is the only place engineering history is linked from the front
 door. C3/C10/C11/C12 from the review are fixed in source but still not deployed (host sim image
 rebuild; Tekton runtime rebuild + Fleet re-pin) — tracked as the next action, not closed.
+
+---
+
+## D122 — Front-door docs trimmed to what does not go stale; eval-dashboard contract and Phase 3 chart moved to `docs/internal/`
+
+**Date:** 2026-09-09
+**Context:** operator review of D121's README and the four architecture-family docs.
+**Decision:** `README.md` loses the development-workstation mentions, the engineering-history
+pointer, and the Deploying and Status sections; it now ends at the documentation index.
+`docs/ARCHITECTURE.md`, `docs/DATA-FLOW.md`, `docs/BILL-OF-MATERIALS.md` and `docs/FURY-SETUP.md`
+lose every decision-record reference, the "where to verify" section, the drift note, named external
+contacts, and "today / target / as of this writing" phrasing — anything that would need chasing as
+the system moves. Evidence links point at `docs/eval-records/` only. `docs/data-contract-eval-
+dashboard.md` and `docs/phase3-ladder.html` move to `docs/internal/` (`git mv`); the runbook,
+demo-kit index and `device/README.md` are repointed. The `docs/eval-records/phase3-ladder/` JSON
+records stay where they are — the README's results link to them.
+**Consequences:** the public surface is `README.md`, `docs/` minus `docs/internal/`, and the
+operational READMEs. Anything that describes the state of the system at a point in time lives
+under `docs/internal/` or `docs/eval-records/`.

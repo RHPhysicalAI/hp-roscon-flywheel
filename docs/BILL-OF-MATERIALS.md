@@ -1,9 +1,7 @@
 # Bill of Materials
 
-Every component this project runs, which machine it runs on, and what it's built from. Verified
-against the live desktop stand-in as of this writing; the manifest paths are the source of truth
-going forward — if this table and the manifests ever disagree, trust the manifests and treat this
-page as due for an update.
+Every component this project runs, which machine it runs on, and what it's built from. The
+linked manifests are authoritative.
 
 ## Hub (Single-Node OpenShift)
 
@@ -15,7 +13,7 @@ Delivered by 8 Argo CD Applications, each pruning to exactly one directory under
 | `operators` | `gitops/operators/` | `openshift-operators` | OLM Subscriptions: OpenShift Pipelines, RHOAI, RHTAS |
 | `operators-config` | `gitops/operators-config/` | `redhat-ods-operator` + others | `DataScienceCluster`, `DataSciencePipelinesApplication`, `Securesign`, `ModelRegistry` CRs |
 | `minio` | `gitops/minio/` | `minio` | Object storage for curated episodes, datasets, checkpoints |
-| `flywheel` | `gitops/flywheel/` | `flywheel` | Curator, sync-agent, Kafka, manifest-consumer, dashboard, the sim's in-cluster manifest (vestigial on the desktop — see note below) |
+| `flywheel` | `gitops/flywheel/` | `flywheel` | Curator, sync-agent, Kafka, manifest-consumer, dashboard |
 | `observability` | `gitops/observability/` | `observability` | Perses dashboards, Tempo datasource (Perses/Tempo operators themselves are hand-installed, not under this app — see `argocd/README.md`) |
 | `rhem` | `gitops/rhem/` (via a Helm OCI chart) | `flightctl` | Red Hat Edge Manager (flightctl 1.3) — hub components; the `Fleet`/`Catalog` objects themselves are rendered separately via `rhem/bootstrap/` (they're flightctl API objects, not k8s CRs) |
 | `tekton` | `gitops/tekton/` | `flywheel` | OpenShift Pipelines Tasks/Pipeline for the multi-arch runtime-image build + sign |
@@ -39,15 +37,15 @@ Defined in [`pipeline/act_flywheel_pipeline.py`](../pipeline/act_flywheel_pipeli
 
 ## Sim / producer
 
-Runs as host containers alongside the box hosting the GPU (desktop today, the Fury host once ported) — not in the cluster. Built from [`docker/Dockerfile`](../docker/Dockerfile) ("Based on upstream `ros-physical-ai/demos` Dockerfile. Adds rmw_zenoh_cpp, the episode-emitter node, flywheel volume mounts").
+Runs as host containers on the box hosting the GPU — not in the cluster. Built from [`docker/Dockerfile`](../docker/Dockerfile), which extends the upstream `ros-physical-ai/demos` image with `rmw_zenoh_cpp`, the episode-emitter node, and the flywheel volume mounts.
 
-| Container | Role | Notes |
+| Container | Role | Built from |
 |---|---|---|
-| `so-arm-sim` | Gazebo + SO-ARM101, camera bridge, episode emitter, sim reset | image tag `sim-only`, built locally on the host — not currently pushed to a registry (see `gitops/flywheel/so-arm-sim.yaml`'s comment; the in-cluster copy of this manifest is scaled to 0 replicas and is not what actually runs) |
+| `so-arm-sim` | Gazebo + SO-ARM101, camera bridge, episode emitter, sim reset | `docker/Dockerfile` |
 | `pose-ui` | Rest-pose picker / live joint + camera view for the operator | `src/pose-ui/pose_ui.py` |
 
-The **coordinator** (episode lifecycle, ground-truth scoring, recording) and the **host runner**
-(the desktop's GPU-outside-the-cluster shim for the pipeline's train/eval stages, `src/host-runner/host_runner.py`) run directly on the host, not containerized — started via `tools/host/run-coordinator.sh` and a resident Python process respectively.
+The **coordinator** (episode lifecycle, ground-truth scoring, recording) and the **training runner**
+(runs the pipeline's train and eval stages on the GPU host, `src/host-runner/host_runner.py`) run directly on the host — started via `tools/host/run-coordinator.sh` and as a resident Python process respectively.
 
 ## The managed device
 
@@ -61,12 +59,12 @@ Runs **one** container, delivered as an image volume by the RHEM Fleet — not b
 
 ## What runs where — quick reference
 
-| Role | Desktop stand-in (today) | Fury (target) |
+| Role | Development stand-in | Fury |
 |---|---|---|
-| Hub (SNO) | KVM VM on the desktop | fresh KVM VM on the Fury host |
+| Hub (SNO) | KVM VM | KVM VM on the Fury host |
 | Managed device | separate RHEL 10 VM | the Fury host itself |
-| Sim + coordinator + host runner | desktop host, direct on the GPU | Fury host, direct on the GPU |
-| Presenting laptop | operator's laptop — browser, phone, `ssh`/`gh` client; no cluster access of its own | same role, same machine, at the venue |
+| Sim + coordinator + training runner | GPU host | Fury host, on the GPU |
+| Presenting laptop | operator's laptop — browser and CLI client; no cluster access of its own | same |
 
 ## Credentials and secrets
 
@@ -75,14 +73,3 @@ is documented in [`argocd/README.md`](../argocd/README.md)'s "Hand-created Secre
 MinIO root credentials, hub S3 credentials, the cosign signing key, a GitHub token for opening
 promotion PRs, and the Model Registry database password. Each is created once, by hand, before the
 Argo app that consumes it first syncs.
-
-## A note on drift
-
-This page reflects a point-in-time check against the running desktop system. Two things worth
-knowing if you're reading this expecting it to be perfectly current: the `minio` Argo app can show
-`OutOfSync` between image-pin updates and MinIO's own Job objects reconciling (a Kubernetes Job's
-pod template is immutable post-creation, so a pinned-image update to an already-completed Job needs
-that Job deleted before it reapplies cleanly — see `docs/internal/DECISIONS.md` for the specific incident); and
-`so-arm-sim`'s in-cluster manifest is intentionally not what's live (see the sim/producer table
-above). Both are documented, not hidden — if something here looks stale, `argocd/README.md` and
-`docs/internal/DECISIONS.md` are the sources of truth to re-check against.

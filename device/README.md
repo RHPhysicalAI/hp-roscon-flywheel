@@ -107,7 +107,7 @@ wipes `/var/lib/flightctl` first for a re-enrollment. Labels default to the desk
 it in ~40 episodes. The host-side flow (`tools/host/assemble_all.sh` ports curated successes into a
 LeRobot dataset; `tools/host/prune_bags.py --yes` deletes only the *ported* class) reads
 `~/flywheel-data/bags` on the desktop, and the curated JSON's `dataset_path` is `bags/<sec>_<nsec>`
-relative to the container's `/data` (`docs/data-contract-eval-dashboard.md`). Sharing the host
+relative to the container's `/data` (`docs/internal/data-contract-eval-dashboard.md`). Sharing the host
 directory into the VM keeps every one of those contracts intact; the Fleet mounts it at the same
 in-container path the host `docker run` uses (`/data/bags`).
 

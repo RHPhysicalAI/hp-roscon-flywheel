@@ -113,9 +113,9 @@ on stage.
 | beat | live screen | kit item (exists) | to capture (item 2) |
 |---|---|---|---|
 | 1 | camera stream | — | 30–60 s clip of the arm placing cubes (v2), overhead + wrist |
-| 2 | dashboard | `docs/data-contract-eval-dashboard.md` (what the stream contains) | 60 s screen recording of the dashboard with pass/reject rows landing; MinIO console screenshot of `episodes-curated/act-v2-ft160/` |
+| 2 | dashboard | `docs/internal/data-contract-eval-dashboard.md` (what the stream contains) | 60 s screen recording of the dashboard with pass/reject rows landing; MinIO console screenshot of `episodes-curated/act-v2-ft160/` |
 | 3 | runner log, KFP task list | `docs/demo-kit/run-192f3ec5-task-states.txt`, `docs/demo-kit/run-192f3ec5-host-runner.log` (run 6's files stay as history) | screenshot of the terminal; a live run recording from the kit session |
-| 4 | static chart | `docs/phase3-ladder.html`, `docs/eval-records/phase3-ladder/`, `src/eval-report/ladder_report.py`, published chart https://claude.ai/code/artifact/84a1ec60-403d-4a34-ba3f-a0cbb69e5e71 | PNG export of the chart for slides |
+| 4 | static chart | `docs/internal/phase3-ladder.html`, `docs/eval-records/phase3-ladder/`, `src/eval-report/ladder_report.py`, published chart https://claude.ai/code/artifact/84a1ec60-403d-4a34-ba3f-a0cbb69e5e71 | PNG export of the chart for slides |
 | 5 | PR #2, Rekor UI, RHEM Fleet page | `docs/demo-kit/pr2.md`, `docs/demo-kit/rekor-entry-4.json`, `docs/eval-records/promotion-2.md` (the rollout, second by second) | clips **5a–5e** in the kit script: PR *Files changed*, Rekor entry, the merge, the Fleet rollout with the device tab in frame |
 | 6 | device Applications tab, console log, dashboard, registry, Catalog | `docs/eval-records/promotion-2.md` § *Lineage downstream*, `docs/eval-records/model-registry.md`, `docs/eval-records/catalog.md` | clips **6a–6f**: Applications tab, `Published model_version:`, badge + bar reset + first re-stamped rows, registry JSON, Catalog graph |
 | Q&A | rollback, negative trust | `docs/eval-records/promotion-2.md` § D3, `docs/eval-records/negative-trust-tests.md` | clips **R1–R2**, **N1** |
@@ -142,7 +142,7 @@ says otherwise.
 | MinIO console | SNO route | `https://minio-console-minio.apps.sno-flywheel.local` |
 | DSP (KFP) API | SNO, via port-forward on the host | `oc port-forward -n flywheel svc/ds-pipeline-dspa 8888:8888` → `https://localhost:8888` + SA token |
 | Host runner / poller logs | host | `~/host-runner.log`, `~/pipeline-run.log` |
-| Static chart (Beat 4) | repo, local file | `open docs/phase3-ladder.html` |
+| Static chart (Beat 4) | repo, local file | `open docs/internal/phase3-ladder.html` |
 | Promotion PR / rollback PR | GitHub | https://github.com/RHPhysicalAI/hp-roscon-flywheel/pull/2 · https://github.com/RHPhysicalAI/hp-roscon-flywheel/pull/3 |
 | Rekor search UI / API | SNO routes (RHTAS) | `https://rekor-search-ui-trusted-artifact-signer.apps.sno-flywheel.local/?logIndex=4` · `https://rekor-server-trusted-artifact-signer.apps.sno-flywheel.local/api/v1/log/entries?logIndex=4` |
 | **RHEM UI** — Fleet page | SNO route (flightctl) | `https://ui.flightctl.apps.sno-flywheel.local/devicemanagement/fleets/act-inference` (OpenShift OAuth login) |
@@ -240,7 +240,7 @@ runtime image (Tekton, multi-arch) `quay.io/jary/soarm-flywheel@sha256:3d67f4246
 1. **Camera** `http://10.0.0.48:8081/static` — Beat 1 (full-screen the tab).
 2. **Dashboard** `http://10.0.0.49:30801` — Beat 1 cutaway, Beat 2, Beat 6 badge.
 3. **Terminal on the host** (`ssh jary@10.0.0.48`) — Beat 3, Beat 5, Beat 6.
-4. **Chart** `open docs/phase3-ladder.html` from the repo — Beat 4.
+4. **Chart** `open docs/internal/phase3-ladder.html` from the repo — Beat 4.
 5. **PR #2** https://github.com/RHPhysicalAI/hp-roscon-flywheel/pull/2 — Beat 5.
 6. **Rekor UI** `https://rekor-search-ui-trusted-artifact-signer.apps.sno-flywheel.local/?logIndex=4` — Beat 5.
 7. **RHEM Fleet page** `https://ui.flightctl.apps.sno-flywheel.local/devicemanagement/fleets/act-inference` — Beat 5.
@@ -338,9 +338,9 @@ the screen.
 
 ### Beat 4 — "Model improvement: v1 vs v2 side-by-side" (~60 s) — *two screens and a fallback*
 
-**Screen:** tab 4, `docs/phase3-ladder.html` — success rate vs. curated-dataset size, with the
+**Screen:** tab 4, `docs/internal/phase3-ladder.html` — success rate vs. curated-dataset size, with the
 teacher baseline. This is the **Phase 3 static chart** (BUILD-PLAN Beat 4 fallback) and today it
-is the primary, because the eval dashboard (separate owner, `docs/data-contract-eval-dashboard.md`)
+is the primary, because the eval dashboard (separate owner, `docs/internal/data-contract-eval-dashboard.md`)
 is not built. When it lands it takes this slot **and must run from the frozen records** in
 `docs/eval-records/phase3-ladder/` — at the booth there is no cluster and no Kafka. Terminal
 alternative (reproduces every number from those files):

@@ -22,8 +22,8 @@ screens any more.
 Elsewhere in the repo: `docs/eval-records/promotion-2.md` (PR #2 rollout + PR #3 rollback, second by
 second), `docs/eval-records/model-registry.md` and `docs/eval-records/catalog.md` (Beat 6's registry row
 and version graph), `docs/eval-records/negative-trust-tests.md` (the exact failure strings, D091),
-`docs/phase3-ladder.html` + `docs/eval-records/phase3-ladder/` + `src/eval-report/ladder_report.py`
-(Beat 4, reproduces every number), `docs/data-contract-eval-dashboard.md` (what Beat 2's stream contains).
+`docs/internal/phase3-ladder.html` + `docs/eval-records/phase3-ladder/` + `src/eval-report/ladder_report.py`
+(Beat 4, reproduces every number), `docs/internal/data-contract-eval-dashboard.md` (what Beat 2's stream contains).
 
 Still to capture (item 2): the full Short Cut screen recording; arm clip (Beat 1); dashboard
 recording + MinIO screenshot (Beat 2); terminal screenshot (Beat 3); chart PNG (Beat 4); **the

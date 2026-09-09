@@ -92,8 +92,8 @@ Everything the hub runs is delivered by Argo CD from `gitops/` in this repo — 
 The device runs **only the policy role** — the runtime image, the served model (delivered as a
 signed OCI image volume with `reclaimPolicy: Retain`, so a rollback never re-pulls), a lineage
 label, and a health check. It does not run the simulator, the coordinator, or the episode recorder
-— those stay on the sim/producer side and reach the device only through the promotion pipeline
-(role split documented in `docs/internal/DECISIONS.md` D057). Trust enforcement is on the device itself, not just
+— those stay on the sim/producer side and reach the device only through the promotion pipeline.
+Trust enforcement is on the device itself, not just
 at the registry: `policy.json` requires both a valid signature and a valid Rekor transparency-log
 entry before podman will pull an image — proven by two standing negative tests (an unsigned image,
 and a signed-but-unlogged image; both are rejected with a distinct error).
@@ -109,14 +109,13 @@ Gazebo runs the SO-ARM101 arm on the upstream ROS 2 stack (`github.com/ros-physi
 coordinator node drives each episode's lifecycle (reset → policy window → cancel → score), scores
 task success from the simulator's own ground-truth cube poses, and records each rollout. An
 episode emitter packages the result and hands it to the curator. None of this runs on the managed
-device — it runs alongside the simulator, on whichever box is hosting the sim (the desktop's GPU
-host today; the Fury's GPU host once ported).
+device — it runs alongside the simulator, on the box hosting the sim.
 
-## Topology: desktop stand-in vs. the Fury
+## Topology: development stand-in vs. the Fury
 
-| | Desktop (today) | Fury (target) |
+| | Development stand-in | Fury |
 |---|---|---|
-| Hub | SNO in a KVM VM on the desktop | fresh SNO 4.19+ in a VM on the Fury |
+| Hub | SNO in a KVM VM | SNO 4.19+ in a VM on the Fury |
 | Managed device | separate RHEL 10 KVM VM, CPU-served | the Fury host itself, GPU-served |
 | Sim + coordinator | host GPU box (Docker) | Fury host (podman) |
 | Runtime image | same multi-arch digest, amd64 platform resolves | same digest, arm64 platform resolves |
@@ -124,16 +123,3 @@ host today; the Fury's GPU host once ported).
 The promotion path — pipeline, signing, GitOps, Fleet rollout — is identical on both. Multi-arch
 container builds (via OpenShift Pipelines / Tekton) exist specifically so the same signed digest
 serves both boxes without a separate build.
-
-## Where to verify any of this against reality
-
-This diagram is a summary, not the source of truth. To check any part of it against the actual
-running system:
-
-- Hub components and their manifests: `argocd/*.yaml` + `argocd/README.md`
-- The Fleet's exact shape (trust config, per-site labels, rollout policy):
-  `gitops/rhem/fleet-act-inference.yaml`
-- The promotion pipeline's stages: `pipeline/act_flywheel_pipeline.py`
-- What image is built from what, and how: `docker/Dockerfile`, `docker/Dockerfile.gpu-inference`,
-  `gitops/tekton/runtime-image-pipeline.yaml`
-- Every non-obvious architectural decision, with its reasoning: `docs/internal/DECISIONS.md`

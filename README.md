@@ -27,11 +27,11 @@ provably, with a human approval gate and a cryptographic audit trail."*
 
 | Stage | What happens | Where |
 |---|---|---|
-| 1. Generate | The arm attempts a place-cubes-on-tray task under randomized scenes; each rollout is recorded as a ROS bag | Gazebo + coordinator (sim host) |
+| 1. Generate | The arm attempts a place-cubes-on-tray task under randomized scenes; each rollout is recorded as a ROS bag | Gazebo + coordinator |
 | 2. Curate | Task success is scored from the simulator's own object poses, not a vision heuristic; failures are rejected and their frames discarded | Curator |
 | 3. Ship | Curated episodes are converted to LeRobot datasets and stored with a manifest on Kafka | Sync agent → MinIO / Kafka |
 | 4. Trigger | At 160 new curated successes for the live lineage, a training run starts automatically | Manifest consumer → OpenShift AI pipeline |
-| 5. Train & gate | The incumbent policy is fine-tuned on its own curated data, then both are evaluated on 100 identical seeded scenes; promotion requires net improvement with paired sign-test *p* < 0.05 | Pipeline + host runner |
+| 5. Train & gate | The incumbent policy is fine-tuned on its own curated data, then both are evaluated on 100 identical seeded scenes; promotion requires net improvement with paired sign-test *p* < 0.05 | Pipeline + training runner |
 | 6. Package & sign | The checkpoint is packaged as a multi-arch OCI "ModelCar" and signed with cosign, with a Rekor transparency-log entry | Pipeline → Quay, Trusted Artifact Signer |
 | 7. Register & promote | A Model Registry record binds digest, dataset, eval metrics, and Rekor index; a pull request edits the Edge Manager Fleet in Git | Pipeline → Model Registry, GitHub |
 | 8. Roll out | On merge, Edge Manager renders the Fleet and the device pulls the image — after verifying its signature and log entry | Red Hat Edge Manager → device |
@@ -41,7 +41,7 @@ disclosed, is in [`docs/DATA-FLOW.md`](docs/DATA-FLOW.md).
 
 ## Results
 
-Measured on the development system; every number links to its evidence record.
+Every number links to its evidence record.
 
 - **Self-improvement is real:** fine-tuning the upstream policy on 160 of its own curated successes
   raised task success from **73% to 86%** on 100 fixed seeded scenes (20 scenes fixed, 7 broken,
@@ -61,20 +61,15 @@ Measured on the development system; every number links to its evidence record.
 
 Three planes, one box.
 
-- **Hub** — Single-Node OpenShift running Argo CD, Red Hat OpenShift AI (Data Science Pipelines,
-  Model Registry), Red Hat Trusted Artifact Signer (cosign + Rekor), Red Hat Edge Manager,
-  OpenShift Pipelines, MinIO, and Kafka. Everything on the hub is delivered from Git.
-- **Device** — a Red Hat Edge Manager–managed RHEL 10 endpoint running only the served policy: the
-  runtime image plus the ModelCar as an image volume, both delivered by the Fleet and verified
-  against a pinned signing key and Rekor public key before pull.
+- **Hub** — Single-Node OpenShift in a VM on the Fury, running Argo CD, Red Hat OpenShift AI (Data
+  Science Pipelines, Model Registry), Red Hat Trusted Artifact Signer (cosign + Rekor), Red Hat Edge
+  Manager, OpenShift Pipelines, MinIO, and Kafka. Everything on the hub is delivered from Git.
+- **Device** — the Fury host itself, a Red Hat Edge Manager–managed RHEL 10 endpoint running only
+  the served policy on the GB300 GPU: the runtime image plus the ModelCar as an image volume, both
+  delivered by the Fleet and verified against a pinned signing key and Rekor public key before pull.
 - **Simulation** — Gazebo with the SO-ARM101 arm, a camera bridge, and the episode coordinator and
-  recorder, colocated with the simulator because scene reset and scoring use Gazebo transport.
-
-| | Development system | HP ZGX Fury |
-|---|---|---|
-| Hub | SNO in a KVM VM | SNO in a KVM VM on the Fury |
-| Device | RHEL 10 VM, policy on CPU | The Fury host itself, policy on the GB300 GPU |
-| Simulation | Host containers (x86_64 GPU) | Host containers (aarch64) |
+  recorder, running as host containers alongside the device because scene reset and scoring use
+  Gazebo transport.
 
 Component diagram and per-component detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 Exact images, chart versions, and ports: [`docs/BILL-OF-MATERIALS.md`](docs/BILL-OF-MATERIALS.md).
@@ -98,8 +93,7 @@ Exact images, chart versions, and ports: [`docs/BILL-OF-MATERIALS.md`](docs/BILL
   simulation, LeRobot ACT policy, and the Rosetta ROS 2 ↔ LeRobot bridge
 - [LeRobot](https://github.com/huggingface/lerobot) — policy training and dataset format
 - ROS 2 with `rmw_zenoh` middleware
-- Hardware: HP ZGX Fury (GB300, Grace Blackwell, aarch64); development on an x86_64 workstation
-  with an NVIDIA RTX 5090
+- HP ZGX Fury (GB300, Grace Blackwell, aarch64)
 
 ## Repository layout
 
@@ -109,9 +103,9 @@ Exact images, chart versions, and ports: [`docs/BILL-OF-MATERIALS.md`](docs/BILL
 | `gitops/` | Everything the hub runs: operators, pipeline, RHEM Fleet and Catalog, Tekton, observability |
 | `rhem/bootstrap/` | The one-time Edge Manager objects (`Repository`, `ResourceSync`, `Catalog`) |
 | `pipeline/` | The OpenShift AI pipeline: assemble → train → gate → package → sign → register → promote |
-| `device/` | Device provisioning and enrollment for RHEL 10 (VM stand-in and the Fury host) |
+| `device/` | Device provisioning and enrollment for the RHEL 10 host |
 | `docker/` | The simulation image and the multi-arch inference runtime image |
-| `src/` | Coordinator, episode emitter, ground-truth scorer, camera bridge, dataset assembler, host runner |
+| `src/` | Coordinator, episode emitter, ground-truth scorer, camera bridge, dataset assembler, training runner |
 | `tools/` | Host-side operational scripts (collection loop, disk guard, bag retention) |
 | `docs/` | Architecture, data flow, bill of materials, Fury bring-up, demo runbook, evaluation records |
 
@@ -127,26 +121,3 @@ Exact images, chart versions, and ports: [`docs/BILL-OF-MATERIALS.md`](docs/BILL
 | [`argocd/README.md`](argocd/README.md) | Hub bootstrap order and hand-created secrets |
 | [`device/README.md`](device/README.md) | Device provisioning and enrollment |
 | [`docs/eval-records/`](docs/eval-records/) | Evidence behind every number above |
-
-Engineering history — the phase plan, the full decision log, and the original brief — is kept
-under [`docs/internal/`](docs/internal/) for reference.
-
-## Deploying
-
-1. **Hub:** install Single-Node OpenShift 4.19+, then apply the Argo CD Applications in the order
-   in [`argocd/README.md`](argocd/README.md). Hand-created secrets are listed there.
-2. **Edge Manager:** apply [`rhem/bootstrap/`](rhem/bootstrap/) once; the Fleet and Catalog are
-   then reconciled from Git.
-3. **Device:** run [`device/provision.sh`](device/provision.sh) on the RHEL 10 host and enroll it
-   with [`device/enroll.sh`](device/enroll.sh); labels select the CPU or GPU branch of the Fleet.
-4. **Fury specifics:** [`docs/FURY-SETUP.md`](docs/FURY-SETUP.md).
-
-## Status
-
-As of 2026-09-09:
-
-- Loop closed end to end on the development system: curated data → fine-tune → paired eval gate →
-  signed ModelCar → Model Registry → pull request → Edge Manager rollout → verified pull → rollback.
-- Multi-arch runtime image built and signed in-cluster; the device serves from that digest.
-- Remaining before the booth: recording the contingency kit (a recorded fallback for every beat)
-  and bringing the system up on the Fury hardware.
