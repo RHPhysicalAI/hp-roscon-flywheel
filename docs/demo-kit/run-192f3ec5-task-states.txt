@@ -1,0 +1,11 @@
+# DSP run 192f3ec5-c0f2-459d-8e84-6e8e32e90b35 (pipeline 99ec0aab-…, version v-202609090650-rhem) — the run that opened PR #2.
+# Captured 2026-09-09 via the KFP API (docs/DEMO_RUNBOOK.md Beat 3 command). Times UTC; 06:52-06:57 CDT.
+promote-act-v2-ft160-rhem-0652 SUCCEEDED 2026-09-09 11:52:58+00:00 -> 2026-09-09 11:56:43+00:00
+  act-flywheel-promotion-dxjqb SUCCEEDED  11:52:58 -> 11:56:43
+  trigger-and-wait       SUCCEEDED  11:53:31 -> 11:54:29
+  eval-gate              SUCCEEDED  11:54:39 -> 11:54:49
+  package-modelcar       SUCCEEDED  11:54:59 -> 11:55:36
+  sign-modelcar          SUCCEEDED  11:55:46 -> 11:56:06
+  open-promotion-pr      SUCCEEDED  11:56:16 -> 11:56:43
+# Outputs: modelcar quay.io/jary/soarm-act-modelcar@sha256:1375d0bc…, Rekor log index 4, PR #2 (docs/eval-records/promotion-2.md).
+# The later registry run 9015ecd4-… (v-202609091102-registry2) adds register-model + record-pr-url and took 4 m 10 s (docs/eval-records/model-registry.md).
