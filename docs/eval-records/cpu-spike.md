@@ -12,6 +12,7 @@ for criteria 2–3.
 |---|---|---|
 | 1 | p95 forward latency < 0.5 × (`n_action_steps`/50) s | **PASS** — 83.2 ms vs 1000 ms (8 threads) |
 | 2 | `ros2 topic hz` on the commanded-action topic: no gap > 40 ms | **FAIL as written** — C2 (30/0.95): max 335 ms, 6.2 % > 40 ms; C3 (100/0.5, D058): max 313 ms, **0.34 %** > 40 ms; see Part 2 and "C3 part 2" below |
+| 2 — restated (D096, operator 2026-09-09) | p99 inter-command gap ≤ 40 ms **and** ≤ 1 % of intervals > 40 ms | **PASS** — C3 (100/0.5): p99 25.5–29.9 ms per window, 32 / 9347 = **0.34 %** > 40 ms; the 312.8 ms max is recorded, not gated. The row above is the as-written history (D053/D064) and stands |
 | 3 | 20-seed D020 eval within 10 points of GPU v2 (86%) | **PASS** (2026-09-09, C3 role split) — **18/20 = 90 %** vs GPU 17/20; the 2026-09-08 attempt from the VM was invalid (Gazebo transport is host-local); see "C3 part 3" below |
 
 ## Model under test
@@ -470,3 +471,11 @@ policy, not evidence that CPU is better; the GPU baseline was also taken at 30/0
 40 ms at 100/0.5 (C3 part 2), criterion 3 PASS. The first fallback (chunk toward `n_action_steps`,
 D058) is applied and sufficient; lower RTF, vCPU pinning and VFIO were not needed. The desktop
 stand-in is a valid device for the demo path on task success, with the cadence residual recorded.
+
+## D096 addendum — criterion 2 restated (2026-09-09)
+
+The operator restated criterion 2 as a percentile: **p99 inter-command gap ≤ 40 ms and ≤ 1 % of
+intervals > 40 ms** (D096). Against the C3 numbers above (eight full windows, p99 25.5–29.9 ms,
+32 / 9347 = 0.34 % over 40 ms) the CPU stand-in passes with margin; the 312.8 ms outlier in the
+first window after a coordinator start is recorded, not gated. The "FAIL as written" verdicts in
+Part 2 and C3 part 2 are left as they were measured; only the summary table carries the new row.
