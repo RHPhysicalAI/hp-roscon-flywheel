@@ -7,8 +7,7 @@
 #
 # Controls:  none during a demo. Clear Data is reachable only with ?ops=1 and a confirm.
 # Display:   Sim cameras, latest rollout + curation log, flywheel progress bar,
-#            policy improvement (the frozen Phase 3 evaluation ladder, served from the
-#            phase3-ladder-summary ConfigMap), model version indicator
+#            model version indicator
 #
 # Lineage (model version badge, curated count, trigger bar): read from the
 # manifest-consumer Deployment's COLLECTOR env, which Argo syncs from the same
@@ -53,8 +52,6 @@ data:
     EP_REJ        = DATA / "episodes" / "rejected"
     EP_SENT       = DATA / "episodes" / "sent"
     HTML_FILE     = pathlib.Path(os.environ.get("HTML_FILE",  "/app/index.html"))
-    # Frozen Phase 3 evaluation ladder (phase3-ladder-summary ConfigMap) -- Beat 4's data.
-    LADDER_FILE   = pathlib.Path(os.environ.get("LADDER_FILE", "/app/ladder/phase3-ladder.json"))
     # The camera bridge runs next to the simulator, not in the cluster; the browser fetches the
     # streams directly, so this must be the address the *viewer* can reach.
     CAMERA_HOST   = os.environ.get("CAMERA_HOST", "10.0.0.48")
@@ -333,14 +330,6 @@ data:
     def index():
         html = HTML_FILE.read_text() if HTML_FILE.exists() else "<h1>index.html not mounted</h1>"
         return Response(html.replace("__CAMERA_HOST__", CAMERA_HOST), mimetype="text/html")
-
-    @app.route("/api/ladder")
-    def api_ladder():
-        """The frozen Phase 3 evaluation ladder (success rate vs. curated-dataset size)."""
-        try:
-            return Response(LADDER_FILE.read_text(), mimetype="application/json")
-        except Exception as e:
-            return jsonify({"error": f"ladder summary not mounted: {e}"}), 404
 
     @app.route("/api/events")
     def sse():
@@ -710,73 +699,6 @@ data:
     }
     #trigger-banner.show { display: block; }
 
-    /* ---- Policy improvement: the frozen Phase 3 evaluation ladder (Beat 4) ---- */
-    #ladder-card { grid-column: 1 / -1; grid-row: 3; }
-    #ladder-body { padding: 14px; }
-    #ladder-headline {
-      font-size: 13px; font-weight: 600; line-height: 1.5;
-      margin-bottom: 4px;
-    }
-    #ladder-sub {
-      font-size: 11px; color: var(--txt3);
-      margin-bottom: 14px; padding-bottom: 10px;
-      border-bottom: 1px solid var(--border);
-    }
-    #ladder-grid {
-      display: grid;
-      grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.4fr);
-      gap: 20px;
-      align-items: start;
-    }
-    #ladder-chart {
-      position: relative;
-      height: 190px;
-      display: flex; align-items: flex-end; gap: 12px;
-      padding: 0 6px 26px 6px;
-      border-bottom: 1px solid var(--border2);
-    }
-    .ladder-col {
-      flex: 1; height: 100%;
-      display: flex; flex-direction: column; justify-content: flex-end; align-items: center;
-      position: relative;
-    }
-    .ladder-val { font-size: 12px; font-weight: 700; margin-bottom: 4px; font-variant-numeric: tabular-nums; }
-    .ladder-bar {
-      width: 62%; border-radius: 4px 4px 0 0;
-      background: var(--border2);
-      transition: height 0.6s ease;
-    }
-    .ladder-bar.base   { background: var(--blue); }
-    .ladder-bar.worse  { background: var(--red); }
-    .ladder-bar.even   { background: var(--gold); }
-    .ladder-bar.better { background: var(--green); }
-    .ladder-x {
-      position: absolute; bottom: -22px; left: 0; right: 0;
-      text-align: center; font-size: 10px; color: var(--txt2); white-space: nowrap;
-    }
-    .ladder-x b { color: var(--txt); }
-    #ladder-baseline {
-      position: absolute; left: 0; right: 0;
-      border-top: 1px dashed var(--blue);
-      pointer-events: none;
-    }
-    #ladder-baseline span {
-      position: absolute; right: 0; top: -14px;
-      font-size: 9px; color: var(--blue);
-    }
-    #ladder-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-    #ladder-table th, #ladder-table td {
-      padding: 5px 6px; text-align: right; border-bottom: 1px solid var(--border);
-      font-variant-numeric: tabular-nums; white-space: nowrap;
-    }
-    #ladder-table th { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--txt2); font-weight: 700; }
-    #ladder-table th:first-child, #ladder-table td:first-child { text-align: left; }
-    #ladder-table tr.better td { color: var(--txt); }
-    #ladder-table tr.better td:first-child { color: var(--green); font-weight: 600; }
-    #ladder-table tr.worse td:first-child { color: var(--red); }
-    #ladder-note { font-size: 10px; color: var(--txt3); margin-top: 8px; line-height: 1.5; }
-    #ladder-empty { color: var(--txt3); font-size: 12px; padding: 30px 0; text-align: center; }
-
     /* ---- Curation log (inline in Generator Output card) -------------------- */
     #log-body {
       max-height: 200px;
@@ -1049,43 +971,6 @@ data:
         </div>
       </div>
 
-      <!-- POLICY IMPROVEMENT: the frozen Phase 3 evaluation ladder (Beat 4) -->
-      <div class="card" id="ladder-card">
-        <div class="card-header">
-          <span class="card-title">Policy improvement &mdash; same policy, same 100 scenes, more of its own curated data</span>
-          <span class="annotation">paired evaluation on a fixed seeded scene set</span>
-        </div>
-        <div id="ladder-body">
-          <div id="ladder-empty">Loading evaluation records&hellip;</div>
-          <div id="ladder-content" style="display:none">
-            <div id="ladder-headline"></div>
-            <div id="ladder-sub"></div>
-            <div id="ladder-grid">
-              <div>
-                <div id="ladder-chart">
-                  <div id="ladder-baseline"><span></span></div>
-                </div>
-                <div id="ladder-note">
-                  Task success on the fixed evaluation set vs. how many of the policy&rsquo;s own curated
-                  episodes it was fine-tuned on. Dashed line: the teacher policy as shipped.
-                </div>
-              </div>
-              <div>
-                <table id="ladder-table">
-                  <thead>
-                    <tr>
-                      <th>curated episodes</th><th>N</th><th>success</th><th>mean cubes</th>
-                      <th>fixed / broken</th><th>net</th><th>sign p</th><th>gate</th>
-                    </tr>
-                  </thead>
-                  <tbody></tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <!-- Curation log is now inline in the Generator Output card above -->
 
       <!-- STATUS BAR -->
@@ -1341,81 +1226,6 @@ data:
       document.getElementById('sb-ts').textContent =
         new Date().toLocaleTimeString();
     }
-
-    // ---- Policy improvement: the frozen Phase 3 evaluation ladder (Beat 4) --
-    // Served from the phase3-ladder-summary ConfigMap via /api/ladder; rendered with
-    // plain CSS bars so the page stays dependency-free. Loaded once; retried on failure.
-    function pct(x) { return Math.round(x * 100) + '%'; }
-    function gateClass(r) {
-      if (r.net > 0 && r.sign_p < 0.05) return 'better';
-      if (r.net < 0) return 'worse';
-      return 'even';
-    }
-    function renderLadder(d) {
-      const base = d.baseline;
-      const rungs = d.rungs || [];
-      const top = rungs.find(r => r.label) || rungs[rungs.length - 1];
-      const worse = rungs.filter(r => r.net < 0).map(r => r.episodes);
-      document.getElementById('ladder-headline').textContent =
-        'Fine-tuned on ' + top.episodes + ' of its own curated successes: ' + pct(base.success_rate) +
-        ' \u2192 ' + pct(top.success_rate) + ' on ' + top.n + ' identical scenes (' + top.fixed +
-        ' fixed, ' + top.broken + ' broken, sign-test p = ' + top.sign_p + ').';
-      document.getElementById('ladder-sub').textContent =
-        (worse.length ? 'Fine-tuning on ' + worse.join(' or ') + ' episodes made the policy worse \u2014 ' : '') +
-        'the evaluation gate (' + d.gate + ') is what keeps a bad retrain off the robot. ' +
-        'Evaluation seeds ' + d.seeds + '.';
-
-      // Bars
-      const chart = document.getElementById('ladder-chart');
-      chart.querySelectorAll('.ladder-col').forEach(el => el.remove());
-      const cols = [{x: '0', sub: 'teacher (v1)', rate: base.success_rate, n: base.n, cls: 'base'}]
-        .concat(rungs.map(r => ({x: String(r.episodes), sub: r.label || '', rate: r.success_rate, n: r.n, cls: gateClass(r)})));
-      const usable = chart.clientHeight - 26;   // minus the x-label padding
-      for (const c of cols) {
-        const col = document.createElement('div');
-        col.className = 'ladder-col';
-        col.innerHTML =
-          '<div class="ladder-val">' + pct(c.rate) + '</div>' +
-          '<div class="ladder-bar ' + c.cls + '" style="height:' + Math.max(2, Math.round(c.rate * usable * 0.82)) + 'px" title="N=' + c.n + '"></div>' +
-          '<div class="ladder-x"><b>' + c.x + '</b> ep' + (c.sub ? '<br>' + c.sub : '') + '</div>';
-        chart.appendChild(col);
-      }
-      const bl = document.getElementById('ladder-baseline');
-      bl.style.bottom = (26 + Math.round(base.success_rate * usable * 0.82)) + 'px';
-      bl.querySelector('span').textContent = 'teacher ' + pct(base.success_rate);
-
-      // Table
-      const tb = document.querySelector('#ladder-table tbody');
-      tb.innerHTML = '';
-      const rowHtml = (label, n, rate, cubes, fb, net, p, gate, cls) =>
-        '<tr class="' + cls + '"><td>' + label + '</td><td>' + n + '</td><td>' + pct(rate) +
-        '</td><td>' + cubes.toFixed(2) + '</td><td>' + fb + '</td><td>' + net + '</td><td>' + p +
-        '</td><td>' + gate + '</td></tr>';
-      tb.insertAdjacentHTML('beforeend',
-        rowHtml('0 \u2014 teacher (v1)', base.n, base.success_rate, base.mean_cubes, '\u2014', '\u2014', '\u2014', '\u2014', 'base'));
-      for (const r of rungs) {
-        const cls = gateClass(r);
-        const gate = cls === 'better' ? '\u2713 promote' : '\u2717 reject';
-        const label = r.episodes + (r.label ? ' \u2014 ' + r.label : '');
-        tb.insertAdjacentHTML('beforeend',
-          rowHtml(label, r.n, r.success_rate, r.mean_cubes, r.fixed + ' / ' + r.broken,
-                  (r.net > 0 ? '+' : '') + r.net, r.sign_p.toFixed(3), gate, cls));
-      }
-      document.getElementById('ladder-empty').style.display = 'none';
-      document.getElementById('ladder-content').style.display = 'block';
-    }
-    async function loadLadder(attempt) {
-      try {
-        const r = await fetch('/api/ladder');
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        renderLadder(await r.json());
-      } catch (e) {
-        document.getElementById('ladder-empty').textContent =
-          'Evaluation records unavailable (' + e.message + ')';
-        if ((attempt || 0) < 5) setTimeout(() => loadLadder((attempt || 0) + 1), 5000);
-      }
-    }
-    document.addEventListener('DOMContentLoaded', () => loadLadder(0));
 
     // ---- Curation log -------------------------------------------------------
     const logBody = document.getElementById('log-body');
@@ -1682,13 +1492,11 @@ spec:
             - name: TRIGGER_THRESHOLD
               value: "160"   # matches manifest-consumer (D022/D023); was thor-testing's 10
             - name: DASHBOARD_CODE_REV
-              value: "2026-09-09-h"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
+              value: "2026-09-09-i"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
             - name: FRAMES_DIR
               value: "/data/frames"
             - name: HTML_FILE
               value: "/app/index.html"
-            - name: LADDER_FILE
-              value: "/app/ladder/phase3-ladder.json"
             - name: CAMERA_HOST
               # The address the *viewer's browser* uses to reach the camera bridge (port 8081),
               # which runs next to the simulator, not in the cluster. On the Fury this is the
@@ -1721,9 +1529,6 @@ spec:
             - name: code
               mountPath: /app
               readOnly: true
-            - name: ladder
-              mountPath: /app/ladder
-              readOnly: true
             - name: episodes
               mountPath: /data/episodes
               # writable so the operator-only Clear control can delete episode files
@@ -1734,9 +1539,6 @@ spec:
         - name: code
           configMap:
             name: dashboard-code
-        - name: ladder
-          configMap:
-            name: phase3-ladder-summary
         - name: episodes
           hostPath:
             path: /var/lib/episodes

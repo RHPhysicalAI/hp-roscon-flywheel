@@ -4059,3 +4059,27 @@ intended Beat 4 to run on the dashboard from frozen records.
    artifact is gone; the kit table's Beat 4 row and the "What's real" line updated.
 **Verification:** YAML parses, `dashboard.py` `ast.parse`, extracted page JS `node --check`,
 ladder JSON parses; live after Argo sync — see the commit's follow-up check.
+
+---
+
+## D125 — The dashboard's Beat 4 ladder panel (D124) removed: Beat 4 belongs to the eval dashboard, and the real A/B artifact is paired episode video
+
+**Date:** 2026-09-09 (operator decision)
+**Context:** D124 replaced the dead Cosmos-era "Policy comparison" video card with a panel rendering the
+frozen Phase 3 ladder. On review the operator judged it a stopgap: it duplicates the read-only eval
+dashboard's scope (APPENG-6295 — success rate, cube distribution, smoothness per lineage, success vs.
+dataset size, replayable from a frozen file directory), and it is not the comparison the demo wants.
+The comparison that would actually land is paired *video*: the eval harness already runs identical
+seeded scenes per policy, so recording a chosen seed set for v1 and v2 (and later lineages), porting
+the bags to LeRobot, and showing the clips side by side with the per-episode numbers — designed
+tomorrow, not built tonight.
+**Decision:** the ladder card, its CSS/JS, the `/api/ladder` route, the `LADDER_FILE` env, the
+`/app/ladder` mount and the `phase3-ladder-summary` ConfigMap are removed; `DASHBOARD_CODE_REV`
+bumped to roll the pod. Everything else from D124 stays: `CAMERA_HOST` injection, readiness/liveness
+probes, the honest "Loop stopped" states and empty-state copy, the ops-only Clear control, the
+dropped card numbering. The old video card is not reinstated — the page simply has no Beat 4 card.
+The runbook's Beat 4 section, kit-table row and "What's real" line revert to the static chart
+(`docs/internal/phase3-ladder.html`) as primary with the eval dashboard taking the slot when it lands;
+the "Policy comparison card is empty" known-artifact bullet stays removed.
+**Consequences:** Beat 4 is the eval dashboard's (Olga's) or the static chart; the ops dashboard is
+Beats 1, 2 and 6 only. The paired-video design is the next Beat 4 conversation.
