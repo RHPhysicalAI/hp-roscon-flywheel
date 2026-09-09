@@ -3087,3 +3087,27 @@ Expected given D079's per-arch layer timestamps; D088's update path already rewr
 **Decision:** the registry holds a durable promotion record — digest, full eval metrics, Rekor index,
 and PR — for an actual promoted candidate. **E1's exit criterion is met.** Phase 4 item 5 (structured
 promotion record / Model Registry) is closed.
+
+---
+
+## D091 — The standing negative-trust artifacts: an unsigned tag and a tag signed without a Rekor entry, both rejected on the device
+
+**Date:** 2026-09-09
+**Context:** Phase 4.5 C's exit line required showing the Fleet's `policy.json` rejects not only an
+unsigned image but one signed with the flywheel key and never uploaded to RHTAS Rekor — proving
+`rekorPublicKeyPath` enforcement, not just `keyPath`. Copying image b's digest to a new tag would have
+inherited its already-logged signature (signatures key on the digest), so a distinct digest was made
+by appending one 226-byte layer on top of image b (`crane append`) and signing it with the same
+containerised cosign recipe but `--tlog-upload=false` and no `--rekor-url`.
+**Record:** scratch tag `quay.io/jary/soarm-flywheel:negtest-notlog-2026-09-09` =
+`sha256:d9996e7b1b779ba94fc4f5699cd0dbc4dc43c96c70e69b1b861e28f63e51d2cb` (image b plus the appended
+226-byte layer, signed with `--tlog-upload=false`). Device-side failure strings, verbatim: unsigned →
+`Source image rejected: A signature was required, but no signature exists` (exit 125); signed-no-tlog
+→ `Source image rejected: missing dev.sigstore.cosign/bundle annotation` (exit 125). Control image b
+(`2ad1fb1c…`) pulls clean under the same policy. `cosign verify` against the no-tlog signature exits 12
+either way but with different bodies: `signature not found in transparency log` over the route, an
+undecodable body over plain HTTP (`oc port-forward` to `svc/rekor-server`) — assert on exit code, not
+message text. Full record: `docs/eval-records/negative-trust-tests.md`, commit `73df307`.
+**Decision:** keep `negtest-notlog-2026-09-09` in quay as the demo's standing negative-test artifact.
+Two rules govern it: never sign it into Rekor, and never move a moving tag onto it — its only value is
+that it fails.

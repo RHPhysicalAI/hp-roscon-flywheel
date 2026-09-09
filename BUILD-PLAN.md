@@ -395,7 +395,7 @@ C. **Fleet-delivered application** (D024, D026)
    - **Superseded (C3, D057+):** the device runs the policy role only; coordinator + recorder + sim
      reset run beside the sim on the host (`tools/host/run-coordinator.sh`), bags stay on the host
      disk, and `tools/host/disk-guard.sh` must be armed before the loop runs.
-   - **Exit (met 2026-09-09 except the last):** `applicationsSummary: Healthy` (device policy role, renderedVersion 4, signed image Rekor index 3); curator receives `act-v2-ft160` episodes from the VM with real verdicts and non-null `dataset_path` (curated 194→214, rejected 58→104 on 2026-09-08 23:54–00:44Z); unsigned tag fails to pull (C-prep); `--insecure-ignore-tlog` removal → item D.
+   - **Exit (met 2026-09-09 except the last):** `applicationsSummary: Healthy` (device policy role, renderedVersion 4, signed image Rekor index 3); curator receives `act-v2-ft160` episodes from the VM with real verdicts and non-null `dataset_path` (curated 194→214, rejected 58→104 on 2026-09-08 23:54–00:44Z); unsigned tag fails to pull (C-prep); signed-without-tlog also fails (D091); `--insecure-ignore-tlog` removal → item D.
 
 D. **Promotion path rewrite** (D025)
    - `open_promotion_pr` becomes a two-regex edit of the Fleet (digest + `MODEL_VERSION`); the same
@@ -478,8 +478,8 @@ G. **Fury port + runbook** (on site, Sept 20–25)
   ResourceSync Synced → RHEM rollout completes → VM container restarts with the new
   `Published model_version:` → episodes re-stamp (2026-09-09: PR #2, Rekor index 4; Model Registry
   part → E1)
-- [ ] Negative test: an unsigned tag fails with a signature error; a tag signed *without*
-  `--tlog-upload` also fails on the VM (Rekor SET enforced)
+- [x] Negative test: an unsigned tag fails with a signature error; a tag signed *without*
+  `--tlog-upload` also fails on the VM (Rekor SET enforced) (2026-09-09, D091, docs/eval-records/negative-trust-tests.md)
 - [x] Rollback: `git revert`, merge → previous version serving, no re-pull (Retain) (2026-09-09, PR #3)
 - [ ] Tekton: runtime image built for both arches, Rekor entry created, `crane manifest` shows both
   platforms, the Fleet references its digest
