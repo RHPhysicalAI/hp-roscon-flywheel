@@ -33,6 +33,7 @@ import glob
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -202,11 +203,32 @@ def loop_restore():
 
 # ---------------------------------------------------------------- run
 
+# training-triggers arrives over an unauthenticated PLAINTEXT Kafka NodePort (D116 — reachable
+# off-box by design, D013's host-GPU-outside-the-cluster split). run_id/candidate/incumbent/
+# collector all end up in shell commands (in_image's docker run ... bash -lc) and filesystem/S3
+# paths, so they're validated here before anything touches them — a malicious value is rejected,
+# not executed. Every legitimate value seen in this project (upstream-act-teacher, act-v2-ft160,
+# act-v2-ft160-rhem, <collector>-ft<n>-<YYYYMMDDHHMM>, KFP's run_id) fits this charset.
+_SAFE_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def _require_safe(name: str, value) -> str:
+    value = str(value)
+    if not _SAFE_TOKEN.match(value):
+        raise ValueError(f"{name}={value!r} rejected: must match {_SAFE_TOKEN.pattern}")
+    return value
+
+
 def handle(t: dict, producer: KafkaProducer):
-    run_id = t["run_id"]; cand = t["candidate"]; inc = t["incumbent"]; coll = t.get("collector", inc)
-    k = float(t.get("steps_per_frame", 0.25)); n = int(t.get("eval_n", 100)); sb = int(t.get("eval_seed_base", 1000))
+    run_id = t.get("run_id", ""); cand = t.get("candidate", ""); inc = t.get("incumbent", "")
+    coll = t.get("collector", inc)
     result = {"run_id": run_id, "candidate": cand, "incumbent": inc, "status": "error", "message": ""}
     try:
+        run_id = _require_safe("run_id", run_id)
+        cand = _require_safe("candidate", cand)
+        inc = _require_safe("incumbent", inc)
+        coll = _require_safe("collector", coll)
+        k = float(t.get("steps_per_frame", 0.25)); n = int(t.get("eval_n", 100)); sb = int(t.get("eval_seed_base", 1000))
         inc_path = resolve_incumbent(t.get("incumbent_checkpoint", "hf"), inc)
         ck = FLY / "train" / cand / "checkpoints" / "last" / "pretrained_model"
         if (ck / "model.safetensors").exists():

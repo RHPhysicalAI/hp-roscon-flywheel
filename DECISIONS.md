@@ -3682,3 +3682,46 @@ decision entry on completion. C9 (MinIO creds in git history) and C13 (stakehold
 explicitly waived by the operator — not tracked as open work. C14 (contingency kit) deferred to
 its own already-scheduled session. Warnings and Suggestions dispositioned per the consolidated
 table's own "Suggested Disposition" column, accepted as-is by the operator.
+
+---
+
+## D116 — C1/C2 closed: validated request fields at the injection point instead of touching the Kafka broker or the demo's external consumer
+
+**Date:** 2026-09-09
+**Context:** D115's review found two related unauthenticated-network findings. C1: `host_runner.
+handle()` (desktop, outside the cluster per D013) reads `candidate`/`incumbent`/`collector`/
+`run_id` off the `training-triggers` Kafka topic — a PLAINTEXT NodePort (30903), no SASL/ACL — and
+f-strings them into `in_image()`'s `docker run ... bash -lc` string and into filesystem/S3 paths.
+C2: the curator's HTTP receiver (`0.0.0.0:8082`, NodePort 30802, no auth) builds
+`RAW_DIR / f"{eid}.json"` from an unvalidated `episode_id`, so a crafted id can write outside
+`raw/` — including straight into `curated/`, which `sync-agent` ships to MinIO/Kafka as trusted
+training data, bypassing `score_episode()` entirely.
+**Investigated before touching anything:** whether the Kafka NodePort could simply be deleted or
+locked down. `docs/data-contract-eval-dashboard.md` documents a real external consumer — Olga
+Lavtar's read-only eval dashboard (APPENG-6295) — but it only *consumes* `episode-manifests` and
+`dataset-manifests`; it never publishes to `training-triggers`, the topic the RCE path actually
+reads. Adding broker-level SASL/ACLs would be the complete fix, but it requires rotating
+credentials for a consumer whose code lives in a separate, inaccessible repo — not verifiable
+without a live end-to-end test against Olga's dashboard, which risks breaking a real external
+integration blind. Deferred (see Consequences); fixed the actually-exploitable path instead.
+**Decision:**
+1. `src/host-runner/host_runner.py`: added `_SAFE_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]
+   {0,63}$")` and `_require_safe()`, called on `run_id`/`candidate`/`incumbent`/`collector` as the
+   first lines inside `handle()`'s existing `try:` block — a rejected value now produces a clean
+   `training-results` failure message (the same path any other exception already takes) instead of
+   ever reaching a shell string or a filesystem path. Verified every real value in the project
+   (`upstream-act-teacher`, `act-v2-ft160`, `act-v2-ft160-rhem`, `<collector>-ft<n>-<timestamp>`,
+   KFP's `run_id`) matches the charset. Did not rewrite `in_image()`'s `bash -lc` calling
+   convention — the entry-point validation is structurally sufficient (a valid token can't contain
+   shell metacharacters or path separators) and a sweeping rewrite of the training/assemble command
+   construction risked more than it protected.
+2. `gitops/flywheel/curator.yaml`: the receiver now rejects any `episode_id` failing
+   `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` (HTTP 400) before it touches a path, re-asserts
+   `out.resolve().parent == RAW_DIR.resolve()` as defense in depth, and caps request bodies at 1 MB
+   (HTTP 413). The real emitter's `episode_id` is `str(uuid.uuid4())` — always matches.
+**Consequences:** the Kafka NodePort (30903) stays open, PLAINTEXT, unauthenticated — an attacker
+can still publish garbage to `training-triggers`, but the worst outcome now is a rejected trigger
+in the log, not code execution. Broker-level SASL/ACL hardening (and coordinating a credential for
+Olga's dashboard) is a real residual, tracked as a follow-up for a session that can reach and test
+against her actual consumer — not closed here. C9 (MinIO creds in git history, same NodePort-family
+risk class) was separately waived by the operator as out of scope for this project.
