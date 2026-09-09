@@ -3905,3 +3905,47 @@ as written; this project's honest, warts-and-all record is a strength, not somet
    commented-out code found anywhere in the tracked tree. No further changes made under this item.
 **Consequences:** a separate, parallel pass is assembling new front-door documentation (README,
 architecture/data-flow diagrams, bill of materials) — not part of this decision.
+
+---
+
+## D120 — Front-door documentation added: README, architecture, data flow, bill of materials, Fury setup guide
+
+**Date:** 2026-09-09
+**Context:** the repo had no top-level `README.md` — `AGENTS.md` exists but is written for an AI
+agent's onboarding read order, not a human landing on the GitHub page. The user asked for content
+that would let "randoms go through it front to back" and represent both the project and HP well,
+and specifically asked for material an engineer standing up the Fury would want: a data-flow
+diagram, an architecture chart, a bill of materials (what's running where), and Fury-specific
+setup guidance.
+**Decision:** five new files, all synthesis of existing source-of-truth material (manifests,
+pipeline code, `DECISIONS.md`, `docs/DEMO_RUNBOOK.md`) rather than new claims — every fact traces
+to something already in the repo, verified against a couple of live checks (`docker ps`,
+`oc get applications.argoproj.io`) rather than only the YAML:
+- `README.md` — the actual front door: the pitch, the architecture summary, a table pointing to
+  every other doc, and a status line kept current as of today.
+- `docs/ARCHITECTURE.md` — component diagram (Mermaid, GitHub-native rendering) covering the hub,
+  the managed device, and the sim/producer, plus the desktop-vs-Fury topology table.
+- `docs/DATA-FLOW.md` — a sequence diagram plus stage-by-stage prose from episode generation
+  through promotion to the loop closing, including the eval-gate's actual gating rule and an
+  explicit, undisguised statement of the one place a step is time-compressed for the demo (matches
+  `docs/DEMO_RUNBOOK.md`'s own "one honest shortcut" framing rather than restating it differently).
+- `docs/BILL-OF-MATERIALS.md` — every Argo app, host container, and device workload, which box it
+  runs on, and what it's built from. Two live-verified findings worth carrying forward: the `minio`
+  Argo app currently shows `OutOfSync` (a completed Job's immutable pod spec blocking an image-pin
+  update — the same class of issue the GitOps fork hit and fixed for a different Job this session);
+  and an unidentified container (`competent_chatelet`, up 7 days) is running on the desktop host
+  that this pass could not attribute to anything in the repo — flagged, not investigated further
+  (out of this decision's scope).
+- `docs/FURY-SETUP.md` — a pre-flight guide for whoever has hands-on Fury access: what "the device
+  is the host" actually means there, the bring-up sequence, and an explicit split between what's
+  verified on aarch64 today (the multi-arch signed build, the per-arch torch pin) versus what's
+  designed but unrehearsed (the `ENGINE=podman` coordinator path, any real inference on Blackwell
+  silicon, a from-scratch SNO bring-up done back-to-back). Also surfaces two untracked external
+  dependencies (Rick Gosalvez's access window, Manny's on-site logistics) as open, not assumed.
+Terminology matches the parallel cleanup pass: "the presenting laptop," not personal-device
+references.
+**Consequences:** the `minio` OutOfSync finding and the unidentified container are new information
+for the orchestrator to act on or dismiss — not resolved here. `PROJECT-BRIEF.md`'s architecture
+section still describes the pre-RHEM blue/green design (out of this decision's scope to edit; the
+new `docs/ARCHITECTURE.md` reflects the current RHEM-based design and should be treated as
+authoritative over `PROJECT-BRIEF.md`'s diagram until that's reconciled).
