@@ -401,6 +401,9 @@ D. **Promotion path rewrite** (D025)
    - `open_promotion_pr` becomes a two-regex edit of the Fleet (digest + `MODEL_VERSION`); the same
      commit bumps `COLLECTOR`/`INCUMBENT` in `gitops/flywheel/manifest-consumer.yaml`; PR body adds
      the rollback command and the Fleet URL.
+   - **D1 done 2026-09-09:** `open_promotion_pr` rewritten (D066+), pipeline `v-202609090650-rhem`,
+     PR #2 open with the two-file diff, modelcar signed (Rekor index 4) and pulled on the device
+     under `policy.json`; merge is the operator's (Gate 3).
    - Retire `gitops/act-serving/`, `argocd/act-serving-app.yaml`, `src/swap-agent/` after the first
      RHEM promotion. Demo screens: RHEM UI rollout + device Applications tab; `flightctl get
      fleet/device`; `flightctl console` tailing `podman logs` for `Published model_version:`.

@@ -2430,3 +2430,99 @@ defaults. No further D024 fallback (RTF, vCPU pinning, VFIO) is needed.
 the role split), replacing the "lineage proof only" caveat from C2. The loop coordinator is left
 stopped after the eval per D062; restart is `IMAGE=<digest> tools/host/run-coordinator.sh` and
 requires the guard.
+
+---
+
+## D066 — The promotion edit, as implemented: two-regex Fleet edit plus three-regex manifest-consumer bump (supersedes D022's three-file flip; realises D025)
+
+**Date:** 2026-09-09
+**Context:** D025 says the promotion becomes a two-regex edit of `gitops/rhem/fleet-act-inference.yaml`
+plus the same-commit `COLLECTOR`/`INCUMBENT` bump in `gitops/flywheel/manifest-consumer.yaml`.
+`open_promotion_pr` in `pipeline/act_flywheel_pipeline.py` still edited the three `act-serving` files.
+**Decision:** `open_promotion_pr(image_ref, candidate, checkpoint_uri, report_json, github_repo,
+gitops_branch, fleet_file, consumer_file, fleet_ui_url)`:
+- Fleet, two regexes, each required to match exactly once:
+  `(soarm-act-modelcar)@sha256:[0-9a-f]{64}` → the new digest (anchored on the repo name, so the
+  runtime-image `soarm-flywheel@sha256:` line is untouched), and
+  `^(\s+MODEL_VERSION:\s*)\S+` (multiline) → the candidate. The old `MODEL_VERSION` is captured first
+  and goes into the commit message / PR body.
+- manifest-consumer, three regexes on the `- {name: X, value: "…"}` lines: `INCUMBENT` and
+  `COLLECTOR` → candidate (D025), **and `INCUMBENT_CHECKPOINT` → the pipeline's own `checkpoint_uri`**
+  (`s3://episodes-data/checkpoints/<candidate>/pretrained_model.tar.gz`, the trigger step's output).
+  Not in D025's text, but it is the same 5e3e87a lesson: without it round B would count the new
+  lineage yet fine-tune *from the previous* incumbent's weights — a partial flip on the trigger side.
+- Match counts `(1, 1, 3)` are asserted; any other count exits 1 before anything is written.
+- One commit (two tree elements), branch `promote/<candidate>`, PR title `Promote <cand> (x% -> y%)`,
+  body = PR #1's evidence table + signed modelcar + what the merge does on RHEM + `Fleet: <UI URL>`
+  + `Rollback: git revert <sha>` phrased as "revert the merge commit of this PR", with the
+  `reclaimPolicy: Retain` no-re-pull note.
+- New pipeline params (all defaulted; the runbook's trigger body is unchanged): `fleet_file`,
+  `consumer_file`, `fleet_ui_url` (`https://ui.flightctl.apps.sno-flywheel.local/devicemanagement/fleets/act-inference`
+  — path taken from the UI bundle's route table), `modelcar_base`.
+- Every `gitops/act-serving/*` reference is gone from the pipeline (the compiled YAML has none).
+**Hygiene ride-alongs (BUILD-PLAN F items, same file):** `platform.machine()`-derived download URLs
+(crane `Linux_x86_64`/`Linux_arm64`, cosign `linux-amd64`/`linux-arm64`); `PY_IMG` pinned to
+`ubi9/python-312:9.8-1788919789` and the modelcar base to `ubi9/ubi-micro:9.8-1787778798` (newest 9.8
+tags at the time, both manifest lists with amd64+arm64). Not done: `platform` as a list (multi-arch
+modelcar) — that is F proper. `gitops/flywheel/manifest-consumer.yaml` still runs `python-312:latest`
+(not touched: it is the promotion target file and a hand edit there would collide with the PR).
+**Consequences:** offline regex test against the live files confirmed exactly 2 Fleet lines and 3
+consumer lines change, runtime-image line intact; `py_compile`; KFP compile; uploaded as DSP version
+`v-202609090650-rhem` (`940ef682-9565-4b72-b6a0-10bf56bb2cba`) of pipeline `99ec0aab-…`.
+
+---
+
+## D067 — The candidate `act-v2-ft160-rhem`: a declared re-release of v2's weights, not a new checkpoint
+
+**Date:** 2026-09-09
+**Context:** the run must promote a real, already-trained, already-evaluated checkpoint (D023: no
+training on the path). The only N=100 paired record that passes the gate is `act-v2-ft160` vs
+`upstream-act-teacher` (73% → 86%, 20/7, p=0.0192). But the Fleet already serves `act-v2-ft160`: a
+promotion under that name would change the digest only, leave `MODEL_VERSION` untouched, make the
+manifest-consumer bump a no-op, and give D2 nothing observable in `Published model_version:`.
+No round-B checkpoint exists (host `~/flywheel-data/train/` holds only v2 and the Sept-4 ladder rungs;
+`act-v2-ft160`'s `model.safetensors` md5 `ba5f5125…` equals `ft-ladder-160ep`'s — the promoted v2 was
+itself the ladder-160 rung relabelled).
+**Decision:** candidate `act-v2-ft160-rhem`, incumbent `upstream-act-teacher`, collector
+`upstream-act-teacher`, `incumbent_checkpoint: hf` — D023's exact parameters with the candidate
+renamed. Staged on the host without copying weights: `train/act-v2-ft160-rhem -> act-v2-ft160`
+(symlink) and `eval/eval-act-v2-ft160-rhem.json` = a copy of `eval-act-v2-ft160.json` carrying
+`relabel_of` / `relabel_note` fields that say so. The runner's idempotent path (checkpoint dir exists;
+record with `seed_base 1000`, `episodes 100` exists) reuses both. The name says what it is — v2's
+weights, RHEM release — and does not claim a v3.
+**Consequences:** the PR body says "`act-v2-ft160-rhem` replaces `upstream-act-teacher`" (the gate's
+incumbent) while the Fleet line it edits replaces `act-v2-ft160` — the commit message carries the
+real `MODEL_VERSION` transition. After the merge, episodes are stamped `act-v2-ft160-rhem`, the
+consumer counts that lineage from 0, and the round-B candidate will be named
+`act-v2-ft160-rhem-ft160-<ts>` by the consumer. The three `-rhem` staging artefacts on the host and the
+MinIO `checkpoints/act-v2-ft160-rhem/` copy are the price; a real v3 (round B) replaces all of this.
+**Rejected:** `act-v3-…` (claims a generation that was never trained); re-promoting `act-v2-ft160`
+(one-line diff, no observable version change); incumbent `act-v2-ft160` (v2 vs itself → net 0 → the
+gate fails, correctly — there is no documented override and none should be added).
+
+---
+
+## D068 — First RHEM promotion run succeeds end to end: gate PASS, signed modelcar, PR #2 open, verified pull under enforcing policy
+
+**Date:** 2026-09-09
+**Context:** two operational blockers surfaced ahead of the run. The host runner was not resident
+(it died on `KafkaConnectionError 113 EHOSTUNREACH`, consistent with the SNO reboot during the
+4.18→4.19 upgrade); restarted with the runbook's command. Its `loop_park()` only looks for a docker
+container named exactly `act-inference` (stopped since the C2 cut-over), so the D023 run never
+touches `act-coordinator` — the loop stayed stopped throughout (worth a `Restart=always` user unit on
+the host; the runbook "If it breaks" section already lists the symptom). `flightctl` lives in
+`~/.local/bin` on the desktop and is not on the non-interactive ssh PATH.
+**Decision (run record):** DSP run `192f3ec5-c0f2-459d-8e84-6e8e32e90b35` (pipeline version
+`v-202609090650-rhem`) SUCCEEDED on the first attempt, 2026-09-09 06:53–06:57 CDT: the runner reused
+the checkpoint plus both N=100 records (25 s), gate PASS (0.73 → 0.86, 20/7, p=0.0192), `crane append`
+→ `quay.io/jary/soarm-act-modelcar@sha256:1375d0bcc2c7c81867365b55a08bdd5fa03bf31d20cc7bde04044fdcf1a0784e`,
+cosign → **Rekor index 4** (tree size 5), commit `529912e`, **PR #2**
+https://github.com/RHPhysicalAI/hp-roscon-flywheel/pull/2 with exactly the 2 + 3 lines. `cosign
+verify` with `SIGSTORE_REKOR_PUBLIC_KEY` (no `--insecure-ignore-tlog`) clean; the VM pulled the digest
+under its enforcing `policy.json` ("Storing signatures"). Full record:
+`docs/eval-records/promotion-2.md`. Not merged — Gate 3 is the operator's.
+**Consequences:** follow-ups for inbox, not decisions: host runner as a `Restart=always` user unit;
+`manifest-consumer.yaml` still on `python-312:latest` (F, after PR #2 merges to avoid a conflict);
+`platform` as a list for a multi-arch modelcar (F); the three `-rhem` staging artefacts on the host
+(`train/act-v2-ft160-rhem` symlink, `eval/eval-act-v2-ft160-rhem.json`, MinIO
+`checkpoints/act-v2-ft160-rhem/`) go away with the first real round-B candidate.
