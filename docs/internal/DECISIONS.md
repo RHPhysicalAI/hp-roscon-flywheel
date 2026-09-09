@@ -4164,3 +4164,26 @@ promotion exercises these checks for real.
   task-success check.
 **Consequences:** one push, one broker restart (new SA), curator and sync-agent re-pulled on the
 pinned digest; verified below in the runner's report.
+
+---
+
+## D129 — Runtime image rebuilt in one clean Tekton run and re-pinned; C11/C12 now on the device path
+
+**Date:** 2026-09-09
+**Record:** PipelineRun `runtime-image-plt5s` on `ea513fa`: git-clone, build-and-push (amd64 + arm64),
+sign, verify — all Succeeded in a single run, 20:29Z → 21:38Z. This is the "one clean end-to-end
+run" D112 left open. Manifest list `sha256:02e66d895ed4ba328aa43263561027c18406d774887f465ab7acbd81e4c42d08`
+(tag `act-inference-ea513fa`), platform digests arm64 `a7adc041…` / amd64 `6713857a…`, Rekor
+14/15/16. Verified independently from the host with `cosign verify --rekor-url` +
+`SIGSTORE_REKOR_PUBLIC_KEY` (claims validated, tlog existence verified, key verified; exit 0) and
+`crane manifest` (both platforms).
+**Decision:** Fleet `Image=` re-pinned to the new digest; the runbook's two digest references
+updated to match. The image carries D113's eval-gate fix (C11), D118's name-keyed joint checks and
+`sim_reset.py` parse fix (C12), and D115's emitter change is on the sim image already (D124-era
+host rebuild, `sim-only` re-tagged, previous image kept as `sim-only-prev-20260904`). Expected
+rollout: rv 7 → 8, container recreated, Healthy within ~4 min (D112's re-pin timing); modelcar
+unchanged, so no modelcar pull.
+**Consequences:** the sim (`so-arm-sim`) and the device now both run images built from `ea513fa`.
+A 10-minute validation loop follows to exercise the whole path; the loop is stopped afterwards
+and the disk guard stays armed. The `runtime-image-a4` PipelineRun and its 60 Gi PVC remain to
+be deleted after the kit recording (inbox).

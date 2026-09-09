@@ -206,7 +206,7 @@ spec:
 
                 [Container]
                 # Runtime image: built + signed by Tekton (Phase 4.5 F), referenced by the multi-arch manifest-list digest (docs/eval-records/runtime-image-tekton.md: tag act-inference-aa7392f, Rekor 11/12/13).
-                Image=quay.io/jary/soarm-flywheel@sha256:3d67f4246fd0915278b419bf4a3c67c3c9e0f8a07c553305a7445f65fc2cb4af
+                Image=quay.io/jary/soarm-flywheel@sha256:02e66d895ed4ba328aa43263561027c18406d774887f465ab7acbd81e4c42d08
                 ContainerName=act-inference
                 Network=host
                 EnvironmentFile=/etc/act-inference/env

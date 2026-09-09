@@ -163,7 +163,7 @@ Device `s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg` (alias `act-device
 container `act-inference-128875-act-inference` (the name survives rollouts, D071). Live modelcar
 `quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b`
 (`act-v2-ft160`); PR #2's promoted modelcar `…@sha256:1375d0bcc2c7c81867365b55a08bdd5fa03bf31d20cc7bde04044fdcf1a0784e`;
-runtime image (Tekton, multi-arch) `quay.io/jary/soarm-flywheel@sha256:3d67f4246fd0915278b419bf4a3c67c3c9e0f8a07c553305a7445f65fc2cb4af`.
+runtime image (Tekton, multi-arch) `quay.io/jary/soarm-flywheel@sha256:02e66d895ed4ba328aa43263561027c18406d774887f465ab7acbd81e4c42d08`.
 
 ### Known screen artifacts (narrate, don't debug)
 
@@ -683,7 +683,7 @@ served a policy yet.
 |---|---|
 | Camera stream blank | `curl -s -m 3 http://10.0.0.48:8081/health`; pose UI `:8090` has its own streams; last resort **[not rehearsed]** `docker restart so-arm-sim; sleep 60` then restart the loop |
 | Arm frozen, no `Early stop`/`Resetting cubes` in `docker logs --since 5m act-coordinator` | the loop is off or the device unhealthy: state check; restart the loop (below); if the device app is not Healthy, `flightctl get events --limit 10` says why |
-| **Loop (re)start** | on the host, disk guard first if not resident: `nohup ~/disk-guard.sh >/dev/null 2>&1 &`; then `IMAGE=quay.io/jary/soarm-flywheel@sha256:3d67f4246fd0915278b419bf4a3c67c3c9e0f8a07c553305a7445f65fc2cb4af MODEL_VERSION=<the Fleet's MODEL_VERSION> ~/run-coordinator.sh` (the script refuses without the guard or with < 100 GB free; the last loop ran on the interim digest `2ad1fb1c…` — first run with the Tekton digest **[not run today]**). Stop with `docker stop act-coordinator`. Never two coordinators (D057) |
+| **Loop (re)start** | on the host, disk guard first if not resident: `nohup ~/disk-guard.sh >/dev/null 2>&1 &`; then `IMAGE=quay.io/jary/soarm-flywheel@sha256:02e66d895ed4ba328aa43263561027c18406d774887f465ab7acbd81e4c42d08 MODEL_VERSION=<the Fleet's MODEL_VERSION> ~/run-coordinator.sh` (the script refuses without the guard or with < 100 GB free; the last loop ran on the interim digest `2ad1fb1c…` — first run with the Tekton digest **[not run today]**). Stop with `docker stop act-coordinator`. Never two coordinators (D057) |
 | Bags ≥ 330 or free < 100 GB (guard parks the loop) | port + prune first (`~/assemble_all.sh` pattern, `tools/host/prune_bags.py --yes`), then restart the loop |
 | **Host runner not resident** (`pgrep -af host_runner` empty; `trigger-and-wait` FAILED) | on the host: `set -a; source ~/.minio-env; set +a; nohup ~/venv-runner/bin/python ~/host_runner.py </dev/null >> ~/host-runner.log 2>&1 &` (the runner reads the MinIO credentials from the environment) **[not run today — the runner was resident]** |
 | Dashboard not updating | `/api/status` moving? reload; else `oc delete pod -n flywheel -l app=dashboard` (host) **[not run today]** |
