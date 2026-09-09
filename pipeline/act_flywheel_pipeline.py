@@ -20,6 +20,13 @@ properties = dataset URI, incumbent, success rates, fixed/broken/net, p, Rekor i
 URL is only known after the PR exists, so `record_pr_url` fills it in afterwards (D027 keeps the
 record before the PR; a version with an empty pr_url means "signed, PR not opened").
 
+`append_catalog_version` (D027, E2) is a REMOVABLE SEAM inside `open_promotion_pr`: the same promotion
+commit appends the candidate to the RHEM CatalogItem `physical-ai-models/soarm-act` (Catalog API v1alpha1)
+as a version-graph node -- provenance beside the Fleet, not a live reference (D038: the `.volume`
+Driver=image path has no catalogItemRef, so the Fleet pins the digest itself). Designed to be deleted the
+day RHEM's registry -> catalog bridge lands: remove the fenced block, the `catalog_item_file` param and
+the PyYAML pin; nothing else depends on it.
+
 Compile:  python pipeline/act_flywheel_pipeline.py  -> pipeline/act_flywheel_pipeline.yaml
 Secrets expected in the DSP project namespace: hub-credentials (S3), quay-push (dockerconfigjson),
 cosign-signing-key (cosign.key, cosign.pub, cosign.password -> COSIGN_PASSWORD), github-token (token).
@@ -217,9 +224,10 @@ def record_pr_url(model_name: str, candidate: str, pr_url: str, model_registry_u
     mv = mr.update(mv); print("pr_url recorded on", model_name, candidate, mv.id, "->", pr_url); return pr_url
 
 
-@dsl.component(base_image=PY_IMG, packages_to_install=["PyGithub==2.4.0"])
+@dsl.component(base_image=PY_IMG, packages_to_install=["PyGithub==2.4.0", "PyYAML>=6,<7"])  # PyYAML: catalog seam only
 def open_promotion_pr(image_ref: str, candidate: str, checkpoint_uri: str, report_json: str, github_repo: str,
-                      gitops_branch: str, fleet_file: str, consumer_file: str, fleet_ui_url: str, run_id: str) -> str:
+                      gitops_branch: str, fleet_file: str, consumer_file: str, fleet_ui_url: str, run_id: str,
+                      catalog_item_file: str = "gitops/rhem-catalog/catalogitem-soarm-act.yaml") -> str:
     """ONE commit (thor-testing 5e3e87a: a partial flip is an outage) editing the RHEM Fleet - modelcar
     digest + MODEL_VERSION - and the trigger's lineage in manifest-consumer, then a PR whose body carries
     the eval report, the Fleet URL and the rollback (D025). Human merge is the last gate."""
@@ -247,6 +255,49 @@ def open_promotion_pr(image_ref: str, candidate: str, checkpoint_uri: str, repor
     rep = json.loads(report_json)
     elems = [InputGitTreeElement(fleet_file, "100644", "blob", content=fleet),
              InputGitTreeElement(consumer_file, "100644", "blob", content=consumer)]
+
+    # ---- Catalog seam (D027) BEGIN -- removable. Delete this fenced block, the `catalog_item_file` param, the
+    # PyYAML pin and the `body += catalog_note` line when RHEM's registry->catalog bridge lands. Nothing else
+    # reads its output: the Fleet pins the digest (D038); the CatalogItem is the version graph beside it.
+    def append_catalog_version(item_yaml: str, version: str, digest: str, replaces: str) -> str:
+        """Append `version` (a candidate name) to the CatalogItem's `versions:` list, or refresh its reference if
+        already present. Catalog API v1alpha1 requires strict semver names, so `act-v<N>-<suffix>` is recorded as
+        `<N>.0.0-<suffix>` with the candidate name in the version's readme; `replaces` is set only when the
+        previous candidate is already a node. Everything before `versions:` is kept byte-for-byte."""
+        import yaml
+        def semver(name):
+            m = re.fullmatch(r"act-v(\d+)-([0-9A-Za-z.-]+)", name)
+            return f"{m.group(1)}.0.0-{m.group(2)}" if m else "0.0.0-" + re.sub(r"[^0-9A-Za-z.-]", "-", name)
+        head, sep, _ = item_yaml.partition("\n  versions:")
+        if not sep: raise SystemExit(f"{catalog_item_file}: no `versions:` key")
+        doc = yaml.safe_load(item_yaml)
+        uri = doc["spec"]["artifacts"][0]["uri"]
+        versions = list(doc["spec"].get("versions") or [])
+        sv, prev = semver(version), semver(replaces)
+        idx = next((i for i, v in enumerate(versions) if v["version"] == sv), None)
+        entry = {"version": sv, "channels": ["stable"], "references": {"container": digest},
+                 "readme": f"candidate {version} -- {uri}@{digest}"}
+        if prev != sv and any(v["version"] == prev for v in versions): entry["replaces"] = prev
+        elif idx is not None and versions[idx].get("replaces"): entry["replaces"] = versions[idx]["replaces"]
+        if idx is None: versions.append(entry)
+        else: versions[idx] = entry
+        out = [head, "  versions:"]
+        for v in versions:
+            out += [f"    - version: {json.dumps(v['version'])}", f"      channels: [{', '.join(v['channels'])}]", "      references:"]
+            out += [f"        {k}: {json.dumps(r)}" for k, r in v["references"].items()]
+            if v.get("replaces"): out.append(f"      replaces: {json.dumps(v['replaces'])}")
+            if v.get("readme"): out.append(f"      readme: {json.dumps(v['readme'])}")
+        return "\n".join(out) + "\n"
+    catalog_note = ""
+    try:
+        item = append_catalog_version(get(catalog_item_file), candidate, digest, old_mv)
+        elems.append(InputGitTreeElement(catalog_item_file, "100644", "blob", content=item))
+        catalog_note = (f"\n\nCatalog (v1alpha1, version graph only - the Fleet pins the digest): `{catalog_item_file}` gains "
+                        f"version `{re.search(r'- version: \"([^\"]+)\"[^-]*' + re.escape(digest), item, re.S).group(1)}` for `{candidate}`.")
+    except GithubException as e:
+        if e.status != 404: raise
+        print(f"catalog seam: {catalog_item_file} not on {gitops_branch}, skipped (not load-bearing)")
+    # ---- Catalog seam END
     tree = repo.create_git_tree(elems, base.tree)
     msg = (f"Promote {candidate}: Fleet act-inference <- {digest[:19]}..., MODEL_VERSION {old_mv} -> {candidate}; manifest-consumer lineage -> {candidate}\n\n"
            f"Eval gate: {rep['incumbent']} {rep['incumbent_success_rate']:.2f} -> {candidate} {rep['candidate_success_rate']:.2f}, fixed {rep['fixed']} broken {rep['broken']} net {rep['net']:+d} p={rep['sign_test_p']}")
@@ -270,6 +321,7 @@ def open_promotion_pr(image_ref: str, candidate: str, checkpoint_uri: str, repor
             f"Fleet: {fleet_ui_url}\n\n"
             f"Rollback: `git revert <sha>` - revert the merge commit of this PR and merge the revert. The previous modelcar is still in device storage "
             f"(image volume `reclaimPolicy: Retain`), so rolling back does not re-pull.")
+    body += catalog_note  # Catalog seam (D027): delete with the fenced block above
     title = f"Promote {candidate} ({rep['incumbent_success_rate']:.0%} -> {rep['candidate_success_rate']:.0%})"
     existing = list(repo.get_pulls(state="open", base=gitops_branch, head=f"{repo.owner.login}:{head}"))
     pr = existing[0] if existing else repo.create_pull(title=title, body=body, base=gitops_branch, head=head)
@@ -287,7 +339,8 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
                           fleet_file: str = "gitops/rhem/fleet-act-inference.yaml", consumer_file: str = "gitops/flywheel/manifest-consumer.yaml",
                           fleet_ui_url: str = "https://ui.flightctl.apps.sno-flywheel.local/devicemanagement/fleets/act-inference",
                           modelcar_base: str = UBI_MICRO, timeout_min: int = 600,
-                          model_registry_url: str = "https://flywheel.rhoai-model-registries.svc:8443"):
+                          model_registry_url: str = "https://flywheel.rhoai-model-registries.svc:8443",
+                          catalog_item_file: str = "gitops/rhem-catalog/catalogitem-soarm-act.yaml"):
     run_id = dsl.PIPELINE_JOB_ID_PLACEHOLDER
     # mode == "cluster": in-pod train/eval components (Phase 4, GB10/GB300) replace this step; same outputs.
     t = trigger_and_wait(run_id=run_id, candidate=candidate, incumbent=incumbent, collector=collector,
@@ -311,7 +364,7 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
     reg.set_caching_options(False)
     pr = open_promotion_pr(image_ref=sg.outputs["image_ref"], candidate=candidate, checkpoint_uri=t.outputs["checkpoint"], report_json=g.output,
                            github_repo=github_repo, gitops_branch=gitops_branch, fleet_file=fleet_file, consumer_file=consumer_file,
-                           fleet_ui_url=fleet_ui_url, run_id=run_id).after(reg)
+                           fleet_ui_url=fleet_ui_url, run_id=run_id, catalog_item_file=catalog_item_file).after(reg)
     pr.set_caching_options(False)
     k8s.use_secret_as_volume(pr, secret_name="github-token", mount_path="/etc/github")
     rp = record_pr_url(model_name=MODEL_NAME, candidate=candidate, pr_url=pr.output, model_registry_url=model_registry_url)

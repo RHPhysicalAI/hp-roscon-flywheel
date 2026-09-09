@@ -3,6 +3,7 @@
 # Description: assemble -> train -> eval gate -> package -> sign -> Fleet promotion PR (D022, D025)
 # Inputs:
 #    candidate: str
+#    catalog_item_file: str [Default: 'gitops/rhem-catalog/catalogitem-soarm-act.yaml']
 #    collector: str [Default: 'upstream-act-teacher']
 #    consumer_file: str [Default: 'gitops/flywheel/manifest-consumer.yaml']
 #    cosign_version: str [Default: 'v2.6.5']
@@ -43,6 +44,10 @@ components:
     inputDefinitions:
       parameters:
         candidate:
+          parameterType: STRING
+        catalog_item_file:
+          defaultValue: gitops/rhem-catalog/catalogitem-soarm-act.yaml
+          isOptional: true
           parameterType: STRING
         checkpoint_uri:
           parameterType: STRING
@@ -240,9 +245,9 @@ deploymentSpec:
         - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
           \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
           \ python3 -m pip install --quiet --no-warn-script-location 'PyGithub==2.4.0'\
-          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
-          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
-          $0\" \"$@\"\n"
+          \ 'PyYAML>=6,<7'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.17.0' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
         - sh
         - -ec
         - 'program_path=$(mktemp -d)
@@ -256,8 +261,9 @@ deploymentSpec:
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef open_promotion_pr(image_ref: str, candidate: str, checkpoint_uri:\
           \ str, report_json: str, github_repo: str,\n                      gitops_branch:\
-          \ str, fleet_file: str, consumer_file: str, fleet_ui_url: str, run_id: str)\
-          \ -> str:\n    \"\"\"ONE commit (thor-testing 5e3e87a: a partial flip is\
+          \ str, fleet_file: str, consumer_file: str, fleet_ui_url: str, run_id: str,\n\
+          \                      catalog_item_file: str = \"gitops/rhem-catalog/catalogitem-soarm-act.yaml\"\
+          ) -> str:\n    \"\"\"ONE commit (thor-testing 5e3e87a: a partial flip is\
           \ an outage) editing the RHEM Fleet - modelcar\n    digest + MODEL_VERSION\
           \ - and the trigger's lineage in manifest-consumer, then a PR whose body\
           \ carries\n    the eval report, the Fleet URL and the rollback (D025). Human\
@@ -283,17 +289,62 @@ deploymentSpec:
           \ edit did not match exactly: image={n_img} model_version={n_mv} consumer={n_c}\"\
           ); raise SystemExit(1)\n    rep = json.loads(report_json)\n    elems = [InputGitTreeElement(fleet_file,\
           \ \"100644\", \"blob\", content=fleet),\n             InputGitTreeElement(consumer_file,\
-          \ \"100644\", \"blob\", content=consumer)]\n    tree = repo.create_git_tree(elems,\
-          \ base.tree)\n    msg = (f\"Promote {candidate}: Fleet act-inference <-\
-          \ {digest[:19]}..., MODEL_VERSION {old_mv} -> {candidate}; manifest-consumer\
-          \ lineage -> {candidate}\\n\\n\"\n           f\"Eval gate: {rep['incumbent']}\
-          \ {rep['incumbent_success_rate']:.2f} -> {candidate} {rep['candidate_success_rate']:.2f},\
-          \ fixed {rep['fixed']} broken {rep['broken']} net {rep['net']:+d} p={rep['sign_test_p']}\"\
-          )\n    commit = repo.create_git_commit(msg, tree, [base])\n    # Branch\
-          \ unique per run: a merged PR's head branch outlives it on GitHub, so a\
-          \ fixed name 422s on the rerun.\n    head = f\"promote/{candidate}-\" +\
-          \ (run_id[:8] if run_id else datetime.now(timezone.utc).strftime(\"%Y%m%d%H%M%S\"\
-          ))\n    try:\n        repo.create_git_ref(f\"refs/heads/{head}\", commit.sha)\n\
+          \ \"100644\", \"blob\", content=consumer)]\n\n    # ---- Catalog seam (D027)\
+          \ BEGIN -- removable. Delete this fenced block, the `catalog_item_file`\
+          \ param, the\n    # PyYAML pin and the `body += catalog_note` line when\
+          \ RHEM's registry->catalog bridge lands. Nothing else\n    # reads its output:\
+          \ the Fleet pins the digest (D038); the CatalogItem is the version graph\
+          \ beside it.\n    def append_catalog_version(item_yaml: str, version: str,\
+          \ digest: str, replaces: str) -> str:\n        \"\"\"Append `version` (a\
+          \ candidate name) to the CatalogItem's `versions:` list, or refresh its\
+          \ reference if\n        already present. Catalog API v1alpha1 requires strict\
+          \ semver names, so `act-v<N>-<suffix>` is recorded as\n        `<N>.0.0-<suffix>`\
+          \ with the candidate name in the version's readme; `replaces` is set only\
+          \ when the\n        previous candidate is already a node. Everything before\
+          \ `versions:` is kept byte-for-byte.\"\"\"\n        import yaml\n      \
+          \  def semver(name):\n            m = re.fullmatch(r\"act-v(\\d+)-([0-9A-Za-z.-]+)\"\
+          , name)\n            return f\"{m.group(1)}.0.0-{m.group(2)}\" if m else\
+          \ \"0.0.0-\" + re.sub(r\"[^0-9A-Za-z.-]\", \"-\", name)\n        head, sep,\
+          \ _ = item_yaml.partition(\"\\n  versions:\")\n        if not sep: raise\
+          \ SystemExit(f\"{catalog_item_file}: no `versions:` key\")\n        doc\
+          \ = yaml.safe_load(item_yaml)\n        uri = doc[\"spec\"][\"artifacts\"\
+          ][0][\"uri\"]\n        versions = list(doc[\"spec\"].get(\"versions\") or\
+          \ [])\n        sv, prev = semver(version), semver(replaces)\n        idx\
+          \ = next((i for i, v in enumerate(versions) if v[\"version\"] == sv), None)\n\
+          \        entry = {\"version\": sv, \"channels\": [\"stable\"], \"references\"\
+          : {\"container\": digest},\n                 \"readme\": f\"candidate {version}\
+          \ -- {uri}@{digest}\"}\n        if prev != sv and any(v[\"version\"] ==\
+          \ prev for v in versions): entry[\"replaces\"] = prev\n        elif idx\
+          \ is not None and versions[idx].get(\"replaces\"): entry[\"replaces\"] =\
+          \ versions[idx][\"replaces\"]\n        if idx is None: versions.append(entry)\n\
+          \        else: versions[idx] = entry\n        out = [head, \"  versions:\"\
+          ]\n        for v in versions:\n            out += [f\"    - version: {json.dumps(v['version'])}\"\
+          , f\"      channels: [{', '.join(v['channels'])}]\", \"      references:\"\
+          ]\n            out += [f\"        {k}: {json.dumps(r)}\" for k, r in v[\"\
+          references\"].items()]\n            if v.get(\"replaces\"): out.append(f\"\
+          \      replaces: {json.dumps(v['replaces'])}\")\n            if v.get(\"\
+          readme\"): out.append(f\"      readme: {json.dumps(v['readme'])}\")\n  \
+          \      return \"\\n\".join(out) + \"\\n\"\n    catalog_note = \"\"\n   \
+          \ try:\n        item = append_catalog_version(get(catalog_item_file), candidate,\
+          \ digest, old_mv)\n        elems.append(InputGitTreeElement(catalog_item_file,\
+          \ \"100644\", \"blob\", content=item))\n        catalog_note = (f\"\\n\\\
+          nCatalog (v1alpha1, version graph only - the Fleet pins the digest): `{catalog_item_file}`\
+          \ gains \"\n                        f\"version `{re.search(r'- version:\
+          \ \\\"([^\\\"]+)\\\"[^-]*' + re.escape(digest), item, re.S).group(1)}` for\
+          \ `{candidate}`.\")\n    except GithubException as e:\n        if e.status\
+          \ != 404: raise\n        print(f\"catalog seam: {catalog_item_file} not\
+          \ on {gitops_branch}, skipped (not load-bearing)\")\n    # ---- Catalog\
+          \ seam END\n    tree = repo.create_git_tree(elems, base.tree)\n    msg =\
+          \ (f\"Promote {candidate}: Fleet act-inference <- {digest[:19]}..., MODEL_VERSION\
+          \ {old_mv} -> {candidate}; manifest-consumer lineage -> {candidate}\\n\\\
+          n\"\n           f\"Eval gate: {rep['incumbent']} {rep['incumbent_success_rate']:.2f}\
+          \ -> {candidate} {rep['candidate_success_rate']:.2f}, fixed {rep['fixed']}\
+          \ broken {rep['broken']} net {rep['net']:+d} p={rep['sign_test_p']}\")\n\
+          \    commit = repo.create_git_commit(msg, tree, [base])\n    # Branch unique\
+          \ per run: a merged PR's head branch outlives it on GitHub, so a fixed name\
+          \ 422s on the rerun.\n    head = f\"promote/{candidate}-\" + (run_id[:8]\
+          \ if run_id else datetime.now(timezone.utc).strftime(\"%Y%m%d%H%M%S\"))\n\
+          \    try:\n        repo.create_git_ref(f\"refs/heads/{head}\", commit.sha)\n\
           \    except GithubException as e:\n        if e.status != 422: raise\n \
           \       repo.get_git_ref(f\"heads/{head}\").edit(commit.sha, force=True);\
           \ print(\"ref existed, moved:\", head)\n    body = (f\"## Promotion: `{candidate}`\
@@ -316,7 +367,8 @@ deploymentSpec:
           \ `git revert <sha>` - revert the merge commit of this PR and merge the\
           \ revert. The previous modelcar is still in device storage \"\n        \
           \    f\"(image volume `reclaimPolicy: Retain`), so rolling back does not\
-          \ re-pull.\")\n    title = f\"Promote {candidate} ({rep['incumbent_success_rate']:.0%}\
+          \ re-pull.\")\n    body += catalog_note  # Catalog seam (D027): delete with\
+          \ the fenced block above\n    title = f\"Promote {candidate} ({rep['incumbent_success_rate']:.0%}\
           \ -> {rep['candidate_success_rate']:.0%})\"\n    existing = list(repo.get_pulls(state=\"\
           open\", base=gitops_branch, head=f\"{repo.owner.login}:{head}\"))\n    pr\
           \ = existing[0] if existing else repo.create_pull(title=title, body=body,\
@@ -659,6 +711,8 @@ root:
           parameters:
             candidate:
               componentInputParameter: candidate
+            catalog_item_file:
+              componentInputParameter: catalog_item_file
             checkpoint_uri:
               taskOutputParameter:
                 outputParameterKey: checkpoint
@@ -832,6 +886,10 @@ root:
   inputDefinitions:
     parameters:
       candidate:
+        parameterType: STRING
+      catalog_item_file:
+        defaultValue: gitops/rhem-catalog/catalogitem-soarm-act.yaml
+        isOptional: true
         parameterType: STRING
       collector:
         defaultValue: upstream-act-teacher
