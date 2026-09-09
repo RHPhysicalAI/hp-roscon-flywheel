@@ -37,6 +37,10 @@ spec:
       type: string
       default: "true"
       description: Also sign every platform image referenced by a manifest list
+    - name: SIGN
+      type: string
+      default: "true"
+      description: "\"false\" skips signing and only verifies an already-signed IMAGE"
     - name: COSIGN_VERSION
       type: string
       default: v2.6.5
@@ -77,6 +81,8 @@ spec:
         value: $(params.REKOR_URL)
       - name: PARAMS_RECURSIVE
         value: $(params.RECURSIVE)
+      - name: PARAMS_SIGN
+        value: $(params.SIGN)
       - name: PARAMS_COSIGN_VERSION
         value: $(params.COSIGN_VERSION)
       - name: PARAMS_COSIGN_SHA256_AMD64
@@ -123,6 +129,11 @@ spec:
             export DOCKER_CONFIG=/tmp/.docker
           fi
         fi
+        if [[ "${PARAMS_SIGN}" != "true" ]]; then
+          echo "SIGN=${PARAMS_SIGN}: not signing ${PARAMS_IMAGE}; verify-only run"
+          printf 'skipped' > "$(results.REKOR_INDEXES.path)"
+          exit 0
+        fi
         COSIGN_PASSWORD="$(cat "${KEYS}/cosign.password")"
         export COSIGN_PASSWORD
 
@@ -135,7 +146,10 @@ spec:
           -y \
           "${PARAMS_IMAGE}" 2>&1 | tee /tmp/sign.log
 
-        INDEXES="$(grep -o 'tlog entry created with index: [0-9]*' /tmp/sign.log | awk '{print $NF}' | xargs echo)"
+        INDEXES=""
+        for i in $(grep -o 'tlog entry created with index: [0-9]*' /tmp/sign.log | awk '{print $NF}'); do
+          INDEXES="${INDEXES:+${INDEXES} }${i}"
+        done
         [[ -n "${INDEXES}" ]] || { echo "no Rekor entry reported by cosign sign" >&2; exit 1; }
         echo "Rekor indexes: ${INDEXES}"
         printf '%s' "${INDEXES}" > "$(results.REKOR_INDEXES.path)"
