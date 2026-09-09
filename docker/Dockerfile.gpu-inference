@@ -49,14 +49,24 @@ RUN apt-get update \
 RUN source /opt/ros/"$ROS_DISTRO"/setup.bash \
   && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
 
-# ---- ML dependencies (GPU — RTX 5090 / CUDA 13.0) ----
+# ---- ML dependencies (GPU — CUDA 13.0: RTX 5090 on x86, GB10/GB300 on aarch64) ----
+# TARGETARCH is set by buildx/buildah per --platform. The cu130 index publishes aarch64 wheels
+# for all three packages, but only torch carries the +cu130 local version there (torchaudio and
+# torchvision are plain 2.9.1 / 0.24.1); TORCH_SPEC overrides the per-arch default when set.
+ARG TARGETARCH
+ARG TORCH_INDEX=https://download.pytorch.org/whl/cu130
+ARG TORCH_SPEC=""
+ARG TORCH_SPEC_AMD64="torch==2.9.1+cu130 torchaudio==2.9.1+cu130 torchvision==0.24.1+cu130"
+ARG TORCH_SPEC_ARM64="torch==2.9.1+cu130 torchaudio==2.9.1 torchvision==0.24.1"
 # Wipe dist-info but preserve pip itself, then install ML stack
 RUN find /usr/lib/python3/dist-packages -name '*.dist-info' ! -path '*pip*' -exec rm -rf {} + 2>/dev/null || true \
+  && if [ -n "${TORCH_SPEC}" ]; then SPEC="${TORCH_SPEC}"; \
+     elif [ "${TARGETARCH:-amd64}" = "arm64" ]; then SPEC="${TORCH_SPEC_ARM64}"; \
+     else SPEC="${TORCH_SPEC_AMD64}"; fi \
+  && echo "torch spec (${TARGETARCH:-amd64}): ${SPEC} from ${TORCH_INDEX}" \
   && pip3 install --no-cache-dir --break-system-packages \
-  torch==2.9.1+cu130 \
-  torchaudio==2.9.1+cu130 \
-  torchvision==0.24.1+cu130 \
-  --index-url https://download.pytorch.org/whl/cu130 \
+  ${SPEC} \
+  --index-url "${TORCH_INDEX}" \
   && pip3 install --no-cache-dir --break-system-packages \
   "lerobot[async]==0.5.1" \
   "numpy>=2.0.0,<2.3" \
