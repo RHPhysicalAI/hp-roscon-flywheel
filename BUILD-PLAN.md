@@ -423,6 +423,10 @@ E. **Model Registry (E1) + Catalog (E2, stretch)** (D027)
    - E1: `modelregistry` Managed in `gitops/operators-config/dsc.yaml`; `ModelRegistry` CR + MariaDB
      in `gitops/operators-config/model-registry.yaml`; KFP `register_model` between sign and PR
      carrying digest, dataset URI, eval numbers, Rekor index, PR URL. Closes Phase 4 item 5.
+   - **E1 built 2026-09-09 (D081+):** `modelregistry` Managed; `ModelRegistry/flywheel` Available
+     with MariaDB under Argo; REST route `flywheel-rest.apps.sno-flywheel.local` (v1alpha3);
+     `register_model` + `record_pr_url` in the pipeline (`v-202609090850-registry`); proof run
+     `3afee844` parked on a Multus stale-token fault awaiting the operator — exit criterion pending.
    - E2: `rhem/bootstrap/catalog.yaml` + `gitops/rhem/catalogitem-soarm-act.yaml`; pipeline
      `append_catalog_version(...)` as a removable seam; Fleet pins `catalogItemRef.version`.
    - **Exit:** the registry shows the promoted version with digest + metrics for at least one

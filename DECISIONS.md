@@ -2823,3 +2823,168 @@ operator runs `oc patch secret cosign-signing-key -n flywheel --type merge -p
 by every signing run to date) as a manual follow-up.
 **Decision:** ship the optional secretKeyRef now; re-keying with a passphrase would change
 `cosign.pub` on the device's `policy.json` and is a Fury-rebuild item.
+
+---
+
+## D081 — Model Registry CR shape on RHOAI 2.25: `v1beta1`, `mysql`/MariaDB backend, OAuth-proxy Route
+
+**Date:** 2026-09-09
+**Context:** Phase 4.5 E1 (D027) — the durable version → digest/dataset/eval/Rekor/PR join.
+**Record:** `modelregistries.modelregistry.opendatahub.io` on RHOAI 2.25.11 serves `v1alpha1` +
+**`v1beta1`** (storage). `v1beta1` has no `istio` block; auth is `spec.oauthProxy`
+(`ose-oauth-proxy` sidecar on 8443 with an OpenShift serving cert, Route `<name>-rest.apps.<domain>`
+created by default, `--openshift-delegate-urls` → SAR `get services/<name>` in the registries ns).
+`rest.serviceRoute` stays `disabled` (plain 8080 never leaves the pod). `gitops/operators-config/dsc.yaml`:
+`modelregistry: {managementState: Managed, registriesNamespace: rhoai-model-registries}` — the
+namespace is operator-owned, not in git (labels `platform.opendatahub.io/part-of: modelregistry`);
+`ModelRegistryReady=True` ~10 s after the Argo sync. Committed `e368afe`. CR `flywheel` in
+`rhoai-model-registries` (`gitops/operators-config/model-registry.yaml`): `grpc: {}`, `rest: {}`,
+`oauthProxy: {serviceRoute: enabled}`, `mysql: {host: model-registry-db.rhoai-model-registries.svc,
+port: 3306, database: model_registry, username: mlmduser, passwordSecret: {name: model-registry-db,
+key: database-password}}`. MariaDB `registry.redhat.io/rhel9/mariadb-1011:9.8-1788409987` (pinned,
+multi-arch), PVC `model-registry-db` 10Gi `local-path`; password in the hand-created Secret
+`model-registry-db` (`tools/hub/create-model-registry-db-secret.sh`, listed in `argocd/README.md`).
+Service/Route live at `flywheel.rhoai-model-registries.svc:8443` (`https-api`, serving cert) and
+`https://flywheel-rest.apps.sno-flywheel.local` (reencrypt, new `/etc/hosts` entry, `10.0.0.49`); REST
+base `/api/model_registry/v1alpha3` (`/v1` → 404 on this server). Conditions after sync:
+`Available=True (DeploymentAvailable)`, `OAuthProxyAvailable=True`, `Progressing=False`. Committed
+`067564b`. Argo: `operators-config` app, sync waves 2 (DB) / 3 (CR, RoleBinding, NetworkPolicy) after
+the DSC (wave 1).
+**Decision:** ship the `v1beta1` CR with the MariaDB/mysql backend and OAuth-proxy Route now; the
+alternative istio-authorizer path doesn't exist on `v1beta1` so there was no choice to make.
+**Consequences:** enabling the component also deploys RHOAI's **model catalog** (`model-catalog`
+Deployment + Route `model-catalog.apps.sno-flywheel.local`) as a side effect — not configured, not
+used. First bootstrap on a fresh cluster: push the DSC change, wait for `ModelRegistryReady`, run the
+Secret script, then the rest syncs.
+
+---
+
+## D082 — Pipeline auth path to the registry: pod SA token through the OAuth proxy, in-cluster Service, service CA
+
+**Date:** 2026-09-09
+**Context:** Phase 4.5 E1 (D027), companion to D081.
+**Record:** `register_model`/`record_pr_url` call `https://flywheel.rhoai-model-registries.svc:8443`
+(pipeline param `model_registry_url`) with the pod's own token
+(`/var/run/secrets/kubernetes.io/serviceaccount/token`, SA `pipeline-runner-dspa`) and
+`custom_ca=.../service-ca.crt`. The Route is not resolvable in-cluster, so the Service is the only
+option. Auth chains through the OAuth proxy's `--openshift-delegate-urls` → SAR `get
+services/flywheel`; the operator creates Role `registry-user-flywheel` (+ Group binding
+`flywheel-users`), and git adds RoleBinding `registry-user-flywheel-pipeline` binding that Role to SA
+`flywheel/pipeline-runner-dspa` (`gitops/operators-config/model-registry.yaml`, committed `067564b`).
+**Forced:** the operator's NetworkPolicy `flywheel-https-route` admits 8443 only from the ingress
+router; a second policy `flywheel-https-pipeline` (`gitops/operators-config/model-registry.yaml`,
+committed `d26290c`) admits the `flywheel` namespace — without it the DSP pods have no path to the
+registry at all.
+**Verification:** proven read-only from a pod in `flywheel` before the proof run: `GET
+…/registered_models` → 403 without a token, 200 with the runner SA token (proxy response header
+`Gap-Auth: system:serviceaccount:flywheel:pipeline-runner-dspa`); from the desktop via the route with
+the same token: 200 `{"items":[]…}`, no token → 403.
+**Decision:** Service + SA token + service CA, not the Route and not a long-lived credential —
+matches the pattern already used for the RHEM hub and keeps the registry's auth surface identical to
+every other in-cluster RHOAI consumer.
+
+---
+
+## D083 — Ordering (a): register before the PR, `record_pr_url` after; client pinned to `model-registry==0.3.11`
+
+**Date:** 2026-09-09
+**Context:** Phase 4.5 E1 (D027); D027's "between sign and PR" ordering choice, now implemented.
+**Record:** pipeline is `trigger+wait -> gate -> package -> sign -> register_model ->
+open_promotion_pr -> record_pr_url`. `register_model` runs after `sign_modelcar`, `open_promotion_pr`
+runs `.after(reg)`, and `record_pr_url` updates the version's `pr_url` custom property once the PR
+exists. A version with `pr_url: ""` therefore reads as "signed and registered, PR not opened" —
+visible, not hidden. `register_model(model_name="soarm-act", image_ref=<index@digest>, candidate,
+checkpoint_uri, dataset_uri, eval_report_uri, report_json, rekor_index, rekor_url, run_id,
+model_registry_url)` builds `ModelRegistry(server, 8443, author="act-flywheel-pipeline",
+user_token=<pod SA token>, custom_ca=<service-ca.crt>)` and calls `.register_model(name, uri,
+model_format_name="lerobot-act", model_format_version="1", version=candidate, metadata={...})`.
+Custom properties: `dataset_uri`, `checkpoint_uri`, `eval_report_uri`, `incumbent`,
+`incumbent_success_rate`, `candidate_success_rate`, `n_paired`, `fixed`, `broken`, `net`,
+`sign_test_p`, `gate_rule`, `verdict`, `rekor_index`, `rekor_url`, `pr_url`, `dsp_run_id`. Artifact
+`uri` = the signed index digest. Ride-along fixes in the same commit: `sign_modelcar` now returns
+`(image_ref, rekor_index)` parsed from cosign's `tlog entry created with index: N` lines (first line
+= the index's own entry; `-1` without Rekor); `trigger_and_wait` gained a third output `dataset_uri`
+(the host runner already reports it; `"reused"` on the D023 path). Committed `599bd97`
+(`pipeline/act_flywheel_pipeline.py`, `pipeline/act_flywheel_pipeline.yaml`).
+**Client pin:** the RHOAI 2.25 server serves `/api/model_registry/v1alpha3` only (`/v1` → 404).
+Client `0.3.12`, `0.3.15`, `0.3.16` target `/api/model_registry/v1` (`0.3.14` oddly reverts); `0.3.11`
+is the last of the consistent `v1alpha3` line — verified in-cluster (`0.3.16` → `404 page not found`;
+`0.3.11` → OK). Versions uploaded while landing this: `v-202609090836-registry` (0.3.16, superseded),
+`v-202609090839-registry` (`e372c403-…`, env-secret path, superseded), **`v-202609090850-registry`
+(`29400621-5531-429b-80b5-8e24f613f240`)** — the version the proof run uses.
+**Decision:** ship ordering (a) and the `0.3.11` pin now; bump the client pin only when the server
+moves off `v1alpha3`, not before.
+
+---
+
+## D084 — Forced: rhods-operator CPU request 500m → 100m per replica (node was 99% CPU-requested)
+
+**Date:** 2026-09-09
+**Context:** Phase 4.5 E1; the MariaDB pod for D081 could not schedule.
+**Record:** the node had 15454m/15500m CPU *requested* (12% real use); the rhods-operator CSV runs 3
+replicas × 500m request. `gitops/operators/rhoai-operator.yaml` `spec.config.resources` now sets
+`requests: {cpu: 100m, memory: 256Mi}`, `limits: {cpu: 500m, memory: 4Gi}` — limits unchanged, only
+the request is cut. After the override: 68% requested; the DB pod scheduled. Committed `3e05768`.
+**Decision:** apply the OLM `SubscriptionConfig.resources` override rather than resizing the node or
+evicting something else — it's the only lever that changes *requested* without changing *real* usage.
+**Consequences:** other 250–500m requesters are candidates for the same treatment if the Fury SNO node
+turns out smaller: `flightctl-db` (512m), `flightctl-alertmanager` (500m), six `openshift-gitops`
+pods (250m each) — not done, no pressure to do it yet.
+
+---
+
+## D085 — Forced: `sign_modelcar` reads `cosign.password` from the Secret volume, not an optional env
+
+**Date:** 2026-09-09
+**Context:** Phase 4.5 E1; D080 shipped `use_secret_as_env(cosign-signing-key,
+{"cosign.password": "COSIGN_PASSWORD"}, optional=True)`.
+**Record:** `use_secret_as_env(..., optional=True)` compiles to `optional: true` in the YAML, but the
+DSP launcher on RHOAI 2.25 does not honour `secretKeyRef.optional`, and the live
+`cosign-signing-key` Secret has no `cosign.password` key (D080's README lists it as a possible key;
+D1 signed with an empty password because the key is unencrypted). First execution of that code path →
+`CreateContainerConfigError`, run `f1785799` died at `sign-modelcar` and was terminated.
+**Fix:** the Secret is already mounted at `/etc/cosign`; the step now reads `cosign.password` from
+`/etc/cosign/cosign.password` when present, else falls back to `""`. D080's contract (password
+sourced from the Secret's key, not hardcoded) holds; only the mechanism changed. Committed `d12f5de`
+(`pipeline/act_flywheel_pipeline.py`, `pipeline/act_flywheel_pipeline.yaml`).
+**Blocked:** copying the key from Tekton's `cosign-signing` Secret into `cosign-signing-key` (so the
+`cosign.password` key actually exists) was blocked by the session's write classifier — left to the
+operator if they want the two Secrets identical; not required for the fallback to work.
+
+---
+
+## D086 — E1 status: registry live under GitOps end to end; proof run parked on a Multus stale-token fault, exit criterion NOT yet met
+
+**Date:** 2026-09-09
+**Context:** Phase 4.5 E1 exit criterion (BUILD-PLAN.md item E) — "the registry shows the promoted
+version with digest + metrics for at least one candidate."
+**Record:** `docs/eval-records/model-registry.md` (committed `e12c5a6`, alongside `gitops/operators/
+README.md` rows made true — D081's CR shape, D082's auth/network path, D083's client pin and
+metadata now described as live rather than planned) is the authoritative record; **State:** registry
+live on the hub under GitOps; pipeline `register_model` + `record_pr_url` written, compiled, uploaded
+(`v-202609090850-registry`); the proof run **`3afee844-007a-4c97-ab70-5f9cc38b9853`** (created
+13:50:42Z, D1's parameters — `candidate=act-v2-ft160-rhem incumbent=upstream-act-teacher
+collector=upstream-act-teacher incumbent_checkpoint=hf`) is **parked on a cluster fault**: since
+**13:45:03Z** every new pod sandbox in `flywheel` fails `Multus: […]: error waiting for pod:
+Unauthorized` (586 such lines in the `multus-4rzbb` log in 40 min; the `rejected-mirror` CronJob pods
+fail identically) — a stale Multus API token. The registered-version JSON and PR #4 sections in the
+eval record are explicitly left as "pending the run."
+**Blocked / for the operator:**
+- **Multus repair:** `oc delete pod -n openshift-multus -l app=multus` (daemonset recreates it in
+  ~20 s), then confirm `FailedCreatePodSandBox` events stop in `flywheel`. Blocked by the session's
+  write classifier — an operator action, not resubmission of the run (kubelet retries the sandbox and
+  Argo continues on its own once Multus is healthy).
+- **303 pods on a 250-max node:** 114 Succeeded + 13 Failed pods linger (KFP driver/executor pods from
+  every run) — not the sandbox cause, but a DSPA/Argo TTL (`spec.apiServer.…`/`workflowTTL`) or a
+  periodic `oc delete pod --field-selector=status.phase=Succeeded -n flywheel` belongs on the inbox.
+**Decision:** do not claim the E1 exit criterion met on the strength of the CR/auth/pipeline being
+live — the criterion requires a registry entry for an actual promoted candidate, and none exists
+until `3afee844-…` (or a resubmission) completes past the Multus fault.
+**Status: exit criterion NOT met.** Verification commands once the run completes, from
+`docs/eval-records/model-registry.md`:
+```bash
+H=flywheel-rest.apps.sno-flywheel.local; T=$(oc create token pipeline-runner-dspa -n flywheel --duration=10m)
+curl -sk --resolve $H:443:10.0.0.49 -H "Authorization: Bearer $T" https://$H/api/model_registry/v1alpha3/registered_models
+curl -sk --resolve $H:443:10.0.0.49 -H "Authorization: Bearer $T" "https://$H/api/model_registry/v1alpha3/model_versions"
+curl -sk --resolve $H:443:10.0.0.49 -H "Authorization: Bearer $T" "https://$H/api/model_registry/v1alpha3/model_artifacts"
+```
