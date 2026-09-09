@@ -1,0 +1,11 @@
+# Bootstrap dependency for securesign.yaml (C7, review D115): the Securesign CR targets
+# `trusted-artifact-signer`, but nothing in git created that namespace — on the desktop it exists
+# by some other means (predates this file), but a from-scratch Fury SNO bring-up (Phase 4.5-G)
+# would leave the Securesign CR permanently stuck (namespace not found). Sync-wave 0, one wave
+# ahead of securesign.yaml's wave 1, so the namespace exists before the CR is applied.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trusted-artifact-signer
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"

@@ -1,0 +1,23 @@
+# Bootstrap once: oc apply -f argocd/storage-app.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: storage
+  namespace: openshift-gitops
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  destination:
+    namespace: local-path-storage
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    path: gitops/storage
+    repoURL: https://github.com/RHPhysicalAI/hp-roscon-flywheel.git
+    targetRevision: desktop-gpu-split
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true

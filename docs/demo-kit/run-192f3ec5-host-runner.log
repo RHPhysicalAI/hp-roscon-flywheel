@@ -1,0 +1,7 @@
+# ~/host-runner.log on the desktop, lines 181-186 (CDT) — the host runner's side of run 192f3ec5 (D023 path: checkpoint + N=100 records reused).
+09-09 06:54 [runner] trigger: {'run_id': '192f3ec5-c0f2-459d-8e84-6e8e32e90b35', 'candidate': 'act-v2-ft160-rhem', 'incumbent': 'upstream-act-teacher', 'collector': 'upstream-act-teacher', 'incumbent_checkpoint': 'hf', 'steps_per_frame': 0.25, 'eval_n': 100, 'eval_seed_base': 1000}
+09-09 06:54 [runner] checkpoint for act-v2-ft160-rhem exists — skipping assemble/train
+09-09 06:54 [runner] eval eval-act-v2-ft160-rhem: reusing existing record
+09-09 06:54 [runner] eval eval-upstream-act-teacher: reusing existing record
+09-09 06:54 [runner] loop was parked before the eval — leaving it parked
+09-09 06:54 [runner] run 192f3ec5-c0f2-459d-8e84-6e8e32e90b35: PASS — upstream-act-teacher 0.73 -> act-v2-ft160-rhem 0.86, fixed 20 broken 7 p=0.0192

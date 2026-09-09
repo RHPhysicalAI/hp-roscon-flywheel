@@ -1,0 +1,192 @@
+# This project was developed with assistance from AI tools.
+#
+# Sign an image digest with the pipeline's cosign key into the in-cluster RHTAS Rekor
+# (--tlog-upload=true), then verify it the way the device will (D026/D028). Lifted from
+# thor-testing tekton/01-cosign-sign-task.yaml with these changes:
+#   - cosign v2.6.5 (the version the KFP promotion and the D045 interim signing use), fetched
+#     arch-derived and checked against the release's cosign_checksums.txt before it runs. The
+#     RHTAS 1.4.3 client image (registry.redhat.io/rhtas/cosign-rhel9:1.4.3) ships cosign
+#     v3.0.4, whose default bundle/referrers layout containers-image on the device does not read
+#     (thor D014/D022) — so it is not used here; the base image is a digest-pinned ubi9-minimal.
+#   - `--recursive`: a manifest list gets one signature per platform image plus one for the
+#     list itself, so podman on the device (which verifies the platform manifest it resolves to)
+#     and cosign on the list digest both pass.
+#   - a verify step that never bypasses the transparency log, with SIGSTORE_REKOR_PUBLIC_KEY
+#     pointing at the rekor-public-key ConfigMap (D045: with a custom --rekor-url cosign otherwise
+#     looks the log key up in the public Sigstore TUF root). The same rekor.pub is on every device.
+#   - the key password comes from the `cosign.password` file in the cosign-key workspace
+#     (Secret cosign-signing: cosign.key, cosign.pub, cosign.password), never from a param.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: cosign-sign
+  namespace: flywheel
+spec:
+  description: >-
+    cosign sign --tlog-upload=true into RHTAS Rekor (recursively for manifest lists), then
+    cosign verify against the key and the Rekor public key. Reports the Rekor log index.
+  params:
+    - name: IMAGE
+      type: string
+      description: Image reference to sign, by digest (registry/repo@sha256:...)
+    - name: REKOR_URL
+      type: string
+      default: http://rekor-server.trusted-artifact-signer.svc
+      description: RHTAS Rekor URL (in-cluster Service by default)
+    - name: RECURSIVE
+      type: string
+      default: "true"
+      description: Also sign every platform image referenced by a manifest list
+    - name: SIGN
+      type: string
+      default: "true"
+      description: "\"false\" skips signing and only verifies an already-signed IMAGE"
+    - name: COSIGN_VERSION
+      type: string
+      default: v2.6.5
+    - name: COSIGN_SHA256_AMD64
+      type: string
+      default: c3b4f5410e608af03a5eb0aaac84a4313d8da131248e08ff1759ac70c79d1644
+    - name: COSIGN_SHA256_ARM64
+      type: string
+      default: 426193b4c5da4d4d643e822f48fe0cc8a476ca1782a272704831f5a0cef716d7
+  results:
+    - name: REKOR_INDEX
+      description: Rekor log index of the signature on IMAGE itself (from the verified bundle)
+    - name: REKOR_INDEXES
+      description: Every Rekor log index created by this signing, space-separated
+    - name: COSIGN_VERSION
+      description: cosign version that signed
+  workspaces:
+    - name: cosign-key
+      description: Secret with cosign.key, cosign.pub and cosign.password
+    - name: rekor-public-key
+      description: ConfigMap with rekor.pub (Rekor's /api/v1/log/publicKey)
+    - name: dockerconfig
+      optional: true
+      description: Registry credentials as config.json or .dockerconfigjson at the workspace root
+  volumes:
+    - name: tools
+      emptyDir: {}
+  stepTemplate:
+    # registry.access.redhat.com/ubi9/ubi-minimal:9.6-1760515502
+    image: registry.access.redhat.com/ubi9/ubi-minimal@sha256:34880b64c07f28f64d95737f82f891516de9a3b43583f39970f7bf8e4cfa48b7
+    volumeMounts:
+      - name: tools
+        mountPath: /tools
+    env:
+      - name: PARAMS_IMAGE
+        value: $(params.IMAGE)
+      - name: PARAMS_REKOR_URL
+        value: $(params.REKOR_URL)
+      - name: PARAMS_RECURSIVE
+        value: $(params.RECURSIVE)
+      - name: PARAMS_SIGN
+        value: $(params.SIGN)
+      - name: PARAMS_COSIGN_VERSION
+        value: $(params.COSIGN_VERSION)
+      - name: PARAMS_COSIGN_SHA256_AMD64
+        value: $(params.COSIGN_SHA256_AMD64)
+      - name: PARAMS_COSIGN_SHA256_ARM64
+        value: $(params.COSIGN_SHA256_ARM64)
+      - name: KEYS
+        value: $(workspaces.cosign-key.path)
+      - name: REKOR_PUB
+        value: $(workspaces.rekor-public-key.path)/rekor.pub
+      - name: WORKSPACES_DOCKERCONFIG_BOUND
+        value: $(workspaces.dockerconfig.bound)
+      - name: WORKSPACES_DOCKERCONFIG_PATH
+        value: $(workspaces.dockerconfig.path)
+      - name: HOME
+        value: /tmp
+  steps:
+    - name: fetch-cosign
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        case "$(uname -m)" in
+          x86_64)  A=amd64; SUM="${PARAMS_COSIGN_SHA256_AMD64}" ;;
+          aarch64) A=arm64; SUM="${PARAMS_COSIGN_SHA256_ARM64}" ;;
+          *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+        esac
+        curl -fsSL -o /tools/cosign \
+          "https://github.com/sigstore/cosign/releases/download/${PARAMS_COSIGN_VERSION}/cosign-linux-${A}"
+        echo "${SUM}  /tools/cosign" | sha256sum -c -
+        chmod +x /tools/cosign
+        /tools/cosign version 2>&1 | grep -E 'GitVersion|Platform'
+        /tools/cosign version 2>&1 | awk '/GitVersion/{printf "%s", $2}' > "$(results.COSIGN_VERSION.path)"
+
+    - name: sign
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        if [[ "${WORKSPACES_DOCKERCONFIG_BOUND}" == "true" ]]; then
+          if [[ -f "${WORKSPACES_DOCKERCONFIG_PATH}/config.json" ]]; then
+            export DOCKER_CONFIG="${WORKSPACES_DOCKERCONFIG_PATH}"
+          else
+            mkdir -p /tmp/.docker
+            cp "${WORKSPACES_DOCKERCONFIG_PATH}/.dockerconfigjson" /tmp/.docker/config.json
+            export DOCKER_CONFIG=/tmp/.docker
+          fi
+        fi
+        if [[ "${PARAMS_SIGN}" != "true" ]]; then
+          echo "SIGN=${PARAMS_SIGN}: not signing ${PARAMS_IMAGE}; verify-only run"
+          printf 'skipped' > "$(results.REKOR_INDEXES.path)"
+          exit 0
+        fi
+        COSIGN_PASSWORD="$(cat "${KEYS}/cosign.password")"
+        export COSIGN_PASSWORD
+
+        echo "Signing ${PARAMS_IMAGE} (recursive=${PARAMS_RECURSIVE}) -> ${PARAMS_REKOR_URL}"
+        /tools/cosign sign \
+          --key "${KEYS}/cosign.key" \
+          --rekor-url "${PARAMS_REKOR_URL}" \
+          --tlog-upload=true \
+          --recursive="${PARAMS_RECURSIVE}" \
+          -y \
+          "${PARAMS_IMAGE}" 2>&1 | tee /tmp/sign.log
+
+        INDEXES=""
+        for i in $(grep -o 'tlog entry created with index: [0-9]*' /tmp/sign.log | awk '{print $NF}'); do
+          INDEXES="${INDEXES:+${INDEXES} }${i}"
+        done
+        [[ -n "${INDEXES}" ]] || { echo "no Rekor entry reported by cosign sign" >&2; exit 1; }
+        echo "Rekor indexes: ${INDEXES}"
+        printf '%s' "${INDEXES}" > "$(results.REKOR_INDEXES.path)"
+
+    - name: verify
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        if [[ "${WORKSPACES_DOCKERCONFIG_BOUND}" == "true" ]]; then
+          if [[ -f "${WORKSPACES_DOCKERCONFIG_PATH}/config.json" ]]; then
+            export DOCKER_CONFIG="${WORKSPACES_DOCKERCONFIG_PATH}"
+          else
+            mkdir -p /tmp/.docker
+            cp "${WORKSPACES_DOCKERCONFIG_PATH}/.dockerconfigjson" /tmp/.docker/config.json
+            export DOCKER_CONFIG=/tmp/.docker
+          fi
+        fi
+        # Rekor SET verification against the in-cluster log key; never the tlog bypass flag.
+        export SIGSTORE_REKOR_PUBLIC_KEY="${REKOR_PUB}"
+        echo "Verifying ${PARAMS_IMAGE} against cosign.pub + Rekor key ${REKOR_PUB}"
+        # Pass/fail is the exit code only: over the plain-HTTP in-cluster Service a missing log
+        # entry surfaces as exit 12 with an undecodable error body, over the TLS route as
+        # "signature not found in transparency log" — the text differs, the code does not.
+        set +e
+        /tools/cosign verify \
+          --key "${KEYS}/cosign.pub" \
+          --rekor-url "${PARAMS_REKOR_URL}" \
+          --output json \
+          "${PARAMS_IMAGE}" > /tmp/verify.json
+        rc=$?
+        set -e
+        if [[ ${rc} -ne 0 ]]; then
+          echo "cosign verify failed with exit code ${rc}" >&2
+          exit "${rc}"
+        fi
+
+        INDEX="$(grep -o '"logIndex":[0-9]*' /tmp/verify.json | head -1 | cut -d: -f2)"
+        [[ -n "${INDEX}" ]] || { echo "verified payload carries no Rekor logIndex" >&2; exit 1; }
+        echo "Verified: bundle logIndex=${INDEX}"
+        printf '%s' "${INDEX}" > "$(results.REKOR_INDEX.path)"

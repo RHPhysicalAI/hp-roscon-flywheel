@@ -1,0 +1,112 @@
+# This project was developed with assistance from AI tools.
+#
+# Bootstrap once: oc apply -f argocd/rhem-app.yaml
+# (apply argocd/repo-flightctl-charts.yaml first — the OCI registry Secret)
+#
+# RHEM hub (flightctl 1.3.0) on the SNO, under GitOps (D024). Chart kubeVersion is >= 1.32,
+# so the SNO must be on OCP 4.19+ before this app can sync; no helm.kubeVersion override.
+#
+# Why the values below are explicit rather than the chart's "auto" defaults: Argo CD renders
+# with `helm template`, where Helm's `lookup` returns nothing. The chart uses `lookup` to find
+# the OpenShift base domain, the oauth-openshift Route (it calls `fail` if not found), the
+# ingress CA, and previously generated passwords. Everything lookup-derived is therefore pinned
+# here, and the four generated Secrets + the OAuth client secret (re-randomised on every render)
+# are held at their live values via ignoreDifferences + RespectIgnoreDifferences.
+#
+# Routes: ui.flightctl.apps.sno-flywheel.local, api.flightctl.apps.sno-flywheel.local,
+# agent-api.flightctl.apps.sno-flywheel.local (chart layout: <svc>.<ns>.apps.<cluster domain>).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rhem
+  namespace: openshift-gitops
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  destination:
+    namespace: flightctl
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    repoURL: quay.io/flightctl/charts
+    chart: flightctl
+    targetRevision: 1.3.0
+    helm:
+      releaseName: flightctl
+      valuesObject:
+        global:
+          enableOpenShiftExtensions: "true"
+          enableMulticlusterExtensions: "false"
+          generateCertificates: "builtin"
+          # Route.spec.tls.externalCertificate needs a feature gate that is not GA on 4.19;
+          # rely on the default router certificate instead.
+          routeExternalCertificate: "false"
+          exposeServicesMethod: "route"
+          baseDomain: flightctl.apps.sno-flywheel.local
+          storageClassName: local-path
+          auth:
+            type: "openshift"
+            # The OAuth server presents the self-signed ingress certificate (D006 pattern).
+            insecureSkipTlsVerify: true
+            openshift:
+              createAdminUser: true
+              authorizationUrl: https://oauth-openshift.apps.sno-flywheel.local/oauth/authorize
+              tokenUrl: https://oauth-openshift.apps.sno-flywheel.local/oauth/token
+        ui:
+          enabled: true
+          auth:
+            insecureSkipTlsVerify: true
+        # bootc image building is out of scope (package-mode devices, D024); the worker also
+        # needs a privileged SCC and RHSM secrets.
+        imageBuilderApi:
+          enabled: false
+        imageBuilderWorker:
+          enabled: false
+        # Helm pre-upgrade hooks become Argo PreSync hooks and run on install too. The migration
+        # dry-run deadlocks on a fresh install (its ServiceAccount is created by the main sync),
+        # and the scale-to-zero job re-renders on every sync because it relies on `lookup`.
+        upgradeHooks:
+          databaseMigrationDryRun: false
+          scaleDown:
+            condition: never
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    managedNamespaceMetadata:
+      labels:
+        # Maps the namespace to the flightctl organisation (thor DEPLOYMENT_GUIDE.md:112).
+        io.flightctl/instance: flightctl
+    syncOptions:
+    - CreateNamespace=true
+    - RespectIgnoreDifferences=true
+  ignoreDifferences:
+  # Generated once by the chart; a fresh render would rotate them and break the running DB/KV.
+  - kind: Secret
+    name: flightctl-db-app-secret
+    jsonPointers: [/data]
+  - kind: Secret
+    name: flightctl-db-admin-secret
+    jsonPointers: [/data]
+  - kind: Secret
+    name: flightctl-db-migration-secret
+    jsonPointers: [/data]
+  - kind: Secret
+    name: flightctl-kv-secret
+    jsonPointers: [/data]
+  # OAuth client secret is randAlphaNum per render; it is embedded in the OAuthClient and in
+  # every service config that carries the auth block. To take a config change from a chart
+  # bump, delete these four ConfigMaps and the OAuthClient together and let Argo recreate them.
+  - group: oauth.openshift.io
+    kind: OAuthClient
+    name: flightctl-flightctl
+    jsonPointers: [/secret]
+  - kind: ConfigMap
+    name: flightctl-api-config
+    jsonPointers: [/data]
+  - kind: ConfigMap
+    name: flightctl-remote-access-config
+    jsonPointers: [/data]
+  - kind: ConfigMap
+    name: flightctl-alertmanager-proxy-config
+    jsonPointers: [/data]

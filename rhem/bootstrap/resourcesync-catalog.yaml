@@ -1,0 +1,17 @@
+# This project was developed with assistance from AI tools.
+#
+# Bootstrap once: flightctl apply -f rhem/bootstrap/resourcesync-catalog.yaml
+#
+# Second ResourceSync: a sync handles ONE resource type (D032), so the CatalogItems live in their
+# own directory, gitops/rhem-catalog/, rendered with `type: catalog` (ResourceSyncType enum:
+# fleet | catalog, flightctl 1.3 core OpenAPI). A `type: catalog` sync accepts only Catalog and
+# CatalogItem kinds; anything else in the path is a sync error.
+apiVersion: flightctl.io/v1beta1
+kind: ResourceSync
+metadata:
+  name: rhem-catalog
+spec:
+  type: catalog
+  repository: hp-roscon-flywheel
+  targetRevision: desktop-gpu-split
+  path: gitops/rhem-catalog

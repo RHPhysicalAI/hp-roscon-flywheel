@@ -1,0 +1,50 @@
+apiVersion: dscinitialization.opendatahub.io/v1
+kind: DSCInitialization
+metadata:
+  name: default-dsci
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  applicationsNamespace: redhat-ods-applications
+  monitoring:
+    managementState: Removed
+  serviceMesh:
+    managementState: Removed
+  trustedCABundle:
+    managementState: Managed
+---
+apiVersion: datasciencecluster.opendatahub.io/v1
+kind: DataScienceCluster
+metadata:
+  name: default-dsc
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  components:
+    datasciencepipelines:
+      managementState: Managed
+    kserve:
+      managementState: Managed
+      defaultDeploymentMode: RawDeployment   # no Service Mesh / Serverless on SNO
+      serving:
+        managementState: Removed
+    dashboard:
+      managementState: Removed
+    workbenches:
+      managementState: Removed
+    modelmeshserving:
+      managementState: Removed
+    modelregistry:
+      managementState: Managed
+      registriesNamespace: rhoai-model-registries   # Phase 4.5 E1 (D027): ModelRegistry CR + MariaDB in model-registry.yaml
+    ray:
+      managementState: Removed
+    kueue:
+      managementState: Removed
+    codeflare:
+      managementState: Removed
+    trainingoperator:
+      managementState: Removed
+    trustyai:
+      managementState: Removed

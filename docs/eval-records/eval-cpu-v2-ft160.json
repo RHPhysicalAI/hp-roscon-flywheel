@@ -1,0 +1,253 @@
+{
+  "model_version": "eval-cpu-v2-ft160",
+  "served_model_version": "act-v2-ft160",
+  "policy_path": "",
+  "timestamp": "2026-09-09T11:40:03Z",
+  "eval_config": {
+    "episodes": 20,
+    "seed_base": 1000,
+    "scene": "place cubes on tray",
+    "episode_len_s": 60.0,
+    "early_stop": true,
+    "cubes_target": 3,
+    "randomize_cubes": "true",
+    "randomize_only": "cube_medium",
+    "random_radius": "0.03",
+    "random_yaw_deg": "180"
+  },
+  "aggregate": {
+    "n": 20,
+    "successes": 18,
+    "success_rate": 0.9,
+    "mean_cubes": 2.85,
+    "cubes_hist": {
+      "0": 0,
+      "1": 1,
+      "2": 1,
+      "3": 18
+    },
+    "mean_smoothness": 0.005143
+  },
+  "episodes": [
+    {
+      "index": 0,
+      "seed": 1000,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 1535,
+      "avg_smoothness": 0.004884,
+      "duration_s": 37.19,
+      "early_stopped": true,
+      "goal_accepted": true
+    },
+    {
+      "index": 1,
+      "seed": 1001,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 1306,
+      "avg_smoothness": 0.005651,
+      "duration_s": 31.22,
+      "early_stopped": true,
+      "goal_accepted": true
+    },
+    {
+      "index": 2,
+      "seed": 1002,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 2444,
+      "avg_smoothness": 0.004877,
+      "duration_s": 55.04,
+      "early_stopped": true,
+      "goal_accepted": true
+    },
+    {
+      "index": 3,
+      "seed": 1003,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 1295,
+      "avg_smoothness": 0.005739,
+      "duration_s": 30.8,
+      "early_stopped": true,
+      "goal_accepted": true
+    },
+    {
+      "index": 4,
+      "seed": 1004,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 1330,
+      "avg_smoothness": 0.005528,
+      "duration_s": 32.4,
+      "early_stopped": true,
+      "goal_accepted": true
+    },
+    {
+      "index": 5,
+      "seed": 1005,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 1304,
+      "avg_smoothness": 0.005853,
+      "duration_s": 31.03,
+      "early_stopped": true,
+      "goal_accepted": true
+    },
+    {
+      "index": 6,
+      "seed": 1006,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 1441,
+      "avg_smoothness": 0.005506,
+      "duration_s": 34.1,
+      "early_stopped": true,
+      "goal_accepted": true
+    },
+    {
+      "index": 7,
+      "seed": 1007,
+      "cubes_placed": 1,
+      "task_success": false,
+      "steps": 2955,
+      "avg_smoothness": 0.001208,
+      "duration_s": 64.1,
+      "early_stopped": false,
+      "goal_accepted": true
+    },
+    {
+      "index": 8,
+      "seed": 1008,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 2058,
+      "avg_smoothness": 0.004833,
+      "duration_s": 46.48,
+      "early_stopped": true,
+      "goal_accepted": true
+    },
+    {
+      "index": 9,
+      "seed": 1009,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 1414,
+      "avg_smoothness": 0.005078,
+      "duration_s": 33.37,
+      "early_stopped": true,
+      "goal_accepted": true
+    },
+    {
+      "index": 10,
+      "seed": 1010,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 1313,
+      "avg_smoothness": 0.005722,
+      "duration_s": 31.95,
+      "early_stopped": true,
+      "goal_accepted": true
+    },
+    {
+      "index": 11,
+      "seed": 1011,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 1252,
+      "avg_smoothness": 0.005818,
+      "duration_s": 30.15,
+      "early_stopped": true,
+      "goal_accepted": true
+    },
+    {
+      "index": 12,
+      "seed": 1012,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 1172,
+      "avg_smoothness": 0.006156,
+      "duration_s": 28.65,
+      "early_stopped": true,
+      "goal_accepted": true
+    },
+    {
+      "index": 13,
+      "seed": 1013,
+      "cubes_placed": 2,
+      "task_success": false,
+      "steps": 2932,
+      "avg_smoothness": 0.003574,
+      "duration_s": 64.1,
+      "early_stopped": false,
+      "goal_accepted": true
+    },
+    {
+      "index": 14,
+      "seed": 1014,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 1402,
+      "avg_smoothness": 0.005538,
+      "duration_s": 33.06,
+      "early_stopped": true,
+      "goal_accepted": true
+    },
+    {
+      "index": 15,
+      "seed": 1015,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 1300,
+      "avg_smoothness": 0.006143,
+      "duration_s": 33.6,
+      "early_stopped": true,
+      "goal_accepted": true
+    },
+    {
+      "index": 16,
+      "seed": 1016,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 1335,
+      "avg_smoothness": 0.005696,
+      "duration_s": 32.31,
+      "early_stopped": true,
+      "goal_accepted": true
+    },
+    {
+      "index": 17,
+      "seed": 1017,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 1582,
+      "avg_smoothness": 0.00472,
+      "duration_s": 37.14,
+      "early_stopped": true,
+      "goal_accepted": true
+    },
+    {
+      "index": 18,
+      "seed": 1018,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 1690,
+      "avg_smoothness": 0.004583,
+      "duration_s": 39.03,
+      "early_stopped": true,
+      "goal_accepted": true
+    },
+    {
+      "index": 19,
+      "seed": 1019,
+      "cubes_placed": 3,
+      "task_success": true,
+      "steps": 1275,
+      "avg_smoothness": 0.005757,
+      "duration_s": 30.72,
+      "early_stopped": true,
+      "goal_accepted": true
+    }
+  ]
+}

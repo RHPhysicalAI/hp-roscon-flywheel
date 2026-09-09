@@ -1,0 +1,24 @@
+apiVersion: datasciencepipelinesapplications.opendatahub.io/v1
+kind: DataSciencePipelinesApplication
+metadata:
+  name: dspa
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  namespace: flywheel
+spec:
+  dspVersion: v2
+  apiServer:
+    enableSamplePipeline: false
+  objectStorage:
+    externalStorage:
+      host: minio.minio.svc:9000
+      scheme: http
+      bucket: pipelines
+      s3CredentialsSecret:
+        secretName: hub-credentials
+        accessKey: s3-access-key
+        secretKey: s3-secret-key
+  database:
+    mariaDB:
+      deploy: true

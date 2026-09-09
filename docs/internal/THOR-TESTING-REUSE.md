@@ -85,7 +85,9 @@ is the lightweight metadata the curator scores on.
 
   "avg_smoothness": "number  -- mean abs delta between consecutive joint commands",
 
-  "rosbag_path":    "string  -- relative path to the MCAP rosbag for training"
+  "dataset_path":   "string  -- repo-relative path to the recorded MCAP bag for this
+                                rollout (bags/<name>), or null if unrecorded. Ported to a
+                                LeRobot dataset by the assembler. Replaces rosbag_path (D018)."
 }
 ```
 
@@ -113,6 +115,29 @@ These are real issues solved in thor-testing's decision log that **will recur** 
 | D035 | `vla-training` is actually a WAM (world-action model), not a VLA | Use accurate naming in this project from the start. |
 | GPU Operator | GPU Deployments must use `Recreate` strategy, never `RollingUpdate` | With one GPU, RollingUpdate deadlocks — new pod can't schedule while old pod holds the GPU. Learned in both thor-testing and grid-resilience-showcase. |
 | vLLM CUDA | Must call `torch.zeros(1, device="cuda")` before importing vLLM | CUDA pre-init required against OpenRM driver. May not apply to ACT serving but worth knowing. |
+
+## RHEM / flightctl (added 2026-09-08)
+
+D024 makes RHEM the device plane (package-mode `flightctl-agent` 1.3 on the Fury host; a RHEL 10
+VM as the desktop stand-in). thor-testing ran flightctl 1.1/1.2 on a CS10 bootc image, so the
+reusable pieces are the install block, the enrollment CLI, and the trust config — not the topology.
+
+| thor-testing source | What it is | Reuse notes |
+|---|---|---|
+| `derived-image/Containerfile:21-23` | flightctl EPEL10 repo (`rpm.flightctl.io/flightctl-epel10.repo`) | Copy into `device/provision.sh` as-is. |
+| `derived-image/Containerfile:59-62` | Pinned agent install (`dnf install --setopt=install_weak_deps=False flightctl-agent-1.2.0-1.el10` + `systemctl enable`) | Same pattern, now **1.3.0**, package mode on a running host rather than a bootc layer. |
+| `DEPLOYMENT_GUIDE.md:160-181` | Enrollment: `flightctl certificate request --signer flightctl.io/enrollment --output embedded` → `/etc/flightctl/config.yaml`, start the agent, approve | Directly reusable; add our labels at approval (`fleet`, `site`, `gpu`, `policy_device`, `zenoh_router`). |
+| `DEPLOYMENT_GUIDE.md:110-136` | D005 RBAC workaround (`flightctl-admin` dropped from a per-org RoleBinding; `system:cluster-admins` vs `cluster-admins`) | Only if `flightctl get fleets` returns 403 on 1.3 — kubeadmin is in `system:cluster-admins`, so probably not. Port to `gitops/rhem-config/rbac.yaml` if it bites. |
+| `derived-image/config/policy.json` | `sigstoreSigned` policy for the internal registry (D015) | Base for the Fleet's inline `/etc/containers/policy.json`; re-point at `quay.io/jary/*`, add `rekorPublicKeyPath` (D026). |
+| `derived-image/config/registries.d-internal-registry.yaml` | `use-sigstore-attachments: true` (D018) | Base for the Fleet's inline `registries.d/quay-jary.yaml`. |
+| D023 | Mask flightctl's greenboot auto-configure service; it hid a latent `oc` path bug | Irrelevant in package mode (no greenboot). Relevant again the day bootc returns. |
+
+**What thor-testing never built** — so nobody goes looking for it there:
+- No `Fleet` CR, no device labels, no application delivery (model + runtime went Argo →
+  MicroShift over the ACM cluster-proxy, not through RHEM)
+- No `ResourceSync`, no `Repository`, no CatalogItem
+- Hub installed by hand with Helm, not under GitOps
+- RHEM absent from `DEMO_RUNBOOK.md` — enrollment + the OS plane were the whole story
 
 ## What's genuinely new (not in thor-testing)
 

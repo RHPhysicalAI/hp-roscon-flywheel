@@ -1,0 +1,28 @@
+# This project was developed with assistance from AI tools.
+#
+# Bootstrap once: oc apply -f argocd/minio-app.yaml
+# Committed from the live Application (Phase 4.5 F, D026 row 5); prune: true so the cluster
+# equals gitops/minio. Secret minio-credentials is hand-created
+# (see argocd/README.md) and carries no Argo tracking annotation, so prune never touches it.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: minio
+  namespace: openshift-gitops
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  destination:
+    namespace: minio
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    path: gitops/minio
+    repoURL: https://github.com/RHPhysicalAI/hp-roscon-flywheel.git
+    targetRevision: desktop-gpu-split
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true

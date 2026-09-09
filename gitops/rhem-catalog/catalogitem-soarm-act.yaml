@@ -1,0 +1,49 @@
+# This project was developed with assistance from AI tools.
+#
+# CatalogItem soarm-act -- the promoted SO-ARM ACT model versions as a version graph.
+# Catalog API is v1alpha1 (flightctl 1.3.0, alpha). Rendered by ResourceSync/rhem-catalog.
+#
+# WRITTEN BY THE PIPELINE: the `versions:` list below is appended by `append_catalog_version`,
+# the removable seam inside `open_promotion_pr` in pipeline/act_flywheel_pipeline.py (D027) --
+# the same promotion commit that edits the Fleet adds the version here. Edit by hand only to
+# repair; keep `versions:` as the last key in spec (the seam re-renders everything after it).
+#
+# VERSION GRAPH ONLY (D038): the Fleet carries the modelcar as a quadlet `.volume` with
+# `Driver=image`, a path on which flightctl offers no `catalogItemRef`, so the Fleet pins the
+# digest directly and this item is provenance beside it, not a live reference. The Fleet's pin
+# and the newest version here must agree (BUILD-PLAN Phase 4.5 E exit criterion).
+#
+# Naming: `versions[].version` must be strict semver (server validateSemver; no `v` prefix), so
+# the candidate `act-v<N>-<suffix>` is recorded as `<N>.0.0-<suffix>` and the candidate name is
+# kept in the version's `readme`. `references.container` is the image DIGEST (`sha256:<hex>`), the
+# form the v1alpha1 OpenAPI example uses, so this file and the Fleet pin the same bytes.
+apiVersion: flightctl.io/v1alpha1
+kind: CatalogItem
+metadata:
+  name: soarm-act
+  catalog: physical-ai-models
+  labels:
+    project: hp-roscon-flywheel
+    model: soarm-act
+spec:
+  type: container
+  displayName: SO-ARM ACT policy (ModelCar)
+  shortDescription: Signed ACT checkpoint packaged as an OCI ModelCar, promoted by the flywheel pipeline
+  provider: hp-roscon-flywheel
+  homepage: https://github.com/RHPhysicalAI/hp-roscon-flywheel
+  artifacts:
+    - type: container
+      name: ModelCar image
+      uri: quay.io/jary/soarm-act-modelcar
+  versions:
+    - version: "2.0.0-ft160"
+      channels: [stable]
+      references:
+        container: "sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b"
+      readme: "candidate act-v2-ft160 -- quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b"
+    - version: "2.0.0-ft160-rhem"
+      channels: [stable]
+      references:
+        container: "sha256:18cc4412a21bfdd48d27b654558d1268e7c95f168f28b50873c4e2417369e61a"
+      replaces: "2.0.0-ft160"
+      readme: "candidate act-v2-ft160-rhem -- quay.io/jary/soarm-act-modelcar@sha256:18cc4412a21bfdd48d27b654558d1268e7c95f168f28b50873c4e2417369e61a"

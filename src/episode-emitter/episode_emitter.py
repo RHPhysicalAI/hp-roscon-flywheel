@@ -22,18 +22,21 @@ from pathlib import Path
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Float64MultiArray
+from std_msgs.msg import Float64MultiArray, String
 
 RAW_DIR = Path(os.environ.get("RAW_DIR", "/data/episodes/raw"))
+# When running on the host (not in SNO), POST episodes to the curator receiver
+CURATOR_URL = os.environ.get("CURATOR_URL", "")  # e.g. http://10.0.0.49:30802/episode
 MODEL_VERSION = os.environ.get("MODEL_VERSION", "soarm-act-v1")
-FAILURE_RATE = float(os.environ.get("FAILURE_RATE", "0.1"))  # fraction of episodes to inject as failures
 SCENE = os.environ.get("SCENE", "place_cubes_on_tray")
 # Episode boundary: if no new joint commands for this many seconds, episode ends
 EPISODE_TIMEOUT_S = float(os.environ.get("EPISODE_TIMEOUT_S", "5.0"))
 # Maximum episode duration — force-end after this many seconds
-MAX_EPISODE_S = float(os.environ.get("MAX_EPISODE_S", "60.0"))
+MAX_EPISODE_S = float(os.environ.get("MAX_EPISODE_S", "90.0"))
+# Minimum episode duration — ignore 'end' signals that arrive sooner (stale)
+MIN_EPISODE_S = float(os.environ.get("MIN_EPISODE_S", "10.0"))
 # Minimum steps for a valid episode
 MIN_STEPS = int(os.environ.get("MIN_STEPS", "10"))
 
@@ -65,7 +68,7 @@ class EpisodeEmitter(Node):
             JointState, "/joint_states", self._on_joint_state, qos
         )
 
-        # Subscribe to action commands (detect when policy is sending commands)
+        # Subscribe to action commands (for safety-net timeout tracking)
         self.create_subscription(
             Float64MultiArray,
             "/forward_position_controller/commands",
@@ -73,13 +76,86 @@ class EpisodeEmitter(Node):
             qos,
         )
 
-        # Timer to check for episode timeout
+        # Subscribe to episode control signals from the inference coordinator.
+        # Depth-1 so stale start/end signals don't buffer and misfire.
+        control_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
+        self.create_subscription(
+            String,
+            "/flywheel/episode_control",
+            self._on_control,
+            control_qos,
+        )
+
+        # The coordinator publishes the recorded bag ref for the current episode
+        # (D018, Phase 2.5 step 3) just before the 'end' signal. Latch the last
+        # value; it's stamped into the episode JSON as dataset_path.
+        self._dataset_path = None
+        self.create_subscription(
+            String,
+            "/flywheel/episode_dataset",
+            self._on_dataset,
+            control_qos,
+        )
+
+        # Model-version lineage: the coordinator (co-located with the served
+        # policy) publishes the label, latched. Prefer it over this node's env
+        # default so every episode is stamped with the policy actually running,
+        # even after a checkpoint swap on act-inference alone.
+        self._model_version = MODEL_VERSION
+        latched = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+        )
+        self.create_subscription(
+            String,
+            "/flywheel/model_version",
+            self._on_model_version,
+            latched,
+        )
+
+        # Safety net: force-end an episode that runs way too long (policy hung)
         self.create_timer(1.0, self._check_timeout)
 
         self.get_logger().info(
             f"Episode emitter started — model={MODEL_VERSION} "
-            f"scene={SCENE} failure_rate={FAILURE_RATE}"
+            f"scene={SCENE} "
+            f"(signal-driven via /flywheel/episode_control)"
         )
+
+    def _on_control(self, msg: String):
+        """Handle episode start/end signals from the inference coordinator."""
+        cmd = msg.data.strip()
+        if cmd == "start":
+            if not self._rollout_active:
+                self._start_episode()
+        elif cmd == "end":
+            if self._rollout_active:
+                # Debounce stale/queued 'end' signals: a real episode runs for
+                # the full window. Ignore an 'end' that arrives suspiciously
+                # soon after 'start' (leftover message from a prior cycle).
+                elapsed = time.time() - (self._episode_start or 0)
+                if elapsed < MIN_EPISODE_S:
+                    self.get_logger().warn(
+                        f"Ignoring early 'end' ({elapsed:.1f}s < {MIN_EPISODE_S}s) "
+                        f"— likely a stale signal")
+                    return
+                self._end_episode()
+
+    def _on_dataset(self, msg: String):
+        """Store the recorded-bag ref for the current episode."""
+        self._dataset_path = msg.data.strip() or None
+
+    def _on_model_version(self, msg: String):
+        """Adopt the served policy's label published by the coordinator."""
+        mv = msg.data.strip()
+        if mv and mv != self._model_version:
+            self._model_version = mv
+            self.get_logger().info(f"Model version set from coordinator: {mv}")
 
     def _start_episode(self):
         """Begin tracking a new episode."""
@@ -88,8 +164,34 @@ class EpisodeEmitter(Node):
         self._steps = 0
         self._prev_positions = None
         self._smoothness_deltas = []
+        self._peak_cubes = 0  # high-water mark for cubes on tray
+        self._dataset_path = None  # set by the coordinator before 'end'
         self._rollout_active = True
         self.get_logger().info(f"Episode started: {self._episode_id}")
+
+        # Start periodic cube-count polling in background
+        def _poll_cubes():
+            import subprocess, re
+            while self._rollout_active:
+                time.sleep(2.0)
+                try:
+                    result = subprocess.run(
+                        ["python3", "/ws_pai/task_eval.py"],
+                        capture_output=True, timeout=8, text=True,
+                    )
+                    m = re.search(r"cubes_placed=(\d+)/", result.stdout)
+                    if m:
+                        n = int(m.group(1))
+                        if n > self._peak_cubes:
+                            self._peak_cubes = n
+                            self.get_logger().info(
+                                f"Peak cubes updated: {n}/3")
+                except Exception:
+                    pass
+
+        import threading
+        t = threading.Thread(target=_poll_cubes, daemon=True)
+        t.start()
 
     def _on_joint_state(self, msg: JointState):
         """Track joint states for smoothness computation."""
@@ -110,18 +212,16 @@ class EpisodeEmitter(Node):
         self._steps += 1
 
     def _on_command(self, msg: Float64MultiArray):
-        """Detect rollout activity from policy commands."""
-        now = time.time()
-        if not self._rollout_active:
-            self._start_episode()
-        self._last_command_time = now
+        """Track command activity for the safety-net timeout only."""
+        self._last_command_time = time.time()
 
     def _check_timeout(self):
-        """End episode if idle too long or max duration reached."""
+        """Safety net: force-end an episode only if it exceeds the hard cap
+        (policy hung). Normal episode boundaries come from control signals."""
         if not self._rollout_active:
             return
         now = time.time()
-        # Max duration — force-end long-running episodes
+        # Hard safety cap — force-end runaway episodes
         if self._episode_start and (now - self._episode_start) > MAX_EPISODE_S:
             self.get_logger().info(
                 f"Episode {self._episode_id[:8]} hit max duration ({MAX_EPISODE_S}s)")
@@ -134,28 +234,19 @@ class EpisodeEmitter(Node):
             self._end_episode()
 
     def _compute_task_success(self) -> tuple[bool, int]:
-        """Evaluate task success.
+        """Evaluate task success from actual Gazebo cube positions.
 
-        In a full implementation, this would query Gazebo model states to check
-        cube positions relative to the tray. For now, we use a heuristic based
-        on episode length and smoothness — longer, smoother episodes correlate
-        with successful placements.
-
-        TODO: Replace with actual Gazebo model state queries once the sim
-        integration is complete (Phase 2.5).
+        Queries each cube's world pose and checks whether it's resting inside
+        the tray footprint. This is ground-truth, not a heuristic.
         """
-        # Heuristic: episodes with enough steps and reasonable smoothness
-        # are likely successful. This will be replaced with actual sim state
-        # queries.
         if self._steps < MIN_STEPS:
             return False, 0
-        avg_smooth = self._avg_smoothness()
-        # Very rough heuristic — refine with real data
-        if avg_smooth < 0.5 and self._steps > 100:
-            return True, 3  # assume all cubes placed
-        elif avg_smooth < 0.8 and self._steps > 75:
-            return True, 2
-        return False, 0
+        try:
+            import task_eval
+            return task_eval.evaluate_task()
+        except Exception as e:
+            self.get_logger().warn(f"Task eval failed, falling back: {e}")
+            return False, 0
 
     def _avg_smoothness(self) -> float:
         """Mean absolute joint-command delta across the episode."""
@@ -164,15 +255,23 @@ class EpisodeEmitter(Node):
         return sum(self._smoothness_deltas) / len(self._smoothness_deltas)
 
     def _end_episode(self):
-        """Finalize episode and write curator JSON."""
+        """Finalize episode, write curator JSON, and reset sim for next attempt."""
         self._rollout_active = False
         duration = time.time() - self._episode_start
-        task_success, cubes_placed = self._compute_task_success()
+        _, snapshot_cubes = self._compute_task_success()
         avg_smoothness = self._avg_smoothness()
 
-        # Failure injection for demo
-        import random
-        has_failure = random.random() < FAILURE_RATE
+        # Use peak cube count (tracked throughout the episode) if higher
+        # than end-of-episode snapshot. Captures partial successes that
+        # the snapshot misses (e.g. cube 1 placed then knocked off).
+        cubes_placed = max(self._peak_cubes, snapshot_cubes)
+        task_success = (cubes_placed == 3)
+
+        # has_failure is always False: this project scores on ground truth only
+        # (D115) — curator.yaml's Gate 0 and the observability dashboard's
+        # "curator-rejected" panel both still read this field, so it stays in
+        # the schema rather than being removed, just never set true.
+        has_failure = False
 
         rollout_status = "ok" if self._steps >= MIN_STEPS else "truncated"
 
@@ -180,22 +279,43 @@ class EpisodeEmitter(Node):
             "episode_id": self._episode_id,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "scene": SCENE,
-            "model_version": MODEL_VERSION,
+            "model_version": self._model_version,
             "has_failure": has_failure,
             "rollout": {
                 "status": rollout_status,
                 "steps": self._steps,
                 "duration_s": round(duration, 2),
             },
-            "task_success": task_success and not has_failure,
-            "cubes_placed": cubes_placed if not has_failure else 0,
+            "task_success": task_success,
+            "cubes_placed": cubes_placed,
             "avg_smoothness": round(avg_smoothness, 6),
-            "rosbag_path": f"rosbags/{self._episode_id}.mcap",
+            # Repo-relative pointer to the recorded LeRobot-bound MCAP bag for
+            # this rollout (D018). Populated by the coordinator via
+            # /flywheel/episode_dataset; replaces the never-populated rosbag_path.
+            "dataset_path": self._dataset_path,
         }
 
-        # Write to raw dir for curator
-        out_path = RAW_DIR / f"{self._episode_id}.json"
-        out_path.write_text(json.dumps(episode, indent=2))
+        # Deliver to curator — local file or remote POST
+        if CURATOR_URL:
+            try:
+                import urllib.request
+                req = urllib.request.Request(
+                    CURATOR_URL,
+                    data=json.dumps(episode).encode(),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                urllib.request.urlopen(req, timeout=5)
+            except Exception as e:
+                self.get_logger().warn(f"POST to curator failed: {e}")
+                # Fallback: write locally
+                RAW_DIR.mkdir(parents=True, exist_ok=True)
+                out_path = RAW_DIR / f"{self._episode_id}.json"
+                out_path.write_text(json.dumps(episode, indent=2))
+        else:
+            RAW_DIR.mkdir(parents=True, exist_ok=True)
+            out_path = RAW_DIR / f"{self._episode_id}.json"
+            out_path.write_text(json.dumps(episode, indent=2))
         self._episodes_emitted += 1
 
         verdict = "INJECTED-FAIL" if has_failure else ("SUCCESS" if task_success else "FAIL")
@@ -205,7 +325,8 @@ class EpisodeEmitter(Node):
             f"cubes={cubes_placed} [{self._episodes_emitted} total]"
         )
 
-        # Reset for next episode
+        # Sim reset is handled by the inference coordinator between episodes.
+        # Reset local state for the next episode.
         self._episode_id = None
         self._last_command_time = None
 

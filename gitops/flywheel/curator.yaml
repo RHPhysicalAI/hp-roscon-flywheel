@@ -33,7 +33,7 @@ data:
     As the policy improves, trajectories get smoother and task success increases —
     the flywheel's quality signal is directly tied to policy performance.
     """
-    import json, os, time, pathlib
+    import json, os, re, time, pathlib
 
     RAW_DIR              = pathlib.Path(os.environ.get("RAW_DIR",      "/data/episodes/raw"))
     CURATED_DIR          = pathlib.Path(os.environ.get("CURATED_DIR",  "/data/episodes/curated"))
@@ -52,16 +52,16 @@ data:
         # Gate 1: episode completeness
         rollout = episode.get("rollout", {})
         if rollout.get("status") != "ok":
-            score -= 0.4
-            parts.append(f"rollout-error({rollout.get('status', 'unknown')})")
-        elif rollout.get("steps", 0) < 10:
-            score -= 0.3
-            parts.append(f"truncated({rollout.get('steps', 0)} steps)")
+            return 0.0, f"rollout-error({rollout.get('status', 'unknown')})"
+        if rollout.get("steps", 0) < 10:
+            return 0.0, f"truncated({rollout.get('steps', 0)} steps)"
 
-        # Gate 2: task success (primary signal)
+        # Gate 2: task success — HARD GATE.
+        # Only successful task completions become training data. A failed
+        # placement is useless (or harmful) as an imitation-learning example.
         if not episode.get("task_success", False):
-            score -= 0.4
-            parts.append("task-failed")
+            cubes = episode.get("cubes_placed", 0)
+            return 0.0, f"task-failed ({cubes}/3 cubes placed)"
 
         # Gate 3: trajectory smoothness (ACT quality signal)
         # Lower smoothness = smoother motion = better policy output.
@@ -87,6 +87,58 @@ data:
 
         return score, reason
 
+    # ---- HTTP receiver for remote episode submission ----
+    def start_receiver(port=8082):
+        """Accept POSTed episode JSON from remote emitters (host-based sim)."""
+        from http.server import HTTPServer, BaseHTTPRequestHandler
+        import threading
+
+        # D116: this receiver is an unauthenticated NodePort (30802). episode_id used to build the
+        # write path with no validation — "../curated/evil" would write straight into curated/,
+        # skipping score_episode() entirely. The real emitter always sends a uuid4 (episode_emitter.
+        # py: self._episode_id = str(uuid.uuid4())), so a strict charset costs it nothing.
+        EPISODE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+        MAX_BODY_BYTES = 1_000_000
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a): pass
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", 0))
+                if length > MAX_BODY_BYTES:
+                    self.send_response(413); self.end_headers(); self.wfile.write(b"payload too large"); return
+                body = self.rfile.read(length)
+                try:
+                    ep = json.loads(body)
+                    eid = str(ep.get("episode_id", "unknown"))
+                    if not EPISODE_ID_RE.match(eid):
+                        print(f"[curator-receiver] Rejected episode_id {eid!r}: fails {EPISODE_ID_RE.pattern}", flush=True)
+                        self.send_response(400); self.end_headers(); self.wfile.write(b"invalid episode_id"); return
+                    # Eval-harness runs are not production data: never let an eval-* lineage
+                    # into raw/ (and so never into curated/rejected, MinIO or Kafka). Ack so the
+                    # emitter doesn't fall back to writing locally.
+                    if str(ep.get("model_version", "")).startswith("eval-"):
+                        print(f"[curator-receiver] Discarded eval-run episode {eid} ({ep.get('model_version')})", flush=True)
+                        self.send_response(200); self.end_headers(); self.wfile.write(b"discarded"); return
+                    out = RAW_DIR / f"{eid}.json"
+                    if out.resolve().parent != RAW_DIR.resolve():
+                        print(f"[curator-receiver] Rejected episode_id {eid!r}: escapes {RAW_DIR}", flush=True)
+                        self.send_response(400); self.end_headers(); self.wfile.write(b"invalid episode_id"); return
+                    out.write_text(json.dumps(ep, indent=2))
+                    print(f"[curator-receiver] Received episode {eid}", flush=True)
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b"ok")
+                except Exception as e:
+                    print(f"[curator-receiver] Error: {e}", flush=True)
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write(str(e).encode())
+
+        server = HTTPServer(("0.0.0.0", port), Handler)
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        print(f"[curator-receiver] Listening on port {port}", flush=True)
+
     if __name__ == "__main__":
         print(
             f"[curator] Starting — SO-ARM101 task-performance scoring\n"
@@ -97,6 +149,9 @@ data:
         )
         CURATED_DIR.mkdir(parents=True, exist_ok=True)
         REJECTED_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Start HTTP receiver for remote episode ingestion
+        start_receiver(int(os.environ.get("RECEIVER_PORT", "8082")))
 
         while True:
             for path in sorted(RAW_DIR.glob("*.json")):
@@ -151,11 +206,13 @@ spec:
           env:
             - name: PASS_THRESHOLD
               value: "0.5"
-            # SMOOTHNESS_THRESHOLD: will be calibrated against real ACT policy
-            # output on SO-ARM101 joint trajectories. Start permissive (0.15),
-            # tighten after observing real rollout distributions.
             - name: SMOOTHNESS_THRESHOLD
               value: "0.15"
+            - name: RECEIVER_PORT
+              value: "8082"
+          ports:
+            - containerPort: 8082
+              name: receiver
           volumeMounts:
             - name: code
               mountPath: /app
@@ -169,3 +226,18 @@ spec:
         - name: episodes
           hostPath:
             path: /var/lib/episodes
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: curator
+  namespace: flywheel
+spec:
+  type: NodePort
+  selector:
+    app: curator
+  ports:
+    - name: receiver
+      port: 8082
+      targetPort: 8082
+      nodePort: 30802

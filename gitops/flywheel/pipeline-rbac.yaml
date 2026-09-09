@@ -1,0 +1,22 @@
+# ServiceAccount for the manifest-consumer trigger (D022). It starts Data Science Pipelines runs
+# through the DSP API, which authorizes callers with a SubjectAccessReview in this namespace, so
+# the SA gets `edit` here (also lets it read the DSPA and pipeline objects).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: manifest-consumer
+  namespace: flywheel
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: manifest-consumer-edit
+  namespace: flywheel
+subjects:
+  - kind: ServiceAccount
+    name: manifest-consumer
+    namespace: flywheel
+roleRef:
+  kind: ClusterRole
+  name: edit
+  apiGroup: rbac.authorization.k8s.io

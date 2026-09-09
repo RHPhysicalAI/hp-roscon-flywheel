@@ -8,14 +8,19 @@
 # The dashboard itself is a demo beat: it is GitOps-delivered (Argo CD sync),
 # runs on the edge device (not the hub), and needs no terminal during Acts 2-3.
 #
-# Controls:  Start/Stop Flywheel, Clear Data
+# Controls:  Clear Data
 # Display:   Sim status, rollout stats, curation log (scrolling tail),
 #            policy comparison (v1 vs v2 rollout videos),
 #            flywheel progress bar, model version indicator
 #
+# Lineage (model version badge, curated count, trigger bar): read from the
+# manifest-consumer Deployment's COLLECTOR env, which Argo syncs from the same
+# promotion commit that edits the RHEM Fleet (D072); the Deployment's last
+# rollout time is the epoch the consumer counts from. The dashboard follows the
+# device by the Argo poll (~1-3 min after the device serves the new version).
+#
 # Auth posture: none (matches PoC-wide unauthenticated posture).
-# RBAC: dashboard SA has Deployment patch in flywheel namespace + Service read
-#       in act-serving namespace (to detect active policy version).
+# RBAC: dashboard SA reads/patches Deployments in the flywheel namespace.
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -53,8 +58,10 @@ data:
     ROLLOUTS      = DATA / "rollouts"
     HTML_FILE     = pathlib.Path(os.environ.get("HTML_FILE",  "/app/index.html"))
     FW_NS         = os.environ.get("FLYWHEEL_NS", "flywheel")
-    ACT_NS        = os.environ.get("ACT_NS",      "flywheel")
     THRESHOLD     = int(os.environ.get("TRIGGER_THRESHOLD", "10"))
+    COLLECTOR_DEPLOY = os.environ.get("COLLECTOR_DEPLOYMENT", "manifest-consumer")
+    BASELINE_MV   = os.environ.get("BASELINE_MODEL_VERSION", "upstream-act-teacher")
+    LOOP_ACTIVE_S = int(os.environ.get("LOOP_ACTIVE_SECONDS", "180"))
 
     # ---- K8s helpers ---------------------------------------------------------
     def _apps() -> Optional["k8s.AppsV1Api"]:
@@ -108,17 +115,50 @@ data:
             app.logger.error(f"set_env {ns}/{name} {key}={value}: {e}")
             return False
 
+    _lineage_cache = {"mv": "", "since": 0.0, "ts": 0.0}
+
+    def _lineage() -> tuple[str, float]:
+        """(COLLECTOR, epoch) from the manifest-consumer Deployment; its pending count restarts at 0 on each rollout (D072)."""
+        now = time.time()
+        if now - _lineage_cache["ts"] < 10:
+            return _lineage_cache["mv"], _lineage_cache["since"]
+        mv, since = "", 0.0
+        api = _apps()
+        if api:
+            try:
+                d = api.read_namespaced_deployment(COLLECTOR_DEPLOY, FW_NS)
+                for c in d.spec.template.spec.containers:
+                    for ev in c.env or []:
+                        if ev.name == "COLLECTOR" and ev.value:
+                            mv = ev.value
+                for cond in d.status.conditions or []:
+                    if cond.type == "Progressing" and cond.last_update_time:
+                        since = cond.last_update_time.timestamp()
+            except Exception as e:
+                app.logger.warning(f"lineage from {FW_NS}/{COLLECTOR_DEPLOY}: {e}")
+        _lineage_cache.update(mv=mv, since=since, ts=now)
+        return mv, since
+
     def get_model_version() -> str:
-        """blue selector = v1, green = v2."""
-        api = _core()
-        if not api:
-            return "soarm-act-v1"
-        try:
-            svc = api.read_namespaced_service("act-policy", ACT_NS)
-            color = (svc.spec.selector or {}).get("color", "blue")
-            return "soarm-act-v2" if color == "green" else "soarm-act-v1"
-        except Exception:
-            return "soarm-act-v1"
+        return _lineage()[0]
+
+    _mv_by_file: dict[str, tuple[float, str]] = {}
+
+    def _lineage_count(dirs, mv: str, since: float) -> int:
+        """Episodes stamped `mv` that landed after `since` -- what the consumer counts toward the trigger."""
+        n = 0
+        for d in dirs:
+            for p in _jsons(d):
+                try:
+                    mtime = p.stat().st_mtime
+                    hit = _mv_by_file.get(p.name)
+                    if not hit or hit[0] != mtime:
+                        hit = (mtime, json.loads(p.read_text()).get("model_version") or "")
+                        _mv_by_file[p.name] = hit
+                    n += hit[1] == mv and mtime >= since
+                except Exception:
+                    pass
+        return n
 
     # ---- Episode helpers -----------------------------------------------------
     def _jsons(d: pathlib.Path) -> list[pathlib.Path]:
@@ -163,8 +203,11 @@ data:
     def status_snapshot() -> dict:
         ep     = _latest_episode()
         sent   = _count(EP_SENT)
-        curated = _count(EP_CUR)
-        mv     = get_model_version()
+        mv, since = _lineage()
+        # Curated successes of the live lineage since the consumer's last rollout (sync-agent
+        # moves curated -> sent within seconds, so the curated/ dir alone always reads 0).
+        curated = _lineage_count((EP_CUR, EP_SENT), mv, since) if mv else _count(EP_CUR)
+        running = bool(ep) and (time.time() - ep.get("_mtime", 0)) < LOOP_ACTIVE_S
         d      = _rollouts()
 
         # Extract Generator output from latest episode (D031 format)
@@ -197,13 +240,14 @@ data:
             },
             "trigger": {
                 "threshold": THRESHOLD,
-                "progress":  min(sent, THRESHOLD),
-                "pct":       min(100, round(sent / THRESHOLD * 100)),
-                "triggered": sent >= THRESHOLD,
+                "progress":  min(curated, THRESHOLD),
+                "pct":       min(100, round(curated / THRESHOLD * 100)),
+                "triggered": curated >= THRESHOLD,
             },
-            "flywheel_running": get_replicas(FW_NS, "so-arm-sim") > 0,
+            "flywheel_running": running,
             "model_version":    mv,
-            "promoted":         mv == "soarm-act-v2",
+            "promoted":         bool(mv) and mv != BASELINE_MV,
+            "lineage_since":    since,
             "latest": {
                 "scene":             scene,
                 "scene_description": scene_description,
@@ -231,6 +275,10 @@ data:
                     "curation_score":  e.get("curation_score", 0),
                     "curation_reason": e.get("curation_reason", ""),
                     "scene":           e.get("scene", ""),
+                    "rollout":         e.get("rollout", {}),
+                    "task_success":    e.get("task_success", False),
+                    "cubes_placed":    e.get("cubes_placed", 0),
+                    "avg_smoothness":  e.get("avg_smoothness", 0.0),
                     "ts":              e.get("_mtime", 0),
                 }
                 for e in _episode_log(30)
@@ -328,28 +376,6 @@ data:
     @app.route("/api/status")
     def api_status():
         return jsonify(status_snapshot())
-
-    @app.route("/api/camera/<cam>")
-    def camera_stream(cam):
-        """Proxy MJPEG stream from so-arm-sim camera bridge."""
-        import urllib.request
-        if cam not in ("wrist", "static"):
-            return ("unknown camera", 404)
-        url = f"http://so-arm-sim.flywheel.svc:8081/{cam}"
-        def generate():
-            try:
-                req = urllib.request.urlopen(url, timeout=30)
-                while True:
-                    chunk = req.read(8192)
-                    if not chunk:
-                        break
-                    yield chunk
-            except Exception:
-                pass
-        return Response(generate(),
-                        mimetype="multipart/x-mixed-replace; boundary=frame",
-                        headers={"Cache-Control": "no-cache",
-                                 "X-Accel-Buffering": "no"})
 
     @app.route("/api/rollout/<path:name>")
     def serve_rollout(name):
@@ -787,7 +813,7 @@ data:
     .log-entry.reject{ border-left: 3px solid var(--red); }
     .log-main {
       display: grid;
-      grid-template-columns: 60px 70px 82px 80px 1fr;
+      grid-template-columns: 60px 70px 82px 80px 40px 1fr;
       gap: 8px; align-items: baseline;
       font-size: 11px;
     }
@@ -911,7 +937,7 @@ data:
               Static (overhead)
             </div>
             <div style="width:100%;aspect-ratio:1;background:var(--card2);border-radius:4px;overflow:hidden;border:1px solid var(--border)">
-              <img id="cam-static" src="/api/camera/static" alt="static camera"
+              <img id="cam-static" alt="static camera"
                    style="width:100%;height:100%;object-fit:cover"
                    onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
               >
@@ -925,7 +951,7 @@ data:
               Wrist
             </div>
             <div style="width:100%;aspect-ratio:1;background:var(--card2);border-radius:4px;overflow:hidden;border:1px solid var(--border)">
-              <img id="cam-wrist" src="/api/camera/wrist" alt="wrist camera"
+              <img id="cam-wrist" alt="wrist camera"
                    style="width:100%;height:100%;object-fit:cover"
                    onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
               >
@@ -1021,7 +1047,7 @@ data:
           <div id="prog-bar-wrap">
             <div id="prog-track"><div id="prog-fill" style="width:0%"></div></div>
             <div id="prog-label">
-              <span id="prog-text">0 / 10 curated episodes sent to hub</span>
+              <span id="prog-text">0 / 160 curated episodes sent to hub</span>
               <span id="prog-state" style="color:var(--txt3)">idle</span>
             </div>
           </div>
@@ -1165,6 +1191,18 @@ data:
       document.getElementById('theme-dark').classList.toggle('active', t === 'dark');
     });
 
+    // ---- Camera feeds (direct to camera bridge on host) ----------------------
+    (function() {
+      // Camera bridge runs on the desktop host (not in SNO) alongside the sim.
+      // TODO: make configurable via env/config instead of hardcoded.
+      const camHost = '10.0.0.48';
+      const camBase = 'http://' + camHost + ':8081';
+      const staticEl = document.getElementById('cam-static');
+      const wristEl = document.getElementById('cam-wrist');
+      if (staticEl) staticEl.src = camBase + '/static';
+      if (wristEl) wristEl.src = camBase + '/wrist';
+    })();
+
     // ---- State ---------------------------------------------------------------
     // annotations always visible (toggle removed)
     let logAnnotationsOn = true;
@@ -1265,8 +1303,8 @@ data:
     // ---- Apply status -------------------------------------------------------
     function applyStatus(s) {
       // Model version
-      const mv = s.model_version || 'soarm-act-v1';
-      const isV2 = mv === 'soarm-act-v2';
+      const mv = s.model_version || 'unknown';
+      const isV2 = !!s.promoted;
       document.getElementById('model-label').textContent = mv;
       document.getElementById('model-badge').className = isV2 ? 'v2' : 'v1';
       document.getElementById('sb-model').textContent = mv;
@@ -1288,7 +1326,7 @@ data:
 
       // Counts
       const c = s.counts || {};
-      document.getElementById('c-total').textContent    = (c.raw||0)+(c.curated||0)+(c.rejected||0)+(c.sent||0);
+      document.getElementById('c-total').textContent    = (c.raw||0)+(c.rejected||0)+(c.sent||0);
       document.getElementById('c-rejected').textContent = c.rejected || 0;
       document.getElementById('c-sent').textContent     = c.sent     || 0;
 
@@ -1302,7 +1340,11 @@ data:
 
       // Generator output -- only update DOM when the episode actually changes
       // (prevents blinking on the 3-second status poll when flywheel is stopped)
-      const genKey = JSON.stringify(lat.curation_score) + (lat.curation_verdict||'') + (lat.scene||'');
+      // Key on the actual episode content so every new episode updates the
+      // boxes — including rollout steps/duration which change every episode
+      // even when score/verdict/scene repeat.
+      const genKey = JSON.stringify(lat.rollout) + JSON.stringify(lat.curation_score)
+                   + (lat.task_success) + (lat.cubes_placed) + (lat.avg_smoothness);
       if (lat.curation_score != null && genKey !== window._lastGenKey) {
         window._lastGenKey = genKey;
         document.getElementById('gen-empty').style.display = 'none';
@@ -1476,8 +1518,10 @@ data:
           return 'Rollout error \u2014 sim crashed or produced incomplete episode';
         if (r.includes('truncated'))
           return 'Episode too short \u2014 rollout ended before meaningful data was collected';
-        if (r.includes('task-failed'))
-          return 'Task failed \u2014 arm did not successfully place cubes on tray';
+        if (r.includes('task-failed')) {
+          const c = ep.cubes_placed != null ? ep.cubes_placed : '?';
+          return `Task failed \u2014 ${c}/3 cubes placed`;
+        }
         if (r.includes('jerky'))
           return 'Predicted action trajectory is jerky \u2014 physically implausible, rejected';
         return 'Curation score below threshold \u2014 ' + r;
@@ -1512,21 +1556,24 @@ data:
     }
 
     // Build a single log-entry node (shared by renderLog + prependLogEntry).
-    function buildLogEntry(ep) {
-      const verdict = ep.verdict || ep._verdict || 'pass';
-      const score   = ep.curation_score || 0;
-      const ts      = ep.ts ? new Date(ep.ts * 1000).toLocaleTimeString() : '--';
-      const div = document.createElement('div');
-      div.className = 'log-entry ' + verdict;
-      div.innerHTML = `
-        <div class="log-main">
-          <span class="log-time">${ts}</span>
-          <span class="log-verdict ${verdict}">${verdict === 'pass' ? '&#10003; PASS' : '&#10007; REJECT'}</span>
-          <span class="log-id">${(ep.episode_id||'').substring(0,8)}</span>
-          <span class="log-score ${scoreClass(score)}">${score.toFixed(3)}</span>
-          <span class="log-scene">${(ep.scene||'').replace(/_/g,' ')}</span>
-        </div>
-        <div class="log-reason ${logAnnotationsOn ? 'show' : ''}">${reasonAnnotation(ep)}</div>`;
+     function buildLogEntry(ep) {
+       const verdict = ep.verdict || ep._verdict || 'pass';
+       const score   = ep.curation_score || 0;
+       const cubes   = ep.cubes_placed != null ? ep.cubes_placed : '?';
+       const ts      = ep.ts ? new Date(ep.ts * 1000).toLocaleTimeString() : '--';
+       const cubesCls = cubes === 3 ? 'score-good' : cubes >= 1 ? 'score-mid' : 'score-bad';
+       const div = document.createElement('div');
+       div.className = 'log-entry ' + verdict;
+       div.innerHTML = `
+         <div class="log-main">
+           <span class="log-time">${ts}</span>
+           <span class="log-verdict ${verdict}">${verdict === 'pass' ? '&#10003; PASS' : '&#10007; REJECT'}</span>
+           <span class="log-id">${(ep.episode_id||'').substring(0,8)}</span>
+           <span class="log-score ${scoreClass(score)}">${score.toFixed(3)}</span>
+           <span class="${cubesCls}" style="font-size:11px;font-weight:600">${cubes}/3</span>
+           <span class="log-scene">${(ep.scene||'').replace(/_/g,' ')}</span>
+         </div>
+         <div class="log-reason ${logAnnotationsOn ? 'show' : ''}">${reasonAnnotation(ep)}</div>`;
       div.style.cursor = 'pointer';
       div.addEventListener('click', () => {
         div.querySelector('.log-reason').classList.toggle('show');
@@ -1539,7 +1586,9 @@ data:
       if (logEmpty) logEmpty.style.display = 'none';
       const verdict = ep.verdict || ep._verdict || 'pass';
       const score   = ep.curation_score || 0;
+      const cubes   = ep.cubes_placed != null ? ep.cubes_placed : '?';
       const ts      = ep.ts ? new Date(ep.ts * 1000).toLocaleTimeString() : '--';
+      const cubesCls = cubes === 3 ? 'score-good' : cubes >= 1 ? 'score-mid' : 'score-bad';
 
       const div = document.createElement('div');
       div.className = 'log-entry ' + verdict;
@@ -1549,6 +1598,7 @@ data:
           <span class="log-verdict ${verdict}">${verdict === 'pass' ? '&#10003; PASS' : '&#10007; REJECT'}</span>
           <span class="log-id">${(ep.episode_id||'').substring(0,8)}</span>
           <span class="log-score ${scoreClass(score)}">${score.toFixed(3)}</span>
+          <span class="${cubesCls}" style="font-size:11px;font-weight:600">${cubes}/3</span>
           <span class="log-scene">${(ep.scene||'').replace(/_/g,' ')}</span>
         </div>
         <div class="log-reason ${logAnnotationsOn ? 'show' : ''}">${reasonAnnotation(ep)}</div>
@@ -1667,7 +1717,7 @@ roleRef:
   name: dashboard-flywheel
   apiGroup: rbac.authorization.k8s.io
 ---
-# Same namespace — read Service selector to detect active policy version
+# Same namespace — Service read is unused since act-serving was retired (D075); kept for the Deployment read
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -1729,7 +1779,9 @@ spec:
             - name: VLLM_NS
               value: "flywheel"
             - name: TRIGGER_THRESHOLD
-              value: "10"
+              value: "160"   # matches manifest-consumer (D022/D023); was thor-testing's 10
+            - name: DASHBOARD_CODE_REV
+              value: "2026-09-09-g"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
             - name: FRAMES_DIR
               value: "/data/frames"
             - name: HTML_FILE

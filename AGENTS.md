@@ -6,17 +6,18 @@ blue/green swap -> loop closes.
 
 ## Project context
 
-Read these files in order for full context:
-1. `PROJECT-BRIEF.md` — what, why, architecture, hardware, constraints
-2. `BUILD-PLAN.md` — phased execution plan (Phase 0-4) with exit criteria
-3. `THOR-TESTING-REUSE.md` — what copies from thor-testing, what adapts, known gotchas
+Read these files in order for full context (engineering history lives under `docs/internal/`;
+the public-facing material is `README.md` and `docs/`):
+1. `docs/internal/PROJECT-BRIEF.md` — what, why, architecture, hardware, constraints
+2. `docs/internal/BUILD-PLAN.md` — phased execution plan (Phase 0-4.5) with exit criteria
+3. `docs/internal/THOR-TESTING-REUSE.md` — what copies from thor-testing, what adapts, known gotchas
 
-When decisions are made during execution, record them in `DECISIONS.md` using the same
-numbered format as thor-testing's decision log (D001, D002, ...).
+When decisions are made during execution, record them in `docs/internal/DECISIONS.md` using the
+same numbered format as thor-testing's decision log (D001, D002, ...).
 
 ## Key facts
 
-- **Desktop (dev stand-in):** i9-13900K / RTX 5090 / 128 GB / Ubuntu / x86_64 / 10.0.0.41
+- **Desktop (dev stand-in):** i9-13900K / RTX 5090 / 128 GB / Ubuntu / x86_64 / 10.0.0.48
   SSH as `jary`. Ubuntu stays — SNO runs in a KVM VM with GPU passthrough.
 - **Target (demo):** HP ZGX Fury GB300 / Grace Blackwell / 748 GB / RHEL 10.2 / aarch64
 - **Reuse source:** `~/redhat/git/thor-testing` — gitops/, tekton/, pipeline/ are the reusable
@@ -34,3 +35,6 @@ numbered format as thor-testing's decision log (D001, D002, ...).
 - The RTX 5090 is the only GPU. Do not assume MIG capability (desktop GPU, not data center).
 - `.plans/` is gitignored — use it for scratch notes, working drafts, and artifacts that aren't
   ready for the repo. Move things to tracked files when they're solid.
+- `.changes/` is gitignored too — the `review`/`consolidate-reviews`/`archive-changes` skills' own
+  working area (findings, consolidated triage tables, tech debt). Same rule as `.plans/`: it's
+  workflow scratch, not project deliverable, so it stays local and untracked.

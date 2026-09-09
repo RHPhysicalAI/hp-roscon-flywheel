@@ -1,0 +1,36 @@
+# This project was developed with assistance from AI tools.
+#
+# Bootstrap once: oc apply -f argocd/tekton-app.yaml
+# (after operators-app.yaml: needs the OpenShift Pipelines operator's tekton.dev CRDs and the
+# `pipeline` ServiceAccount it creates in the flywheel namespace)
+#
+# Runtime-image build + sign path (D028): the Tasks, Pipeline, qemu binfmt DaemonSet, privileged
+# SCC binding for the `pipeline` SA and the Rekor public key ConfigMap under gitops/tekton/.
+# `*.example.yaml` is excluded from the sync: runtime-image-pipelinerun.example.yaml is a
+# `generateName` PipelineRun template started by hand (`oc create -f`), never an Argo resource.
+# Hand-created Secrets this app depends on (never in git; see argocd/README.md): `quay-push`
+# (dockerconfigjson for quay.io/jary) and `cosign-signing` (cosign.key, cosign.pub, cosign.password).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tekton
+  namespace: openshift-gitops
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  destination:
+    namespace: flywheel
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    path: gitops/tekton
+    repoURL: https://github.com/RHPhysicalAI/hp-roscon-flywheel.git
+    targetRevision: desktop-gpu-split
+    directory:
+      exclude: '*.example.yaml'
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true

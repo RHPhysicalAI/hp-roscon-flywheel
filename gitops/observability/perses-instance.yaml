@@ -16,7 +16,7 @@
 # datasources are CR-sourced (PersesDashboard/PersesDatasource, pushed in
 # by perses-operator's own dashboard/datasource controllers), so they
 # survive a pod restart via re-push, and this is a demo dashboard, not a
-# system of record. See DECISIONS.md D028.
+# system of record. See docs/internal/DECISIONS.md D028.
 apiVersion: perses.dev/v1alpha2
 kind: Perses
 metadata:

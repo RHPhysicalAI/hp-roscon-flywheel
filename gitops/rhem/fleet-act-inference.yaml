@@ -1,0 +1,231 @@
+# This project was developed with assistance from AI tools.
+#
+# Fleet act-inference — the ACT policy container as an RHEM-delivered quadlet application (D024, D026).
+#
+# Role split (Phase 4.5 C3, D0xx): RHEM delivers model serving only — the runtime image in ROLE=policy
+# (rosetta client + policy server + latched /flywheel/model_version) with the ModelCar volume, trust
+# and health. The sim harness (coordinator, episode recorder, sim reset, bags) lives with the
+# simulator, because sim reset and the cube judge use Gazebo transport, which is host-local:
+# tools/host/run-coordinator.sh on the sim host (docker on the desktop, podman on the Fury). No bags
+# or data volume here (D041/D043/D044/D046/D047 superseded on the desktop).
+#
+# One Fleet serves both boxes. The per-site differences live in device labels set at approval time
+# (device/enroll.sh) and are read here with flightctl's Go-template placeholders:
+#
+#   label            desktop VM      Fury host    used by
+#   site             desktop         fury         rolloutPolicy batch order (desktop first, then fury)
+#   gpu              none            nvidia       AddDevice=nvidia.com/gpu=all only when "nvidia";
+#                                                 OMP/TORCH thread caps only when "none"
+#   policy_device    cpu             cuda         POLICY_DEVICE -> rosetta_client params file (entrypoint)
+#   zenoh_router     10.0.0.48       <fury-ip>    ZENOH_ROUTER=<router>:<port> (two labels: ':' is not a
+#   zenoh_port       7447            7447         legal label-value character, D033)
+#
+# Placeholders are only legal where flightctl renders them (docs/user/using/managing-fleets.md
+# "Defining Device Templates"): inline config content/path, inline application content/path, env var
+# values, and the *tag* of an application-volume image. Digests are pinned, so no image reference is
+# templated. `if`/`else`/`with` are supported, `range` is not. getOrDefault guards a missing label so a
+# device without `gpu` renders the CPU branch instead of failing the render.
+#
+# Trust chain (D026 rows 1-2, thor-testing D015/D018): the node-trust config writes
+#   /etc/containers/policy.json               sigstoreSigned for quay.io/jary/soarm-act-modelcar and
+#                                             quay.io/jary/soarm-flywheel with keyPath AND rekorPublicKeyPath
+#                                             (Rekor SET enforced on the device), signedIdentity matchRepository;
+#                                             the RHEL default entries for registry.access.redhat.com /
+#                                             registry.redhat.io are preserved because this file REPLACES the
+#                                             distro file; default stays insecureAcceptAnything for everything else
+#   /etc/containers/registries.d/quay-jary.yaml  use-sigstore-attachments for quay.io/jary — without it
+#                                             containers/image never looks for the cosign attachment and every
+#                                             pull fails with "A signature was required, but no signature exists"
+#   /etc/pki/containers/cosign.pub            the pipeline's cosign public key (desktop ~/cosign/cosign.pub)
+#   /etc/pki/containers/rekor.pub             RHTAS Rekor log public key (/api/v1/log/publicKey on the SNO route)
+# so both images below are pulled by podman under the same policy CRI-O would apply: unsigned → rejected,
+# signed without --tlog-upload → rejected (no SET), signed + logged → accepted.
+#
+# Model plane: the ModelCar is a quadlet .volume with Driver=image (verified on the VM 2026-09-08 with
+# podman 5.8.2). The agent tracks it as an image-backed application volume (reclaimPolicy Retain), pre-pulls
+# it with `podman pull` (policy.json enforced, signature stored), and podman mounts the image rootfs
+# read-only at the mount point, so the checkpoint is at <mount>/models/act. The app-level `volumes[].image`
+# form was NOT used: the agent treats those as OCI artifacts (`podman artifact pull` + `podman artifact
+# extract`, layers copied out by org.opencontainers.image.title), and a signed container image cannot even
+# be pulled into the artifact store ("Pushing signatures for OCI images is not supported").
+#
+# A promotion (D025) is a two-regex edit of this file: the modelcar digest in models.volume and
+# MODEL_VERSION in envVars. Rollback is `git revert` — the previous image is still in local storage.
+# ACTIONS_PER_CHUNK / CHUNK_SIZE_THRESHOLD are the same on both boxes (one code path); see D0xx for
+# the GPU-parity choice and the 30/0.95 baseline caveat.
+#
+# Schema note: v1beta1 config providers are a plain oneOf distinguished by shape (`inline` / `gitRef` /
+# `secretRef` / `httpRef`); the `configType:` key some 1.3.0 doc examples still show is not in the
+# OpenAPI or the generated Go types, so it is omitted here.
+apiVersion: flightctl.io/v1beta1
+kind: Fleet
+metadata:
+  name: act-inference
+spec:
+  selector:
+    matchLabels:
+      fleet: act-inference
+  rolloutPolicy:
+    deviceSelection:
+      strategy: BatchSequence
+      sequence:
+        - selector:
+            matchLabels:
+              site: desktop
+          successThreshold: 100%
+        - selector:
+            matchLabels:
+              site: fury
+          successThreshold: 100%
+    successThreshold: 100%
+    defaultUpdateTimeout: 30m
+  template:
+    spec:
+      config:
+        - name: node-trust
+          inline:
+            - path: /etc/containers/policy.json
+              mode: 0644
+              content: |
+                {
+                    "default": [
+                        {
+                            "type": "insecureAcceptAnything"
+                        }
+                    ],
+                    "transports": {
+                        "docker": {
+                            "registry.access.redhat.com": [
+                                {
+                                    "type": "sigstoreSigned",
+                                    "keyPath": "/etc/pki/sigstore/SIGSTORE-redhat-release3",
+                                    "rekorPublicKeyPath": "/etc/pki/sigstore/REKOR-signing-key"
+                                }
+                            ],
+                            "registry.redhat.io": [
+                                {
+                                    "type": "sigstoreSigned",
+                                    "keyPath": "/etc/pki/sigstore/SIGSTORE-redhat-release3",
+                                    "rekorPublicKeyPath": "/etc/pki/sigstore/REKOR-signing-key"
+                                }
+                            ],
+                            "quay.io/jary/soarm-act-modelcar": [
+                                {
+                                    "type": "sigstoreSigned",
+                                    "keyPath": "/etc/pki/containers/cosign.pub",
+                                    "rekorPublicKeyPath": "/etc/pki/containers/rekor.pub",
+                                    "signedIdentity": {
+                                        "type": "matchRepository"
+                                    }
+                                }
+                            ],
+                            "quay.io/jary/soarm-flywheel": [
+                                {
+                                    "type": "sigstoreSigned",
+                                    "keyPath": "/etc/pki/containers/cosign.pub",
+                                    "rekorPublicKeyPath": "/etc/pki/containers/rekor.pub",
+                                    "signedIdentity": {
+                                        "type": "matchRepository"
+                                    }
+                                }
+                            ]
+                        },
+                        "docker-daemon": {
+                            "": [
+                                {
+                                    "type": "insecureAcceptAnything"
+                                }
+                            ]
+                        }
+                    }
+                }
+            - path: /etc/containers/registries.d/quay-jary.yaml
+              mode: 0644
+              content: |
+                # This project was developed with assistance from AI tools.
+                # policy.json says WHAT to require for quay.io/jary/*; this file says to LOOK for cosign/sigstore
+                # attachments there at all (thor-testing D018).
+                docker:
+                  quay.io/jary:
+                    use-sigstore-attachments: true
+            - path: /etc/pki/containers/cosign.pub
+              mode: 0644
+              content: |
+                -----BEGIN PUBLIC KEY-----
+                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9EGjXgISiy6pQ44C65fzeTYHua5k
+                23Jni5eZoOR06+M4CfWJo5JmFoV2vf6OzinFhlcwsPLFUGmJCdt3hcu45A==
+                -----END PUBLIC KEY-----
+            - path: /etc/pki/containers/rekor.pub
+              mode: 0644
+              content: |
+                -----BEGIN PUBLIC KEY-----
+                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEpWlAeU1HRJIh3nRDD9chGR50khDP
+                kSs7UmieeG3iE9zHnCcU0rAUx8QsH2kDVpdFMr8IELMeRzPiqAv1E9qaAg==
+                -----END PUBLIC KEY-----
+        - name: act-inference-env
+          inline:
+            - path: /etc/act-inference/env
+              mode: 0644
+              content: |
+                # Rendered per device from labels by RHEM (Fleet act-inference); read by EnvironmentFile= in the quadlet.
+                ZENOH_ROUTER={{ .metadata.labels.zenoh_router }}:{{ .metadata.labels.zenoh_port }}
+                POLICY_DEVICE={{ getOrDefault .metadata.labels "policy_device" "cpu" }}
+                {{ if eq (getOrDefault .metadata.labels "gpu" "none") "none" }}# CPU device: one torch thread per vCPU (D034); SMT siblings were slower on the host
+                OMP_NUM_THREADS=8
+                TORCH_NUM_THREADS=8
+                {{ end }}# The episode emitter (curator POST to http://10.0.0.49:30802/episode) runs in the sim container on the
+                # host, not here; it reads /flywheel/model_version from this container's publisher. No CURATOR_URL needed.
+      applications:
+        - name: act-inference
+          appType: quadlet
+          # rootful for the demo: host networking + CDI + /dev/shm have fewer unknowns (D024); rootless is the
+          # product recommendation and is not built.
+          envVars:
+            # Role split (C3): this container is model serving only — rosetta client + policy server +
+            # latched /flywheel/model_version. The sim harness (coordinator, episode recorder, sim reset,
+            # bags) runs next to the simulator: tools/host/run-coordinator.sh on the sim host.
+            ROLE: policy
+            # Lineage contract: MODEL_VERSION -> model_version_pub.py -> /flywheel/model_version -> emitter -> curator
+            MODEL_VERSION: act-v2-ft160
+            # Image-volume mount is the modelcar rootfs; the checkpoint lives at models/act inside it (test A)
+            POLICY_PATH: /modelcar/models/act
+            # rosetta client chunking (cpu-spike.md part 2, D024 fallback 1): the checkpoint's full chunk,
+            # re-requested at half queue, so one CPU forward hides behind ~1 s of queued actions.
+            ACTIONS_PER_CHUNK: "100"
+            CHUNK_SIZE_THRESHOLD: "0.5"
+          inline:
+            - path: models.volume
+              content: |
+                [Volume]
+                Driver=image
+                Image=quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b
+            - path: act-inference.container
+              content: |
+                [Unit]
+                Description=ACT policy inference (RHEM-managed, Fleet act-inference)
+
+                [Container]
+                # Runtime image: built + signed by Tekton (Phase 4.5 F), referenced by the multi-arch manifest-list digest (docs/eval-records/runtime-image-tekton.md: tag act-inference-aa7392f, Rekor 11/12/13).
+                Image=quay.io/jary/soarm-flywheel@sha256:3d67f4246fd0915278b419bf4a3c67c3c9e0f8a07c553305a7445f65fc2cb4af
+                ContainerName=act-inference
+                Network=host
+                EnvironmentFile=/etc/act-inference/env
+                Volume=models.volume:/modelcar:ro
+                {{ if eq (getOrDefault .metadata.labels "gpu" "none") "nvidia" }}AddDevice=nvidia.com/gpu=all
+                SecurityLabelDisable=true
+                {{ end }}HealthCmd=/healthcheck.sh
+                HealthStartPeriod=240s
+                HealthInterval=30s
+                HealthTimeout=10s
+                HealthRetries=3
+                HealthOnFailure=kill
+
+                [Service]
+                Restart=always
+                RestartSec=10
+                TimeoutStartSec=300
+
+                # The agent wires the unit into its own <app>-flightctl-quadlet-app.target (Wants=/After=) and adds
+                # PartOf= via a drop-in; [Install] follows the flightctl quadlet examples and is otherwise inert.
+                [Install]
+                WantedBy=default.target

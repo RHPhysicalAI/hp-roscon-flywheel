@@ -1,0 +1,50 @@
+# This project was developed with assistance from AI tools.
+#
+# PipelineRun template for the runtime-image Pipeline. Not an Argo resource: argocd/tekton-app.yaml
+# excludes *.example.yaml (a generateName object cannot be reconciled). Start a build with
+#
+#   oc create -n flywheel -f gitops/tekton/runtime-image-pipelinerun.example.yaml
+#   tkn pipelinerun logs -n flywheel -f --last
+#   tkn pipelinerun describe -n flywheel --last      # results: IMAGE_DIGEST, PLATFORM_DIGESTS, REKOR_INDEX
+#
+# Override a param with `oc create -f - <<EOF` after editing spec.params, or run
+# `tkn pipeline start runtime-image -n flywheel --use-param-defaults -w ...` with the same bindings.
+# The arm64 leg runs under qemu-user on the x86 SNO and dominates the wall clock (hours); the
+# timeouts below are sized for it. Delete finished runs (`tkn pipelinerun delete`) to release the
+# 60 Gi PVC each run claims — the build step already empties its storage before it exits.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: runtime-image-
+  namespace: flywheel
+spec:
+  pipelineRef:
+    name: runtime-image
+  taskRunTemplate:
+    serviceAccountName: pipeline
+  timeouts:
+    pipeline: 8h0m0s
+    tasks: 7h30m0s
+    finally: 30m0s
+  workspaces:
+    - name: shared
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          storageClassName: local-path
+          resources:
+            requests:
+              storage: 60Gi
+    - name: docker-credentials
+      secret:
+        secretName: quay-push
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+    - name: cosign-key
+      secret:
+        secretName: cosign-signing
+    - name: rekor-public-key
+      configMap:
+        name: rekor-public-key

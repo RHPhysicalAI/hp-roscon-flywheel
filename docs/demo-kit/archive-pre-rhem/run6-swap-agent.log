@@ -1,0 +1,15 @@
+# Swap of act-v2-ft160 onto the desktop policy container, 2026-09-08 (CDT), after PR #1 merged.
+# The swap itself was a one-off pass (`swap_agent.py`, output to the operator's terminal); the resident
+# loop (`--loop 300`) started right after and has logged the confirmation every 5 min since.
+#
+# Evidence from the host (docker):
+#   act-inference                                 created 2026-09-08 12:16:17 CDT  MODEL_VERSION=act-v2-ft160
+#   act-inference-pre-act-v2-ft160-1788887777     the previous (teacher) container, renamed aside by the
+#                                                  swap agent at epoch 1788887777 = 12:16:17 CDT (Recreate semantics)
+#
+# ~/swap-agent.log, first lines (resident loop, immediately after the swap):
+09-08 12:16 [swap] live=green model_version=act-v2-ft160 image=sha256:bdb513ca4db0...  running=act-v2-ft160 (running)
+09-08 12:16 [swap] already serving the promoted version
+09-08 12:21 [swap] live=green model_version=act-v2-ft160 image=sha256:bdb513ca4db0...  running=act-v2-ft160 (running)
+09-08 12:21 [swap] already serving the promoted version
+# ... every 5 min since (44 lines by 14:01).
