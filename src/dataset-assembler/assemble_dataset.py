@@ -44,8 +44,8 @@ from pathlib import Path
 
 # MinIO / S3 config (env-overridable). Used only when --from-minio / --push-dataset.
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://10.0.0.49:30900")
-MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
-MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY")
+MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY")
 # Kafka (external NodePort listener, PLAINTEXT). Used only for the dataset manifest.
 KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "10.0.0.49:30903")
 
@@ -54,6 +54,8 @@ def _s3():
     """Boto3 S3 client for MinIO. Imported lazily so the local-only path has no
     boto3 dependency."""
     import boto3
+    if not (MINIO_ACCESS_KEY and MINIO_SECRET_KEY):
+        sys.exit("assemble_dataset: MINIO_ACCESS_KEY and MINIO_SECRET_KEY must be set (source ~/.minio-env); refusing to run")
     return boto3.client(
         "s3",
         endpoint_url=MINIO_ENDPOINT,

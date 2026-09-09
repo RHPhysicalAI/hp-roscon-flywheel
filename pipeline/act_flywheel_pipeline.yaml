@@ -18,7 +18,7 @@
 #    kafka_bootstrap: str [Default: 'edge-kafka.flywheel.svc:9092']
 #    mode: str [Default: 'desktop']
 #    modelcar_base: str [Default: 'registry.access.redhat.com/ubi9/ubi-micro:9.8-1787778798']
-#    platform: str [Default: 'linux/amd64']
+#    platform: list [Default: ['linux/amd64', 'linux/arm64']]
 #    registry_repo: str [Default: 'quay.io/jary/soarm-act-modelcar']
 #    rekor_url: str [Default: 'http://rekor-server.trusted-artifact-signer.svc']
 #    s3_endpoint: str [Default: 'http://minio.minio.svc:9000']
@@ -76,7 +76,7 @@ components:
         modelcar_base:
           parameterType: STRING
         platform:
-          parameterType: STRING
+          parameterType: LIST
         registry_repo:
           parameterType: STRING
         s3_endpoint:
@@ -289,21 +289,22 @@ deploymentSpec:
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef package_modelcar(checkpoint_uri: str, candidate: str, registry_repo:\
-          \ str, platform: str,\n                     s3_endpoint: str, crane_version:\
-          \ str, modelcar_base: str) -> str:\n    \"\"\"crane append: flat ACT checkpoint\
-          \ dir -> /models/act on ubi-micro. Returns image@digest.\"\"\"\n    import\
-          \ os, platform as _plat, subprocess, tarfile, io, boto3, urllib.request\n\
-          \    s3 = boto3.client(\"s3\", endpoint_url=s3_endpoint, aws_access_key_id=os.environ[\"\
-          AWS_ACCESS_KEY_ID\"],\n                      aws_secret_access_key=os.environ[\"\
-          AWS_SECRET_ACCESS_KEY\"])\n    b, k = checkpoint_uri[5:].split(\"/\", 1)\n\
-          \    buf = io.BytesIO(s3.get_object(Bucket=b, Key=k)[\"Body\"].read())\n\
-          \    os.makedirs(\"/tmp/layer/models/act\", exist_ok=True)\n    with tarfile.open(fileobj=buf,\
-          \ mode=\"r:gz\") as t:\n        for m in t:\n            if m.isfile():\n\
-          \                m.name = \"models/act/\" + os.path.basename(m.name); t.extract(m,\
-          \ \"/tmp/layer\")\n    with tarfile.open(\"/tmp/layer.tar\", \"w\") as t:\
-          \ t.add(\"/tmp/layer/models\", arcname=\"models\")\n    arch = {\"x86_64\"\
-          : \"x86_64\", \"amd64\": \"x86_64\", \"aarch64\": \"arm64\", \"arm64\":\
-          \ \"arm64\"}[_plat.machine()]\n    url = f\"https://github.com/google/go-containerregistry/releases/download/{crane_version}/go-containerregistry_Linux_{arch}.tar.gz\"\
+          \ str, platform: List[str],\n                     s3_endpoint: str, crane_version:\
+          \ str, modelcar_base: str) -> str:\n    \"\"\"crane append per platform:\
+          \ flat ACT checkpoint dir -> /models/act on ubi-micro, then one OCI index\n\
+          \    at the candidate tag (the model layer is shared; only the ubi-micro\
+          \ base differs). Returns index@digest.\"\"\"\n    import os, platform as\
+          \ _plat, subprocess, tarfile, io, boto3, urllib.request\n    s3 = boto3.client(\"\
+          s3\", endpoint_url=s3_endpoint, aws_access_key_id=os.environ[\"AWS_ACCESS_KEY_ID\"\
+          ],\n                      aws_secret_access_key=os.environ[\"AWS_SECRET_ACCESS_KEY\"\
+          ])\n    b, k = checkpoint_uri[5:].split(\"/\", 1)\n    buf = io.BytesIO(s3.get_object(Bucket=b,\
+          \ Key=k)[\"Body\"].read())\n    os.makedirs(\"/tmp/layer/models/act\", exist_ok=True)\n\
+          \    with tarfile.open(fileobj=buf, mode=\"r:gz\") as t:\n        for m\
+          \ in t:\n            if m.isfile():\n                m.name = \"models/act/\"\
+          \ + os.path.basename(m.name); t.extract(m, \"/tmp/layer\")\n    with tarfile.open(\"\
+          /tmp/layer.tar\", \"w\") as t: t.add(\"/tmp/layer/models\", arcname=\"models\"\
+          )\n    arch = {\"x86_64\": \"x86_64\", \"amd64\": \"x86_64\", \"aarch64\"\
+          : \"arm64\", \"arm64\": \"arm64\"}[_plat.machine()]\n    url = f\"https://github.com/google/go-containerregistry/releases/download/{crane_version}/go-containerregistry_Linux_{arch}.tar.gz\"\
           \n    urllib.request.urlretrieve(url, \"/tmp/crane.tgz\"); subprocess.run([\"\
           tar\", \"-xzf\", \"/tmp/crane.tgz\", \"-C\", \"/tmp\", \"crane\"], check=True)\n\
           \    # quay-push is a kubernetes.io/dockerconfigjson Secret: the mounted\
@@ -312,12 +313,19 @@ deploymentSpec:
           \  cfg = _j.load(open(\"/etc/quay/.dockerconfigjson\"))\n    _j.dump({\"\
           auths\": cfg.get(\"auths\", {})}, open(\"/tmp/docker/config.json\", \"w\"\
           ))  # drop credsStore/credHelpers\n    os.environ[\"DOCKER_CONFIG\"] = \"\
-          /tmp/docker\"\n    r = subprocess.run([\"/tmp/crane\", \"append\", \"--platform\"\
-          , platform, \"-b\", modelcar_base,\n                        \"-f\", \"/tmp/layer.tar\"\
-          , \"-t\", f\"{registry_repo}:{candidate}\"], capture_output=True, text=True)\n\
-          \    if r.returncode != 0:\n        print(\"crane append failed:\", r.stderr[-1500:]);\
-          \ raise SystemExit(1)\n    ref = r.stdout.strip().splitlines()[-1]; print(\"\
-          pushed\", ref); return ref\n\n"
+          /tmp/docker\"\n    per_arch = []\n    for p in platform:\n        tag =\
+          \ f\"{registry_repo}:{candidate}-{p.split('/', 1)[1].replace('/', '-')}\"\
+          \n        r = subprocess.run([\"/tmp/crane\", \"append\", \"--platform\"\
+          , p, \"-b\", modelcar_base,\n                            \"-f\", \"/tmp/layer.tar\"\
+          , \"-t\", tag], capture_output=True, text=True)\n        if r.returncode\
+          \ != 0:\n            print(f\"crane append {p} failed:\", r.stderr[-1500:]);\
+          \ raise SystemExit(1)\n        per_arch.append(r.stdout.strip().splitlines()[-1]);\
+          \ print(\"pushed\", per_arch[-1])\n    cmd = [\"/tmp/crane\", \"index\"\
+          , \"append\", \"-t\", f\"{registry_repo}:{candidate}\"]\n    for m in per_arch:\
+          \ cmd += [\"-m\", m]\n    r = subprocess.run(cmd, capture_output=True, text=True)\n\
+          \    if r.returncode != 0:\n        print(\"crane index append failed:\"\
+          , r.stderr[-1500:]); raise SystemExit(1)\n    ref = r.stdout.strip().splitlines()[-1];\
+          \ print(\"pushed\", ref); return ref\n\n"
         image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
     exec-sign-modelcar:
       container:
@@ -346,20 +354,25 @@ deploymentSpec:
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef sign_modelcar(image_ref: str, rekor_url: str, cosign_version:\
-          \ str) -> str:\n    \"\"\"cosign v2.x sign by digest; Rekor transparency\
-          \ log when rekor_url is set (RHTAS).\"\"\"\n    import os, platform as _plat,\
-          \ subprocess, urllib.request\n    arch = {\"x86_64\": \"amd64\", \"amd64\"\
-          : \"amd64\", \"aarch64\": \"arm64\", \"arm64\": \"arm64\"}[_plat.machine()]\n\
-          \    urllib.request.urlretrieve(f\"https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-{arch}\"\
-          , \"/tmp/cosign\")\n    os.chmod(\"/tmp/cosign\", 0o755); os.environ[\"\
-          COSIGN_PASSWORD\"] = \"\"\n    import json as _j; os.makedirs(\"/tmp/docker\"\
-          , exist_ok=True)\n    cfg = _j.load(open(\"/etc/quay/.dockerconfigjson\"\
-          ))\n    _j.dump({\"auths\": cfg.get(\"auths\", {})}, open(\"/tmp/docker/config.json\"\
-          , \"w\"))  # drop credsStore/credHelpers\n    os.environ[\"DOCKER_CONFIG\"\
-          ] = \"/tmp/docker\"\n    cmd = [\"/tmp/cosign\", \"sign\", \"--key\", \"\
-          /etc/cosign/cosign.key\", \"-y\", image_ref]\n    cmd += [\"--rekor-url\"\
-          , rekor_url, \"--tlog-upload=true\"] if rekor_url else [\"--tlog-upload=false\"\
-          ]\n    subprocess.run(cmd, check=True); print(\"signed\", image_ref); return\
+          \ str) -> str:\n    \"\"\"cosign v2.x sign by digest, --recursive so every\
+          \ per-arch manifest of the index carries its own\n    signature (containers/image\
+          \ verifies the instance it selects); Rekor when rekor_url is set (RHTAS).\n\
+          \    COSIGN_PASSWORD arrives from the cosign-signing-key Secret's `cosign.password`\
+          \ key.\"\"\"\n    import os, platform as _plat, subprocess, urllib.request\n\
+          \    arch = {\"x86_64\": \"amd64\", \"amd64\": \"amd64\", \"aarch64\": \"\
+          arm64\", \"arm64\": \"arm64\"}[_plat.machine()]\n    urllib.request.urlretrieve(f\"\
+          https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-{arch}\"\
+          , \"/tmp/cosign\")\n    os.chmod(\"/tmp/cosign\", 0o755)\n    if \"COSIGN_PASSWORD\"\
+          \ not in os.environ:\n        print(\"cosign-signing-key has no `cosign.password`\
+          \ key; assuming an unencrypted signing key\"); os.environ[\"COSIGN_PASSWORD\"\
+          ] = \"\"\n    import json as _j; os.makedirs(\"/tmp/docker\", exist_ok=True)\n\
+          \    cfg = _j.load(open(\"/etc/quay/.dockerconfigjson\"))\n    _j.dump({\"\
+          auths\": cfg.get(\"auths\", {})}, open(\"/tmp/docker/config.json\", \"w\"\
+          ))  # drop credsStore/credHelpers\n    os.environ[\"DOCKER_CONFIG\"] = \"\
+          /tmp/docker\"\n    cmd = [\"/tmp/cosign\", \"sign\", \"--key\", \"/etc/cosign/cosign.key\"\
+          , \"-y\", \"--recursive\", image_ref]\n    cmd += [\"--rekor-url\", rekor_url,\
+          \ \"--tlog-upload=true\"] if rekor_url else [\"--tlog-upload=false\"]\n\
+          \    subprocess.run(cmd, check=True); print(\"signed\", image_ref); return\
           \ image_ref\n\n"
         image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
     exec-trigger-and-wait:
@@ -616,9 +629,11 @@ root:
         isOptional: true
         parameterType: STRING
       platform:
-        defaultValue: linux/amd64
+        defaultValue:
+        - linux/amd64
+        - linux/arm64
         isOptional: true
-        parameterType: STRING
+        parameterType: LIST
       registry_repo:
         defaultValue: quay.io/jary/soarm-act-modelcar
         isOptional: true
@@ -686,6 +701,15 @@ platforms:
               runtimeValue:
                 constant: quay-push
         exec-sign-modelcar:
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: COSIGN_PASSWORD
+              secretKey: cosign.password
+            optional: true
+            secretName: cosign-signing-key
+            secretNameParameter:
+              runtimeValue:
+                constant: cosign-signing-key
           secretAsVolume:
           - mountPath: /etc/quay
             optional: false

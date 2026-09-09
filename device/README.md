@@ -141,7 +141,9 @@ either sudo or dropping the VM's AppArmor label, so the package is the fix.
 **Port-as-you-go (host).** `tools/host/after_assemble.sh` waits for `assemble_all.sh`, then runs
 `prune_bags.py --yes` and appends the result (each deleted bag with size) to `~/prune-dryrun.txt`.
 MinIO credentials come from `~/.minio-env` (0600, `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY`); the script
-refuses to run without them. The host copies live in `~/` on the desktop; `tools/host/` is the
+refuses to run without them, and so do `host_runner.py` and `assemble_dataset.py --from-minio` (no
+defaults since Phase 4.5 F) — start the runner from a shell that has run `set -a; source
+~/.minio-env; set +a`; `in_image()` forwards the two variables into the container. The host copies live in `~/` on the desktop; `tools/host/` is the
 versioned source.
 
 ## Flags verified (2026-09-08)

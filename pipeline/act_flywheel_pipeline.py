@@ -14,8 +14,10 @@ Every artifact contract (checkpoint tar, eval_report.json, image digest) is iden
 
 Compile:  python pipeline/act_flywheel_pipeline.py  -> pipeline/act_flywheel_pipeline.yaml
 Secrets expected in the DSP project namespace: hub-credentials (S3), quay-push (dockerconfigjson),
-cosign-signing-key (cosign.key), github-token (token).
+cosign-signing-key (cosign.key, cosign.pub, cosign.password -> COSIGN_PASSWORD), github-token (token).
 """
+from typing import List
+
 from kfp import dsl, compiler
 from kfp import kubernetes as k8s
 
@@ -76,9 +78,10 @@ def eval_gate(eval_report_uri: str, s3_endpoint: str) -> str:
 
 
 @dsl.component(base_image=PY_IMG, packages_to_install=["boto3==1.35.36"])
-def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, platform: str,
+def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, platform: List[str],
                      s3_endpoint: str, crane_version: str, modelcar_base: str) -> str:
-    """crane append: flat ACT checkpoint dir -> /models/act on ubi-micro. Returns image@digest."""
+    """crane append per platform: flat ACT checkpoint dir -> /models/act on ubi-micro, then one OCI index
+    at the candidate tag (the model layer is shared; only the ubi-micro base differs). Returns index@digest."""
     import os, platform as _plat, subprocess, tarfile, io, boto3, urllib.request
     s3 = boto3.client("s3", endpoint_url=s3_endpoint, aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
                       aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"])
@@ -99,25 +102,38 @@ def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, pl
     cfg = _j.load(open("/etc/quay/.dockerconfigjson"))
     _j.dump({"auths": cfg.get("auths", {})}, open("/tmp/docker/config.json", "w"))  # drop credsStore/credHelpers
     os.environ["DOCKER_CONFIG"] = "/tmp/docker"
-    r = subprocess.run(["/tmp/crane", "append", "--platform", platform, "-b", modelcar_base,
-                        "-f", "/tmp/layer.tar", "-t", f"{registry_repo}:{candidate}"], capture_output=True, text=True)
+    per_arch = []
+    for p in platform:
+        tag = f"{registry_repo}:{candidate}-{p.split('/', 1)[1].replace('/', '-')}"
+        r = subprocess.run(["/tmp/crane", "append", "--platform", p, "-b", modelcar_base,
+                            "-f", "/tmp/layer.tar", "-t", tag], capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"crane append {p} failed:", r.stderr[-1500:]); raise SystemExit(1)
+        per_arch.append(r.stdout.strip().splitlines()[-1]); print("pushed", per_arch[-1])
+    cmd = ["/tmp/crane", "index", "append", "-t", f"{registry_repo}:{candidate}"]
+    for m in per_arch: cmd += ["-m", m]
+    r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
-        print("crane append failed:", r.stderr[-1500:]); raise SystemExit(1)
+        print("crane index append failed:", r.stderr[-1500:]); raise SystemExit(1)
     ref = r.stdout.strip().splitlines()[-1]; print("pushed", ref); return ref
 
 
 @dsl.component(base_image=PY_IMG)
 def sign_modelcar(image_ref: str, rekor_url: str, cosign_version: str) -> str:
-    """cosign v2.x sign by digest; Rekor transparency log when rekor_url is set (RHTAS)."""
+    """cosign v2.x sign by digest, --recursive so every per-arch manifest of the index carries its own
+    signature (containers/image verifies the instance it selects); Rekor when rekor_url is set (RHTAS).
+    COSIGN_PASSWORD arrives from the cosign-signing-key Secret's `cosign.password` key."""
     import os, platform as _plat, subprocess, urllib.request
     arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[_plat.machine()]
     urllib.request.urlretrieve(f"https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-{arch}", "/tmp/cosign")
-    os.chmod("/tmp/cosign", 0o755); os.environ["COSIGN_PASSWORD"] = ""
+    os.chmod("/tmp/cosign", 0o755)
+    if "COSIGN_PASSWORD" not in os.environ:
+        print("cosign-signing-key has no `cosign.password` key; assuming an unencrypted signing key"); os.environ["COSIGN_PASSWORD"] = ""
     import json as _j; os.makedirs("/tmp/docker", exist_ok=True)
     cfg = _j.load(open("/etc/quay/.dockerconfigjson"))
     _j.dump({"auths": cfg.get("auths", {})}, open("/tmp/docker/config.json", "w"))  # drop credsStore/credHelpers
     os.environ["DOCKER_CONFIG"] = "/tmp/docker"
-    cmd = ["/tmp/cosign", "sign", "--key", "/etc/cosign/cosign.key", "-y", image_ref]
+    cmd = ["/tmp/cosign", "sign", "--key", "/etc/cosign/cosign.key", "-y", "--recursive", image_ref]
     cmd += ["--rekor-url", rekor_url, "--tlog-upload=true"] if rekor_url else ["--tlog-upload=false"]
     subprocess.run(cmd, check=True); print("signed", image_ref); return image_ref
 
@@ -177,7 +193,7 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
                           incumbent_checkpoint: str = "hf", steps_per_frame: float = 0.25, eval_n: int = 100,
                           eval_seed_base: int = 1000, mode: str = "desktop",
                           kafka_bootstrap: str = "edge-kafka.flywheel.svc:9092", s3_endpoint: str = "http://minio.minio.svc:9000",
-                          registry_repo: str = "quay.io/jary/soarm-act-modelcar", platform: str = "linux/amd64",
+                          registry_repo: str = "quay.io/jary/soarm-act-modelcar", platform: List[str] = ["linux/amd64", "linux/arm64"],
                           rekor_url: str = "http://rekor-server.trusted-artifact-signer.svc", crane_version: str = "v0.20.3", cosign_version: str = "v2.6.5",
                           github_repo: str = "RHPhysicalAI/hp-roscon-flywheel", gitops_branch: str = "desktop-gpu-split",
                           fleet_file: str = "gitops/rhem/fleet-act-inference.yaml", consumer_file: str = "gitops/flywheel/manifest-consumer.yaml",
@@ -199,6 +215,7 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
     sg = sign_modelcar(image_ref=pk.output, rekor_url=rekor_url, cosign_version=cosign_version); sg.set_caching_options(False)
     k8s.use_secret_as_volume(sg, secret_name="quay-push", mount_path="/etc/quay")
     k8s.use_secret_as_volume(sg, secret_name="cosign-signing-key", mount_path="/etc/cosign")
+    k8s.use_secret_as_env(sg, secret_name="cosign-signing-key", secret_key_to_env={"cosign.password": "COSIGN_PASSWORD"}, optional=True)
     pr = open_promotion_pr(image_ref=sg.output, candidate=candidate, checkpoint_uri=t.outputs["checkpoint"], report_json=g.output,
                            github_repo=github_repo, gitops_branch=gitops_branch, fleet_file=fleet_file, consumer_file=consumer_file,
                            fleet_ui_url=fleet_ui_url)

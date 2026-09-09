@@ -48,8 +48,9 @@ HOME = Path.home()
 FLY = HOME / "flywheel-data"
 MINIO = os.environ.get("MINIO_ENDPOINT", "http://10.0.0.49:30900")
 KAFKA = os.environ.get("KAFKA_BOOTSTRAP", "10.0.0.49:30903")
-S3KEY = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
-S3SEC = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+S3KEY, S3SEC = os.environ.get("MINIO_ACCESS_KEY"), os.environ.get("MINIO_SECRET_KEY")
+if not (S3KEY and S3SEC):
+    sys.exit("host_runner: MINIO_ACCESS_KEY and MINIO_SECRET_KEY must be set (source ~/.minio-env); refusing to run")
 BUCKET = os.environ.get("ARTIFACT_BUCKET", "episodes-data")
 IMAGE = os.environ.get("ACT_IMAGE", "act-inference:latest")
 TEACHER_HF = ("/root/.cache/huggingface/hub/models--francocipollone--"
@@ -79,7 +80,7 @@ def in_image(script, gpus=False, extra=()):
     """Run a bash snippet inside the act-inference image with the standard mounts."""
     cmd = ["docker", "run", "--rm", "--network", "host", "--entrypoint", "bash", "--shm-size=2g",
            "-v", f"{HOME}/.cache/huggingface:/root/.cache/huggingface",
-           "-v", f"{FLY}:/flywheel", *extra]
+           "-v", f"{FLY}:/flywheel", "-e", "MINIO_ACCESS_KEY", "-e", "MINIO_SECRET_KEY", *extra]
     if gpus:
         cmd += ["--gpus", "all"]
     cmd += [IMAGE, "-lc", "source /opt/ros/$ROS_DISTRO/setup.bash; source /ws_pai/install/setup.bash; " + script]
