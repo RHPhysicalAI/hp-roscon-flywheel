@@ -18,7 +18,7 @@ laptop **and** a USB stick (binary, not git — list them in `README.md` when ca
 | 3 | The PR's Rekor index is known (PR body / `docs/eval-records`-style capture, or the registry row's `rekor_index`) | `curl -sk …/api/v1/log/entries?logIndex=<n>` returns the entry |
 | 4 | **Loop running** via `~/run-coordinator.sh` (`IMAGE=<the Fleet's runtime digest> MODEL_VERSION=act-v2-ft160`), **disk guard armed** (`pgrep -f disk-guard.sh`), > 100 GB free under `~/flywheel-data/bags` | `docker ps` shows `act-coordinator` Up; `docker logs act-coordinator \| grep Observed` reads `act-v2-ft160` |
 | 5 | Host runner resident (`pgrep -af host_runner`) — only needed to *produce* the PR in (2) | runbook *Failure recovery* row if not |
-| 6 | Mac `/etc/hosts` resolves `ui.flightctl…`, `flywheel-rest…`, `rekor-search-ui-…`, `rekor-server-…`, `minio-console-…` to `10.0.0.49`; RHEM UI **logged in** (OpenShift OAuth); Fleet page open at `https://ui.flightctl.apps.sno-flywheel.local/devicemanagement/fleets/act-inference`; device page open on the **Applications** tab | both pages render without a login prompt |
+| 6 | Presenting laptop's (the operator's machine — browser/phone/ssh client, no cluster access of its own) `/etc/hosts` resolves `ui.flightctl…`, `flywheel-rest…`, `rekor-search-ui-…`, `rekor-server-…`, `minio-console-…` to `10.0.0.49`; RHEM UI **logged in** (OpenShift OAuth); Fleet page open at `https://ui.flightctl.apps.sno-flywheel.local/devicemanagement/fleets/act-inference`; device page open on the **Applications** tab | both pages render without a login prompt |
 | 7 | flightctl port-forward loop alive on the desktop (`~/flightctl-pf.log`); `flightctl get devices` answers (a `connection refused 127.0.0.1:3443` means the loop is re-establishing — retry in 5 s) | — |
 | 8 | Two host terminals: **T1** with the device watch pre-filled (below), **T2** free; phone with the GitHub PR open (the merge is done on the phone) | — |
 | 9 | Screen recorder tested (1080p, system audio off, cursor on); a clock visible in frame (menu-bar clock or `date` in T2) so the timings can be read back | 10 s test clip plays |
@@ -65,7 +65,7 @@ Expected from the merge (D069): `UpToDate` ≈ +1:55, `Published model_version` 
 
 ### The rollback (~4 min raw → trim to ~30 s)
 
-From the **desktop** (its `gh` login can open PRs; the Mac's PAT cannot, D071):
+From the **desktop** (its `gh` login can open PRs; the presenting laptop's PAT cannot, D071):
 ```bash
 cd ~/redhat/git/hp-roscon-flywheel && git checkout desktop-gpu-split && git pull --ff-only
 M=$(gh pr view <n> --repo RHPhysicalAI/hp-roscon-flywheel --json mergeCommit --jq .mergeCommit.oid)

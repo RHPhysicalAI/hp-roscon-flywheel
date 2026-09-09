@@ -7,7 +7,8 @@ true`). Nothing else in this directory is applied by Argo itself.
 
 ## Bootstrap order
 
-Run from the desktop host (the Mac has no kubeconfig; see `docs/DEMO_RUNBOOK.md`):
+Run from the desktop host (the presenting laptop — the operator's machine, used for browsing/
+phone/ssh — has no kubeconfig of its own; see `docs/DEMO_RUNBOOK.md`):
 
 ```bash
 export KUBECONFIG=~/sno-flywheel/auth/kubeconfig
@@ -83,7 +84,7 @@ label; no restart needed.
 ## RHEM routes and `/etc/hosts` (D006)
 
 The chart lays routes out as `<service>.<namespace>.apps.<cluster domain>`, i.e. under
-`*.flightctl.apps.sno-flywheel.local`. Add this line to `/etc/hosts` on the Mac (and on the
+`*.flightctl.apps.sno-flywheel.local`. Add this line to `/etc/hosts` on the presenting laptop (and on the
 device VM, Phase 4.5 B), next to the existing `10.0.0.49` lines:
 
 ```

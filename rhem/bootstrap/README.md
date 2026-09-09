@@ -52,7 +52,7 @@ Two things that do **not** work:
   `~/.config/flightctl/client.yaml` pointing at the retired OSD hub; `flightctl login` replaces
   it (backup left as `client.yaml.bak-osd-hub-2026-09-08`).
 
-`flightctl` 1.3.0 is installed at `~/.local/bin/flightctl` on the Mac and the desktop
+`flightctl` 1.3.0 is installed at `~/.local/bin/flightctl` on the presenting laptop and the desktop
 (sha256-verified from the GitHub release, os/arch from `uname`).
 
 ## Expectations

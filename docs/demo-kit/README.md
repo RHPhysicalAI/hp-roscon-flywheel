@@ -15,9 +15,9 @@ screens any more.
 | `run-192f3ec5-host-runner.log` | Beat 3 | the host runner's lines for that run: trigger received, checkpoint + both N=100 records reused, gate PASS 0.73 → 0.86 |
 | `pr2.md` | Beat 5 | PR #2 title, merge time, the two files changed (Fleet + consumer, D066), body (evidence table, signed digest, Fleet URL, rollback line); rollout timings as measured |
 | `rekor-entry-4.json` | Beat 5 | Rekor log index 4 (RHTAS, `hashedrekord`) — the transparency-log record of PR #2's modelcar signature |
-| `run6-task-states.txt`, `run6-host-runner.log`, `run6-pipeline-run.log` | Beat 3 (history) | run 6 (`07aaf328…`), the first governed run, pre-RHEM; the pipeline shape is the same minus `register-model` |
-| `pr1.md`, `rekor-entry-1.json` | superseded (Beat 5, pre-RHEM) | PR #1 flipped the retired `gitops/act-serving/` Deployment pair; Rekor index 1 is its signature. History only |
-| `run6-swap-agent.log` | superseded (Beat 6, pre-RHEM) | the retired host swap agent (D025/D075). History only |
+| `archive-pre-rhem/run6-task-states.txt`, `archive-pre-rhem/run6-host-runner.log`, `archive-pre-rhem/run6-pipeline-run.log` | Beat 3 (history) | run 6 (`07aaf328…`), the first governed run, pre-RHEM; the pipeline shape is the same minus `register-model` |
+| `archive-pre-rhem/pr1.md`, `archive-pre-rhem/rekor-entry-1.json` | superseded (Beat 5, pre-RHEM) | PR #1 flipped the retired `gitops/act-serving/` Deployment pair; Rekor index 1 is its signature. History only |
+| `archive-pre-rhem/run6-swap-agent.log` | superseded (Beat 6, pre-RHEM) | the retired host swap agent (D025/D075). History only |
 
 Elsewhere in the repo: `docs/eval-records/promotion-2.md` (PR #2 rollout + PR #3 rollback, second by
 second), `docs/eval-records/model-registry.md` and `docs/eval-records/catalog.md` (Beat 6's registry row

@@ -3865,3 +3865,43 @@ undiagnosed loop-breakage when `RESET_ARM=true` was tried; this joint-index bug 
 contributor (gripper motion during grasp/release could have falsely extended "still moving," or
 missed wrist-roll settling), not confirmed as the root cause — worth revisiting if that path is
 tried again.
+
+---
+
+## D119 — Polish pass for an outside technical audience: role-based terminology, pre-RHEM demo-kit artifacts archived, one stale operational README corrected
+
+**Date:** 2026-09-09
+**Context:** the user's framing: the repo has to be readable front to back by a random ROSCon
+attendee or HP partner engineer and represent both parties well, not just function. Scoped
+deliberately to *presentation*, not history — `DECISIONS.md` and `docs/eval-records/` stay exactly
+as written; this project's honest, warts-and-all record is a strength, not something to sand down.
+**Decision:**
+1. **"Mac" → role-based terminology.** Every operational doc that distinguishes which physical
+   machine a step runs on (`docs/DEMO_RUNBOOK.md`, `docs/demo-kit/rhem-kit-script.md`,
+   `argocd/README.md`, `device/README.md`, `rhem/bootstrap/README.md`, `device/enroll.sh`,
+   `BUILD-PLAN.md`'s carry-over table) now says "the presenting laptop" instead of "the Mac," with
+   a one-time definition on first use in `docs/DEMO_RUNBOOK.md`'s topology cheat-sheet ("the
+   operator's machine at the booth — browser, phone, ssh/gh client; no cluster access or
+   kubeconfig of its own"). The distinction itself is load-bearing (the runbook only works if
+   followed on the right box) and stays; only the "whose personal laptop" framing goes.
+   `BUILD-PLAN.md`'s Phase 0 exit-criterion checkbox (historical) and every mention in
+   `DECISIONS.md` are untouched on purpose.
+2. **Pre-RHEM demo-kit artifacts archived, not deleted.** `run6-task-states.txt`,
+   `run6-host-runner.log`, `run6-pipeline-run.log`, `run6-swap-agent.log`, `pr1.md`,
+   `rekor-entry-1.json` — all already marked superseded/history-only in `docs/demo-kit/README.md`'s
+   own table (the project fully moved to the RHEM device-plane path, Phase 4.5) — moved via `git
+   mv` into `docs/demo-kit/archive-pre-rhem/` (history preserved), with a one-paragraph README
+   explaining what the subdirectory is. `docs/demo-kit/README.md`'s table updated to the new
+   paths. The current Short Cut's real artifacts (`run-192f3ec5-*`, `pr2.md`, `rekor-entry-4.json`)
+   were not touched.
+3. **`gitops/rhem/README.md`'s "Open before the live apply" table was stale**, describing three
+   blockers (unsigned/unpushed runtime image, private modelcar repo, no verified positive pull
+   test) that Phase 4.5-D/F actually closed weeks of decisions ago (D068, D091, D101-D112). Marked
+   resolved with the closing evidence cited; left the two genuinely still-open items (`gpu=nvidia`
+   SELinux branch, untestable without the Fury; `HealthOnFailure=kill` masking a wedged — not
+   crashed — server, tied to the still-open BUILD-PLAN carry-over) marked as such instead of
+   silently dropping them.
+4. **General cruft sweep**: no stray debug prints, `pdb`/`breakpoint()` calls, or unexplained
+   commented-out code found anywhere in the tracked tree. No further changes made under this item.
+**Consequences:** a separate, parallel pass is assembling new front-door documentation (README,
+architecture/data-flow diagrams, bill of materials) — not part of this decision.

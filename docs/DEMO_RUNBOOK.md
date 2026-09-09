@@ -128,7 +128,13 @@ network is not part of the plan.
 
 ## Topology cheat-sheet (verified 2026-09-09)
 
-| screen | where it runs | URL / command from the Mac |
+Three machines: the **desktop** (the dev stand-in, running the sim, the RHEM hub, and the device
+VM), the **presenting laptop** (the operator's machine at the booth — browser, phone, `ssh`/`gh`
+client; no cluster access or kubeconfig of its own), and the **Fury** (the target hardware, out of
+scope until the on-site window). Commands below are run from the presenting laptop unless a step
+says otherwise.
+
+| screen | where it runs | URL / command from the presenting laptop |
 |---|---|---|
 | Overhead camera (MJPEG) | host `so-arm-sim` container, port 8081 | `http://10.0.0.48:8081/static` (wrist: `/wrist`, `/health`) |
 | Rest-pose picker (both cams + live joints) | host `pose-ui` container | `http://10.0.0.48:8090/` |
@@ -148,7 +154,7 @@ network is not part of the plan.
 
 Constants: host `jary@10.0.0.48` (always `ssh -n` for one-liners; `ssh … 'bash -s' <<'EOF'` for
 scripts, and then inner `ssh` needs `-n`). SNO node `10.0.0.49`. Device VM `10.0.0.51`.
-`KUBECONFIG=~/sno-flywheel/auth/kubeconfig` **on the host** (the Mac has no kubeconfig for this
+`KUBECONFIG=~/sno-flywheel/auth/kubeconfig` **on the host** (the presenting laptop has no kubeconfig for this
 cluster — every `oc` below runs over ssh). Pipeline id `99ec0aab-51fb-412e-bd2f-47bc6a0d3e3d`,
 experiment `flywheel-promotions`. Pinned run **`192f3ec5-c0f2-459d-8e84-6e8e32e90b35`** (opened
 PR #2; registry proof run `9015ecd4-5524-45cf-b6c7-f045a17860bc` opened PR #4, closed unmerged).
@@ -186,14 +192,14 @@ runtime image (Tekton, multi-arch) `quay.io/jary/soarm-flywheel@sha256:3d67f4246
 
 ## Prerequisites (both cuts)
 
-1. **Mac `/etc/hosts`** must resolve the routes. Present today: dashboard, gitops-server, console,
+1. **Presenting laptop `/etc/hosts`** must resolve the routes. Present today: dashboard, gitops-server, console,
    oauth, perses, tempo, sim-cameras. **Add** (one line, all → the node; the `flightctl` and
    `flywheel-rest` names were missing on 2026-09-09):
    ```
    10.0.0.49 ui.flightctl.apps.sno-flywheel.local api.flightctl.apps.sno-flywheel.local flywheel-rest.apps.sno-flywheel.local rekor-search-ui-trusted-artifact-signer.apps.sno-flywheel.local rekor-server-trusted-artifact-signer.apps.sno-flywheel.local minio-console-minio.apps.sno-flywheel.local ds-pipeline-dspa-flywheel.apps.sno-flywheel.local
    ```
 2. `ssh -n jary@10.0.0.48 true` works; `gh auth status` is logged in; this repo is checked out on
-   the Mac on `desktop-gpu-split` (for the chart and the report script). Log in to the RHEM UI
+   the presenting laptop on `desktop-gpu-split` (for the chart and the report script). Log in to the RHEM UI
    during setup (OpenShift OAuth, kubeadmin) — the Fleet and device pages are Beat 5/6.
 3. **State check** — run this and read it against the expected block below:
    ```bash
@@ -488,7 +494,7 @@ the two N=100 eval records (`~/flywheel-data/eval/eval-act-v2-ft160-rhem.json`,
 The start state **is today's state**: Fleet `MODEL_VERSION: act-v2-ft160` @ `bdb513ca…` (after
 PR #3), no open PR, dashboard badge `act-v2-ft160`. If a previous rehearsal left
 `act-v2-ft160-rhem` live, roll it back exactly as PR #3 did (rehearsed 2026-09-09, D074) — from the
-**desktop** (its `gh` login can open PRs; the Mac's PAT cannot):
+**desktop** (its `gh` login can open PRs; the presenting laptop's PAT cannot):
 ```bash
 ssh jary@10.0.0.48 'bash -s' <<'EOF'
 cd ~/redhat/git/hp-roscon-flywheel && git checkout desktop-gpu-split && git pull --ff-only

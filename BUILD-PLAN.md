@@ -528,7 +528,7 @@ Closed 2026-09-09 (D113): lineage-aware prune, Fleet-following coordinator defau
 | `aggregate.success_rate` should exclude `goal_accepted: false` episodes | F/G | **done (D113)** — not live until the next Tekton runtime-image build + sign + Fleet re-pin (`coordinator.py` is baked into the image) |
 | OTel re-emission and AMQ Streams | — | post-ROSCon deferrals (D026) |
 | Fury on site: `device/provision.sh` on aarch64 + CDI, enroll with Fury labels, fresh SNO 4.19+ with `argocd/*-app.yaml` + `rhem/bootstrap/*` | G | Sept 20–25 |
-| Mac `/etc/hosts`: add `ui.flightctl…` and `flywheel-rest…` | operator, sudo | planned |
+| Presenting laptop `/etc/hosts`: add `ui.flightctl…` and `flywheel-rest…` | operator, sudo | **done (2026-09-09)** — verified resolving via `ping`/`dscacheutil` |
 
 ---
 

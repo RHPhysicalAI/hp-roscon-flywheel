@@ -2,7 +2,7 @@
 # This project was developed with assistance from AI tools.
 #
 # Enroll a provisioned device into RHEM and approve it with the act-inference labels (D024).
-# Runs where the flightctl CLI is logged in (Mac or desktop); reaches the device over ssh.
+# Runs where the flightctl CLI is logged in (the presenting laptop or desktop); reaches the device over ssh.
 #
 # Usage:
 #   device/enroll.sh <ssh-target> [--reset]

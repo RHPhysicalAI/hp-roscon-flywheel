@@ -39,7 +39,8 @@ bags share is in place; the share itself waits on the host `virtiofsd` package (
    `/home/jary/activation-key`, mode 600). `provision.sh --env-file <path>` sources it (or
    `/root/activation-key` if present); `RHSM_USER`/`RHSM_PASS` in the environment are the
    alternative. Values are never printed; registration output is redacted.
-3. The **flightctl CLI 1.3.0** logged in to the hub, wherever `enroll.sh` runs (Mac or desktop).
+3. The **flightctl CLI 1.3.0** logged in to the hub, wherever `enroll.sh` runs (the presenting
+   laptop or the desktop).
 
 ## Order of operations
 

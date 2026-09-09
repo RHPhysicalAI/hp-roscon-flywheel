@@ -35,15 +35,15 @@ Drafted and validated offline; **not applied** (no hub yet). What was checked:
 - The rendered `act-inference.container` + `models.volume` pass `/usr/libexec/podman/quadlet -dryrun`
   on the RHEL 10.2 VM (podman 5.8.2).
 
-Open before the live apply (owner: C-live / D / F):
+Open before the live apply (owner: C-live / D / F) — status as of Phase 4.5 close-out:
 
-| Item | Why it is open |
-|---|---|
-| `Image=quay.io/jary/soarm-flywheel@sha256:TODO-F` | the runtime image exists only as local docker `act-inference:latest`; Tekton (F) builds, signs and pushes it |
-| `quay.io/jary/soarm-act-modelcar` is **private** | the VM's anonymous `podman pull` gets `unauthorized`; either make the repo public or place `/root/.config/containers/auth.json` on the device before the Fleet (flightctl docs "Using Image Pull Secrets": credentials must pre-exist, the agent does not deliver them) |
-| positive pull test (signed + Rekor-logged digest) | blocked on the same credentials; the negative test (unsigned `soarm-flywheel:sim-only` → "A signature was required, but no signature exists") already passes on the VM |
-| `SecurityLabelDisable=true` under the `gpu=nvidia` branch | CDI + SELinux on RHEL usually needs it; confirm on the Fury, drop if `container_use_devices` suffices |
-| `HealthOnFailure=kill` + `Restart=always` | chosen so an unhealthy container restarts on its own during the demo; revisit if it masks a real fault |
+| Item | Why it was open | Status |
+|---|---|---|
+| ~~`Image=quay.io/jary/soarm-flywheel@sha256:TODO-F`~~ | the runtime image existed only as local docker `act-inference:latest` | **Resolved** — Tekton (F) builds, signs and pushes it multi-arch; the Fleet is digest-pinned to the signed image (D101-D112) |
+| ~~`quay.io/jary/soarm-act-modelcar` is **private**~~ | the VM's anonymous `podman pull` got `unauthorized` | **Resolved** — pulls cleanly under the enforcing `policy.json` since the first RHEM promotion (D068) |
+| ~~positive pull test (signed + Rekor-logged digest)~~ | blocked on the credentials above | **Resolved** — verified on the VM (D068); the negative tests also pass (unsigned and signed-without-tlog both rejected, D091) |
+| `SecurityLabelDisable=true` under the `gpu=nvidia` branch | CDI + SELinux on RHEL usually needs it | **Still open** — this branch is untested until the Fury (no GPU device on the desktop stand-in); confirm on site, drop if `container_use_devices` suffices |
+| `HealthOnFailure=kill` + `Restart=always` | chosen so an unhealthy container restarts on its own during the demo | **Still relevant** — see the BUILD-PLAN carry-over on `healthcheck.sh`'s inability to detect a wedged (vs. crashed) action server; a wedged server never trips this restart |
 
 The trust files the Fleet writes (`policy.json`, `registries.d/quay-jary.yaml`, `cosign.pub`,
 `rekor.pub`) are already on the VM by hand from the C prep — the Fleet will overwrite them with
