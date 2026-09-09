@@ -18,7 +18,19 @@ DATA_DIR=${DATA_DIR:-$HOME/flywheel-data}
 ZENOH_ROUTER=${ZENOH_ROUTER:-127.0.0.1:7447}
 # Loop: must equal the device's label (healthcheck.sh compares it with /flywheel/model_version).
 # Eval: the eval label; the curator discards eval-* lineage and the eval never signals the emitter.
-MODEL_VERSION=${MODEL_VERSION:-act-v2-ft160}
+# Default follows the Fleet (D113): a promotion changes the Fleet's MODEL_VERSION without ever
+# touching this script, and D073 found the old hardcoded default left the coordinator warning
+# "Observed model_version" != its own MODEL_VERSION after every promotion. Explicit MODEL_VERSION
+# still wins (D020 eval labels, etc.) — this is only the fallback.
+FLEET_FILE=${FLEET_FILE:-"$(cd "$(dirname "$0")/../.." && pwd)/gitops/rhem/fleet-act-inference.yaml"}
+fleet_model_version() {
+  [ -f "$FLEET_FILE" ] || return 1
+  local v; v=$(sed -n 's/^[[:space:]]*MODEL_VERSION:[[:space:]]*//p' "$FLEET_FILE" | head -1)
+  [ -n "$v" ] && echo "$v" || return 1
+}
+_MODEL_VERSION_EXPLICIT=${MODEL_VERSION:-}
+MODEL_VERSION=${MODEL_VERSION:-$(fleet_model_version 2>/dev/null || echo act-v2-ft160)}
+[ -n "$_MODEL_VERSION_EXPLICIT" ] || echo "MODEL_VERSION not set — following the Fleet: $MODEL_VERSION ($FLEET_FILE)" >&2
 EXTRA_ARGS=${EXTRA_ARGS:-}
 # podman needs the SELinux relabel on bind mounts; docker ignores it on hosts without SELinux.
 SUFFIX=$([ "$ENGINE" = podman ] && echo ":z" || echo "")

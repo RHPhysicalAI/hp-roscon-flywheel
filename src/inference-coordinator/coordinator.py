@@ -661,15 +661,24 @@ class Coordinator(Node):
     def _write_eval_results(self, results):
         """Aggregate the per-episode rows and write a results JSON to
         EVAL_RESULTS_DIR/<model_version>.json — the source for the Phase 3
-        success-rate-vs-dataset-size chart (step 6)."""
+        success-rate-vs-dataset-size chart (step 6).
+
+        D113: a goal_accepted=False row means the action server never started the episode (e.g. a
+        wedged server rejecting every goal) — that is a serving fault, not the policy failing the
+        task, so it is excluded from n/successes/hist/smoothness. The eval-gate compares success
+        rates; letting a wedged run silently pad the denominator with zeros could sink a real
+        candidate. Rejected rows stay in episodes[] for diagnosis and are counted separately.
+        """
         import json
-        n = len(results)
-        successes = sum(1 for r in results if r["task_success"])
-        hist = {str(k): sum(1 for r in results if r["cubes_placed"] == k)
+        scored = [r for r in results if r["goal_accepted"]]
+        rejected = len(results) - len(scored)
+        n = len(scored)
+        successes = sum(1 for r in scored if r["task_success"])
+        hist = {str(k): sum(1 for r in scored if r["cubes_placed"] == k)
                 for k in range(CUBES_TARGET + 1)}
-        sm_vals = [r["avg_smoothness"] for r in results if r["avg_smoothness"] > 0]
+        sm_vals = [r["avg_smoothness"] for r in scored if r["avg_smoothness"] > 0]
         mean_sm = round(sum(sm_vals) / len(sm_vals), 6) if sm_vals else 0.0
-        mean_cubes = round(sum(r["cubes_placed"] for r in results) / n, 3) if n else 0.0
+        mean_cubes = round(sum(r["cubes_placed"] for r in scored) / n, 3) if n else 0.0
         mv = MODEL_VERSION or "unversioned"
         doc = {
             "model_version": mv,
@@ -697,6 +706,7 @@ class Coordinator(Node):
                 "mean_cubes": mean_cubes,
                 "cubes_hist": hist,
                 "mean_smoothness": mean_sm,
+                "goal_rejected": rejected,
             },
             "episodes": results,
         }
@@ -708,7 +718,8 @@ class Coordinator(Node):
         self.get_logger().info(
             f"[eval] DONE — {successes}/{n} success "
             f"({agg['success_rate'] * 100:.1f}%), mean_cubes={mean_cubes}, "
-            f"cubes_hist={hist}, mean_smooth={mean_sm}")
+            f"cubes_hist={hist}, mean_smooth={mean_sm}"
+            + (f", goal_rejected={rejected} (excluded from n)" if rejected else ""))
         self.get_logger().info(f"[eval] results -> {path}")
 
 

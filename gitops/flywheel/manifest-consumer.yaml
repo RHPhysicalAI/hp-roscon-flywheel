@@ -40,6 +40,7 @@ data:
         for m in c:
             if m.value.get("model_version") != COLLECTOR: continue
             pending += 1
+            print(f"[consumer] pending={pending}/{THRESH} collector={COLLECTOR}", flush=True)
             if pending >= THRESH and time.time() - last > COOLDOWN:
                 evt = {"event": "training-trigger", "pending": pending, "collector": COLLECTOR, "ts": time.time()}
                 p.send("training-events", value=evt); p.flush(); print("[consumer]", evt, flush=True)
@@ -70,6 +71,10 @@ spec:
           image: registry.access.redhat.com/ubi9/python-312:latest
           command: ["sh", "-c", "pip install -q 'kafka-python>=2.2,<4' && python /code/consumer.py"]
           env:
+            # consumer.py is mounted from a ConfigMap and read once at process start (like
+            # dashboard.yaml's DASHBOARD_CODE_REV, D097) — bump this alongside code changes so
+            # Argo rolls the pod instead of leaving the old code running against a new ConfigMap.
+            - {name: CONSUMER_CODE_REV, value: "2026-09-09-pending-log"}
             - {name: KAFKA_BOOTSTRAP, value: "edge-kafka.flywheel.svc:9092"}
             - {name: TRIGGER_THRESHOLD, value: "160"}
             - {name: TRIGGER_COOLDOWN, value: "3600"}

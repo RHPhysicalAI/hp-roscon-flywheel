@@ -3532,3 +3532,60 @@ Rekor entry; `argocd app list` count equals the files in `argocd/`, every app Sy
 `prune: true`; no `minioadmin` in git — and D028 is executed.
 **Loose ends:** the 60 Gi PipelineRun PVC (D107) is released only on PipelineRun delete; a single
 clean end-to-end run (no retries) is still to be exercised.
+
+---
+
+## D113 — Four BUILD-PLAN carry-overs closed: lineage-aware prune, Fleet-following MODEL_VERSION default, a `pending=` log line, and the eval-gate's blindness to a wedged action server
+
+**Date:** 2026-09-09
+**Context:** four rows from the Phase 4.5 carry-overs table (BUILD-PLAN.md), all owner "—"/"planned",
+none destructive, none needing the operator:
+1. `prune_bags.py`'s lineage-aware scan across every `episodes-curated/<mv>/` prefix and manifest.
+2. `run-coordinator.sh`'s default `MODEL_VERSION` following the Fleet.
+3. `consumer.py`'s per-manifest `pending=<n>` log line (named in D072 as narratable for Beat 6).
+4. `healthcheck.sh cannot see a wedged action server; aggregate.success_rate should exclude
+   goal_accepted: false episodes` — the second half only (see Rejected below for the first).
+
+**Decision:**
+1. `tools/host/prune_bags.py`: the curated-JSON scan now paginates the whole `episodes-curated`
+   bucket instead of a hardcoded `upstream-act-teacher/` prefix, and the `dataset-manifests`
+   consumer unions `episode_ids` across every message on the topic instead of filtering to one
+   `DS`. `DS` is kept as an opt-in restriction to the old single-lineage behaviour. Verified by
+   diffing the host's `~/prune_bags.py` against repo HEAD before editing (identical — no
+   undocumented host drift) and syncing the fixed copy back (`scp` + `bash -n`).
+2. `tools/host/run-coordinator.sh`: `MODEL_VERSION` now defaults to a `sed` read of
+   `gitops/rhem/fleet-act-inference.yaml`'s `MODEL_VERSION:` line (same anchor pattern as D066's
+   promotion regex), falling back to the old hardcoded `act-v2-ft160` only if the file is missing
+   or unparsed; an explicit `MODEL_VERSION=` still wins (D020 eval labels use this). Synced to the
+   host the same way as (1).
+3. `gitops/flywheel/manifest-consumer.yaml`'s embedded `consumer.py`: one `print` per accepted
+   manifest, `[consumer] pending=<n>/<THRESH> collector=<c>`. Because the Deployment mounts the
+   ConfigMap as a file read once at process start (same shape as the dashboard's stale-code bug,
+   D097), a `CONSUMER_CODE_REV` env — mirroring `DASHBOARD_CODE_REV` — is bumped alongside it so
+   Argo's `selfHeal` rolls the pod instead of leaving the old `consumer.py` running.
+4. `src/inference-coordinator/coordinator.py` `_write_eval_results`: rows with `goal_accepted:
+   false` (the action server rejected the goal — an infra fault, not the policy failing the task)
+   are excluded from `n`, `successes`, `cubes_hist` and `mean_smoothness`; a new
+   `aggregate.goal_rejected` count reports how many were dropped, and the `[eval] DONE` log line
+   appends it when non-zero. Full per-episode rows (including rejected ones) stay in `episodes[]`
+   for diagnosis. Motivation: today a wedged action server would silently count every subsequent
+   episode as `task_success: false` at 0 cubes, which could sink a real candidate's paired eval —
+   the same D020/D022 gate this project depends on to keep bad retrains off the fleet.
+**Effect timing:** (1) and (2) are host-side scripts, not baked into any image — live immediately,
+confirmed synced to `10.0.0.48`. (3) lands on the next commit + Argo `flywheel` poll (~3 min,
+D072), no rebuild. (4) is baked into the runtime image at Tekton build time (`docker/Dockerfile.
+gpu-inference` `COPY`s `coordinator.py`) — **not live** until the next Tekton runtime-image build +
+sign + Fleet re-pin; this is deliberately not triggered here (a live rebuild touches Rekor and the
+serving device, outside this pass's scope) and stays a carry-over until that build happens.
+**Rejected (scope, not this decision):** `healthcheck.sh`'s first half — detecting a wedged action
+server that is still registered on the ROS graph — needs either a cheap non-invasive liveness probe
+(none exists on `run_policy`) or a heartbeat/staleness signal from the coordinator, either of which
+is a live-system design-and-test cycle, not a same-pass fix; the Tekton `PipelineRun` PVC cleanup
+and "one clean end-to-end run" (D112's loose end) is a live-cluster action with its own Rekor/Fleet
+footprint and stays deferred alongside it; the DSP empty-bearer-token check and the Mac `/etc/hosts`
+entries stay operator-owned per the carry-overs table; Perses/Tempo Subscriptions stay a documented
+deferral (`argocd/README.md` row 6 already states they're hand-installed, not in `gitops/operators/`)
+rather than new Subscription manifests against operator versions this pass didn't verify compatible.
+**Verification:** `bash -n` on both shell scripts, `ast.parse` on `prune_bags.py` and
+`coordinator.py`, and an `ast.parse` of the embedded `consumer.py` block extracted from the YAML —
+all clean. No live cluster or device state changed by this decision.

@@ -509,18 +509,23 @@ G. **Fury port + runbook** (on site, Sept 20–25)
 
 Closed 2026-09-09 by the operator: PR #4 closed unmerged; `cosign.password` patched; auto-delete head branches enabled and stale branches removed; 54 lingering KFP pods removed.
 
+Closed 2026-09-09 (D113): lineage-aware prune, Fleet-following coordinator default, consumer
+`pending=` line, eval-gate's `goal_accepted` blindness (the `aggregate.success_rate` half only —
+`healthcheck.sh`'s wedged-server detection stays open, see row below).
+
 | Item | Owner | Status |
 |---|---|---|
 | sdb1 4.5 TB partition mount + relocate flywheel-data | operator | deferred — loop is demo-scoped, disk guard + port-as-you-go bound the bags |
 | DSP API accepted an empty bearer token via port-forward to the service port — confirm the route enforces OAuth / consider a NetworkPolicy | operator | planned |
 | Multus stale-token fault after the 4.19 upgrade (new pods failed `Unauthorized` until the multus pod was recreated) — watch for recurrence | operator | planned |
-| Perses/Tempo come from hand-installed COO 1.5.2 + tempo-operator, not `gitops/operators/` — add Subscriptions or record as deferral | — | planned |
+| Perses/Tempo come from hand-installed COO 1.5.2 + tempo-operator, not `gitops/operators/` — add Subscriptions or record as deferral | — | deferred (D113) — `argocd/README.md` row 6 already documents the gap; no Subscription manifests against unverified operator versions this pass |
 | runbook runner-restart line must `set -a; source ~/.minio-env; set +a` | — | **done (3095ced)** |
 | dashboard `model_version` badge stuck at `soarm-act-v1` after act-serving retired — re-source from `/flywheel/model_version` | — | **done (a3cd943)** |
-| `prune_bags.py` lineage-aware scan across all `episodes-curated/<mv>/` prefixes and manifests | — | planned |
-| `run-coordinator.sh` default `MODEL_VERSION` must follow the Fleet | — | planned |
-| `consumer.py` per-manifest `pending=<n>` log line | — | planned |
-| `healthcheck.sh` cannot see a wedged action server; `aggregate.success_rate` should exclude `goal_accepted: false` episodes | F/G | planned |
+| `prune_bags.py` lineage-aware scan across all `episodes-curated/<mv>/` prefixes and manifests | — | **done (D113)** — host copy synced |
+| `run-coordinator.sh` default `MODEL_VERSION` must follow the Fleet | — | **done (D113)** — host copy synced |
+| `consumer.py` per-manifest `pending=<n>` log line | — | **done (D113)** — lands on next Argo sync |
+| `healthcheck.sh` cannot see a wedged action server | F/G | planned — needs a liveness-probe or heartbeat design, not a same-pass fix (D113) |
+| `aggregate.success_rate` should exclude `goal_accepted: false` episodes | F/G | **done (D113)** — not live until the next Tekton runtime-image build + sign + Fleet re-pin (`coordinator.py` is baked into the image) |
 | OTel re-emission and AMQ Streams | — | post-ROSCon deferrals (D026) |
 | Fury on site: `device/provision.sh` on aarch64 + CDI, enroll with Fury labels, fresh SNO 4.19+ with `argocd/*-app.yaml` + `rhem/bootstrap/*` | G | Sept 20–25 |
 | Mac `/etc/hosts`: add `ui.flightctl…` and `flywheel-rest…` | operator, sudo | planned |
