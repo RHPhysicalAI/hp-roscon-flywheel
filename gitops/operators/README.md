@@ -5,7 +5,7 @@ is applied once by hand to bootstrap; everything else syncs from here).
 
 | operator | namespace | channel | why |
 |---|---|---|---|
-| `openshift-pipelines-operator-rh` | openshift-operators | latest | Tekton tasks reused inside the pipeline (package-modelcar, cosign-sign) |
+| `openshift-pipelines-operator-rh` | openshift-operators | latest | Tekton builds + signs the multi-arch runtime image in-cluster (`gitops/tekton/`, Argo app `tekton`, D028); modelcar packaging + signing stay in the KFP run |
 | `rhtas-operator` | openshift-operators | stable | Red Hat Trusted Artifact Signer: Rekor transparency log for `cosign sign --rekor-url` |
 | `rhods-operator` | redhat-ods-operator | stable | RHOAI: Data Science Pipelines (KFP v2) runs the pipeline; KServe serves the modelcar on the target |
 
