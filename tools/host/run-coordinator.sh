@@ -27,8 +27,25 @@ args=(--name "$NAME" --network host
   -e ROLE=coordinator -e "ZENOH_ROUTER=$ZENOH_ROUTER" -e "MODEL_VERSION=$MODEL_VERSION"
   -v "$DATA_DIR:/data$SUFFIX" -v "$DATA_DIR/bags:/data/bags$SUFFIX")
 
+# The loop keeps ~1.3 GB per successful episode; it never runs without disk-guard.sh (2026-09-09 outage).
+MIN_FREE_GB=${MIN_FREE_GB:-100}
+preflight_loop() {
+  if ! pgrep -f '[d]isk-guard.sh' >/dev/null; then
+    echo "refusing: disk-guard.sh is not running. Start it first:" >&2
+    echo "  nohup $(dirname "$0")/disk-guard.sh >/dev/null 2>&1 &" >&2
+    exit 3
+  fi
+  local free; free=$(df -BG --output=avail "$DATA_DIR/bags" | tail -1 | tr -dc 0-9)
+  if [ "${free:-0}" -lt "$MIN_FREE_GB" ]; then
+    echo "refusing: ${free:-?} GB free under $DATA_DIR/bags, need MIN_FREE_GB=$MIN_FREE_GB." >&2
+    echo "  Archive or prune bags (tools/host/prune_bags.py --yes ports the manifest class) and retry." >&2
+    exit 3
+  fi
+}
+
 case "$MODE" in
   loop)
+    preflight_loop
     "$ENGINE" container rm -f "$NAME" >/dev/null 2>&1 || true
     "$ENGINE" run -d --restart unless-stopped "${args[@]}" $EXTRA_ARGS "$IMAGE"
     echo "started $NAME (role coordinator) from $IMAGE"
