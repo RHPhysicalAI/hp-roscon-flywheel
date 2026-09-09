@@ -1,19 +1,23 @@
 # PIPELINE DEFINITION
 # Name: act-flywheel-promotion
-# Description: assemble -> train -> eval gate -> package -> sign -> promotion PR (D022)
+# Description: assemble -> train -> eval gate -> package -> sign -> Fleet promotion PR (D022, D025)
 # Inputs:
 #    candidate: str
 #    collector: str [Default: 'upstream-act-teacher']
+#    consumer_file: str [Default: 'gitops/flywheel/manifest-consumer.yaml']
 #    cosign_version: str [Default: 'v2.6.5']
 #    crane_version: str [Default: 'v0.20.3']
 #    eval_n: int [Default: 100.0]
 #    eval_seed_base: int [Default: 1000.0]
+#    fleet_file: str [Default: 'gitops/rhem/fleet-act-inference.yaml']
+#    fleet_ui_url: str [Default: 'https://ui.flightctl.apps.sno-flywheel.local/devicemanagement/fleets/act-inference']
 #    github_repo: str [Default: 'RHPhysicalAI/hp-roscon-flywheel']
 #    gitops_branch: str [Default: 'desktop-gpu-split']
 #    incumbent: str [Default: 'upstream-act-teacher']
 #    incumbent_checkpoint: str [Default: 'hf']
 #    kafka_bootstrap: str [Default: 'edge-kafka.flywheel.svc:9092']
 #    mode: str [Default: 'desktop']
+#    modelcar_base: str [Default: 'registry.access.redhat.com/ubi9/ubi-micro:9.8-1787778798']
 #    platform: str [Default: 'linux/amd64']
 #    registry_repo: str [Default: 'quay.io/jary/soarm-act-modelcar']
 #    rekor_url: str [Default: 'http://rekor-server.trusted-artifact-signer.svc']
@@ -39,6 +43,14 @@ components:
       parameters:
         candidate:
           parameterType: STRING
+        checkpoint_uri:
+          parameterType: STRING
+        consumer_file:
+          parameterType: STRING
+        fleet_file:
+          parameterType: STRING
+        fleet_ui_url:
+          parameterType: STRING
         github_repo:
           parameterType: STRING
         gitops_branch:
@@ -60,6 +72,8 @@ components:
         checkpoint_uri:
           parameterType: STRING
         crane_version:
+          parameterType: STRING
+        modelcar_base:
           parameterType: STRING
         platform:
           parameterType: STRING
@@ -159,7 +173,7 @@ deploymentSpec:
           \ fixed {rep['fixed']} broken {rep['broken']} \"\n          f\"net {rep['net']:+d}\
           \ p={rep['sign_test_p']}\")\n    if not ok: sys.exit(1)\n    return json.dumps(rep)\
           \  # the report travels downstream as a parameter\n\n"
-        image: registry.access.redhat.com/ubi9/python-312:latest
+        image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
     exec-open-promotion-pr:
       container:
         args:
@@ -187,40 +201,41 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef open_promotion_pr(image_ref: str, candidate: str, report_json:\
-          \ str, github_repo: str,\n                      gitops_branch: str) -> str:\n\
-          \    \"\"\"ONE commit editing the three act-serving files atomically (thor-testing\
-          \ 5e3e87a), then a PR\n    whose body carries the eval report. Human merge\
-          \ is the last gate; Argo does the rest.\"\"\"\n    import json, re\n   \
-          \ from github import Github, InputGitTreeElement\n    tok = open(\"/etc/github/token\"\
-          ).read().strip()\n    repo = Github(tok).get_repo(github_repo)\n    base_ref\
-          \ = repo.get_git_ref(f\"heads/{gitops_branch}\"); base = repo.get_git_commit(base_ref.object.sha)\n\
+          \ *\n\ndef open_promotion_pr(image_ref: str, candidate: str, checkpoint_uri:\
+          \ str, report_json: str, github_repo: str,\n                      gitops_branch:\
+          \ str, fleet_file: str, consumer_file: str, fleet_ui_url: str) -> str:\n\
+          \    \"\"\"ONE commit (thor-testing 5e3e87a: a partial flip is an outage)\
+          \ editing the RHEM Fleet - modelcar\n    digest + MODEL_VERSION - and the\
+          \ trigger's lineage in manifest-consumer, then a PR whose body carries\n\
+          \    the eval report, the Fleet URL and the rollback (D025). Human merge\
+          \ is the last gate.\"\"\"\n    import json, re\n    from github import Github,\
+          \ InputGitTreeElement\n    tok = open(\"/etc/github/token\").read().strip()\n\
+          \    repo = Github(tok).get_repo(github_repo)\n    base_ref = repo.get_git_ref(f\"\
+          heads/{gitops_branch}\"); base = repo.get_git_commit(base_ref.object.sha)\n\
           \    def get(p): return repo.get_contents(p, ref=gitops_branch).decoded_content.decode()\n\
-          \    # Blue/green alternate: the LIVE side is whatever the Service selects;\
-          \ the candidate goes to\n    # the OTHER side. One GPU -> the live side\
-          \ scales to 0 in the same commit the candidate scales\n    # to 1 (Recreate\
-          \ on both; the candidate pod stays Pending until the GPU is released).\n\
-          \    files = {\"blue\": \"gitops/act-serving/deployment.yaml\", \"green\"\
-          : \"gitops/act-serving/deployment-green.yaml\"}\n    svc = get(\"gitops/act-serving/service.yaml\"\
-          )\n    live = re.search(r\"^\\s+color:\\s*(blue|green)\", svc, re.M).group(1)\n\
-          \    target = \"green\" if live == \"blue\" else \"blue\"\n    cand_yaml\
-          \ = get(files[target]); live_yaml = get(files[live])\n    digest = image_ref.split(\"\
-          @\", 1)[1]\n    cand_yaml = re.sub(r\"(soarm-act-modelcar)@sha256:[0-9a-f]{64}\"\
-          , r\"\\1@\" + digest, cand_yaml, count=1)\n    cand_yaml = re.sub(r\"(name:\
-          \ MODEL_VERSION\\n\\s+value: ).*\", lambda m: m.group(1) + candidate, cand_yaml,\
-          \ count=1)\n    cand_yaml = re.sub(r\"replicas: 0\", \"replicas: 1\", cand_yaml,\
-          \ count=1)\n    live_yaml = re.sub(r\"replicas: 1\", \"replicas: 0\", live_yaml,\
-          \ count=1)\n    svc = re.sub(r\"(^\\s+color:\\s*)\" + live, r\"\\g<1>\"\
-          \ + target, svc, count=1, flags=re.M)\n    rep = json.loads(report_json)\n\
-          \    elems = [InputGitTreeElement(files[target], \"100644\", \"blob\", content=cand_yaml),\n\
-          \             InputGitTreeElement(files[live], \"100644\", \"blob\", content=live_yaml),\n\
-          \             InputGitTreeElement(\"gitops/act-serving/service.yaml\", \"\
-          100644\", \"blob\", content=svc)]\n    tree = repo.create_git_tree(elems,\
-          \ base.tree)\n    msg = f\"Promote {candidate}: {target} <- {image_ref.split('@')[1][:19]}...,\
-          \ {live} 0, service -> {target}\\n\\nEval gate: {rep['incumbent']} {rep['incumbent_success_rate']:.2f}\
-          \ -> {candidate} {rep['candidate_success_rate']:.2f}, fixed {rep['fixed']}\
-          \ broken {rep['broken']} net {rep['net']:+d} p={rep['sign_test_p']}\"\n\
-          \    commit = repo.create_git_commit(msg, tree, [base])\n    head = f\"\
+          \    digest = image_ref.split(\"@\", 1)[1]\n    # Fleet: the two-regex edit.\
+          \ Both must match exactly once or the promotion is not attempted.\n    fleet\
+          \ = get(fleet_file)\n    old_mv = re.search(r\"^\\s+MODEL_VERSION:\\s*(\\\
+          S+)\", fleet, re.M).group(1)\n    fleet, n_img = re.subn(r\"(soarm-act-modelcar)@sha256:[0-9a-f]{64}\"\
+          , r\"\\1@\" + digest, fleet, count=1)\n    fleet, n_mv = re.subn(r\"^(\\\
+          s+MODEL_VERSION:\\s*)\\S+\", lambda m: m.group(1) + candidate, fleet, count=1,\
+          \ flags=re.M)\n    # Trigger: the next round counts and fine-tunes from\
+          \ the new lineage (same commit, D025).\n    consumer = get(consumer_file)\n\
+          \    n_c = 0\n    for key, val in ((\"INCUMBENT\", candidate), (\"COLLECTOR\"\
+          , candidate), (\"INCUMBENT_CHECKPOINT\", checkpoint_uri)):\n        consumer,\
+          \ n = re.subn(r\"(\\{name: \" + key + r\", value: \\\")[^\\\"]*(\\\")\"\
+          , lambda m: m.group(1) + val + m.group(2), consumer, count=1)\n        n_c\
+          \ += n\n    if (n_img, n_mv, n_c) != (1, 1, 3):\n        print(f\"promotion\
+          \ edit did not match exactly: image={n_img} model_version={n_mv} consumer={n_c}\"\
+          ); raise SystemExit(1)\n    rep = json.loads(report_json)\n    elems = [InputGitTreeElement(fleet_file,\
+          \ \"100644\", \"blob\", content=fleet),\n             InputGitTreeElement(consumer_file,\
+          \ \"100644\", \"blob\", content=consumer)]\n    tree = repo.create_git_tree(elems,\
+          \ base.tree)\n    msg = (f\"Promote {candidate}: Fleet act-inference <-\
+          \ {digest[:19]}..., MODEL_VERSION {old_mv} -> {candidate}; manifest-consumer\
+          \ lineage -> {candidate}\\n\\n\"\n           f\"Eval gate: {rep['incumbent']}\
+          \ {rep['incumbent_success_rate']:.2f} -> {candidate} {rep['candidate_success_rate']:.2f},\
+          \ fixed {rep['fixed']} broken {rep['broken']} net {rep['net']:+d} p={rep['sign_test_p']}\"\
+          )\n    commit = repo.create_git_commit(msg, tree, [base])\n    head = f\"\
           promote/{candidate}\"; repo.create_git_ref(f\"refs/heads/{head}\", commit.sha)\n\
           \    body = (f\"## Promotion: `{candidate}` replaces `{rep['incumbent']}`\\\
           n\\n\"\n            f\"| | success | mean cubes |\\n|---|---|---|\\n| incumbent\
@@ -230,14 +245,22 @@ deploymentSpec:
           \ {rep['n_paired']} identical seeded scenes: **{rep['fixed']} fixed / {rep['broken']}\
           \ broken, net {rep['net']:+d}, sign-test p = {rep['sign_test_p']}** - gate\
           \ rule: {rep['rule']} -> **{rep['verdict']}**.\\n\\n\"\n            f\"\
-          Signed modelcar: `{image_ref}`\\n\\nMerging flips blue/green atomically\
-          \ ({target} replicas 1, {live} replicas 0, Service -> {target}); with one\
-          \ GPU the {live} pod releases it and the {target} pod schedules (Recreate).\
-          \ Argo syncs it; the swap agent applies it on the desktop.\")\n    pr =\
-          \ repo.create_pull(title=f\"Promote {candidate} ({rep['incumbent_success_rate']:.0%}\
-          \ -> {rep['candidate_success_rate']:.0%})\", body=body, base=gitops_branch,\
-          \ head=head)\n    print(pr.html_url); return pr.html_url\n\n"
-        image: registry.access.redhat.com/ubi9/python-312:latest
+          Signed modelcar: `{image_ref}`\\n\\n\"\n            f\"Merging edits Fleet\
+          \ `act-inference` in one commit (`{fleet_file}`: modelcar digest + `MODEL_VERSION`\
+          \ `{old_mv}` -> `{candidate}`) \"\n            f\"and points the trigger\
+          \ at the new lineage (`{consumer_file}`: COLLECTOR/INCUMBENT/INCUMBENT_CHECKPOINT).\
+          \ \"\n            f\"ResourceSync renders the Fleet; RHEM rolls it out batch\
+          \ by batch; each device pulls the modelcar under its policy.json \"\n  \
+          \          f\"(cosign key + Rekor SET) and restarts the container, which\
+          \ publishes the new `model_version`.\\n\\n\"\n            f\"Fleet: {fleet_ui_url}\\\
+          n\\n\"\n            f\"Rollback: `git revert <sha>` - revert the merge commit\
+          \ of this PR and merge the revert. The previous modelcar is still in device\
+          \ storage \"\n            f\"(image volume `reclaimPolicy: Retain`), so\
+          \ rolling back does not re-pull.\")\n    pr = repo.create_pull(title=f\"\
+          Promote {candidate} ({rep['incumbent_success_rate']:.0%} -> {rep['candidate_success_rate']:.0%})\"\
+          , body=body, base=gitops_branch, head=head)\n    print(pr.html_url); return\
+          \ pr.html_url\n\n"
+        image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
     exec-package-modelcar:
       container:
         args:
@@ -267,18 +290,20 @@ deploymentSpec:
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef package_modelcar(checkpoint_uri: str, candidate: str, registry_repo:\
           \ str, platform: str,\n                     s3_endpoint: str, crane_version:\
-          \ str) -> str:\n    \"\"\"crane append: flat ACT checkpoint dir -> /models/act\
-          \ on ubi-micro. Returns image@digest.\"\"\"\n    import os, subprocess,\
-          \ tarfile, io, boto3, urllib.request\n    s3 = boto3.client(\"s3\", endpoint_url=s3_endpoint,\
-          \ aws_access_key_id=os.environ[\"AWS_ACCESS_KEY_ID\"],\n               \
-          \       aws_secret_access_key=os.environ[\"AWS_SECRET_ACCESS_KEY\"])\n \
-          \   b, k = checkpoint_uri[5:].split(\"/\", 1)\n    buf = io.BytesIO(s3.get_object(Bucket=b,\
-          \ Key=k)[\"Body\"].read())\n    os.makedirs(\"/tmp/layer/models/act\", exist_ok=True)\n\
-          \    with tarfile.open(fileobj=buf, mode=\"r:gz\") as t:\n        for m\
-          \ in t:\n            if m.isfile():\n                m.name = \"models/act/\"\
-          \ + os.path.basename(m.name); t.extract(m, \"/tmp/layer\")\n    with tarfile.open(\"\
-          /tmp/layer.tar\", \"w\") as t: t.add(\"/tmp/layer/models\", arcname=\"models\"\
-          )\n    url = f\"https://github.com/google/go-containerregistry/releases/download/{crane_version}/go-containerregistry_Linux_x86_64.tar.gz\"\
+          \ str, modelcar_base: str) -> str:\n    \"\"\"crane append: flat ACT checkpoint\
+          \ dir -> /models/act on ubi-micro. Returns image@digest.\"\"\"\n    import\
+          \ os, platform as _plat, subprocess, tarfile, io, boto3, urllib.request\n\
+          \    s3 = boto3.client(\"s3\", endpoint_url=s3_endpoint, aws_access_key_id=os.environ[\"\
+          AWS_ACCESS_KEY_ID\"],\n                      aws_secret_access_key=os.environ[\"\
+          AWS_SECRET_ACCESS_KEY\"])\n    b, k = checkpoint_uri[5:].split(\"/\", 1)\n\
+          \    buf = io.BytesIO(s3.get_object(Bucket=b, Key=k)[\"Body\"].read())\n\
+          \    os.makedirs(\"/tmp/layer/models/act\", exist_ok=True)\n    with tarfile.open(fileobj=buf,\
+          \ mode=\"r:gz\") as t:\n        for m in t:\n            if m.isfile():\n\
+          \                m.name = \"models/act/\" + os.path.basename(m.name); t.extract(m,\
+          \ \"/tmp/layer\")\n    with tarfile.open(\"/tmp/layer.tar\", \"w\") as t:\
+          \ t.add(\"/tmp/layer/models\", arcname=\"models\")\n    arch = {\"x86_64\"\
+          : \"x86_64\", \"amd64\": \"x86_64\", \"aarch64\": \"arm64\", \"arm64\":\
+          \ \"arm64\"}[_plat.machine()]\n    url = f\"https://github.com/google/go-containerregistry/releases/download/{crane_version}/go-containerregistry_Linux_{arch}.tar.gz\"\
           \n    urllib.request.urlretrieve(url, \"/tmp/crane.tgz\"); subprocess.run([\"\
           tar\", \"-xzf\", \"/tmp/crane.tgz\", \"-C\", \"/tmp\", \"crane\"], check=True)\n\
           \    # quay-push is a kubernetes.io/dockerconfigjson Secret: the mounted\
@@ -288,13 +313,12 @@ deploymentSpec:
           auths\": cfg.get(\"auths\", {})}, open(\"/tmp/docker/config.json\", \"w\"\
           ))  # drop credsStore/credHelpers\n    os.environ[\"DOCKER_CONFIG\"] = \"\
           /tmp/docker\"\n    r = subprocess.run([\"/tmp/crane\", \"append\", \"--platform\"\
-          , platform, \"-b\", \"registry.access.redhat.com/ubi9/ubi-micro:latest\"\
-          ,\n                        \"-f\", \"/tmp/layer.tar\", \"-t\", f\"{registry_repo}:{candidate}\"\
-          ], capture_output=True, text=True)\n    if r.returncode != 0:\n        print(\"\
-          crane append failed:\", r.stderr[-1500:]); raise SystemExit(1)\n    ref\
-          \ = r.stdout.strip().splitlines()[-1]; print(\"pushed\", ref); return ref\n\
-          \n"
-        image: registry.access.redhat.com/ubi9/python-312:latest
+          , platform, \"-b\", modelcar_base,\n                        \"-f\", \"/tmp/layer.tar\"\
+          , \"-t\", f\"{registry_repo}:{candidate}\"], capture_output=True, text=True)\n\
+          \    if r.returncode != 0:\n        print(\"crane append failed:\", r.stderr[-1500:]);\
+          \ raise SystemExit(1)\n    ref = r.stdout.strip().splitlines()[-1]; print(\"\
+          pushed\", ref); return ref\n\n"
+        image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
     exec-sign-modelcar:
       container:
         args:
@@ -323,8 +347,10 @@ deploymentSpec:
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef sign_modelcar(image_ref: str, rekor_url: str, cosign_version:\
           \ str) -> str:\n    \"\"\"cosign v2.x sign by digest; Rekor transparency\
-          \ log when rekor_url is set (RHTAS).\"\"\"\n    import os, subprocess, urllib.request\n\
-          \    urllib.request.urlretrieve(f\"https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-amd64\"\
+          \ log when rekor_url is set (RHTAS).\"\"\"\n    import os, platform as _plat,\
+          \ subprocess, urllib.request\n    arch = {\"x86_64\": \"amd64\", \"amd64\"\
+          : \"amd64\", \"aarch64\": \"arm64\", \"arm64\": \"arm64\"}[_plat.machine()]\n\
+          \    urllib.request.urlretrieve(f\"https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-{arch}\"\
           , \"/tmp/cosign\")\n    os.chmod(\"/tmp/cosign\", 0o755); os.environ[\"\
           COSIGN_PASSWORD\"] = \"\"\n    import json as _j; os.makedirs(\"/tmp/docker\"\
           , exist_ok=True)\n    cfg = _j.load(open(\"/etc/quay/.dockerconfigjson\"\
@@ -335,7 +361,7 @@ deploymentSpec:
           , rekor_url, \"--tlog-upload=true\"] if rekor_url else [\"--tlog-upload=false\"\
           ]\n    subprocess.run(cmd, check=True); print(\"signed\", image_ref); return\
           \ image_ref\n\n"
-        image: registry.access.redhat.com/ubi9/python-312:latest
+        image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
     exec-trigger-and-wait:
       container:
         args:
@@ -391,9 +417,10 @@ deploymentSpec:
           ])\n                return\n        print(\"waiting for training-results...\"\
           , flush=True)\n    print(\"timed out waiting for the host runner\"); sys.exit(1)\n\
           \n"
-        image: registry.access.redhat.com/ubi9/python-312:latest
+        image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
 pipelineInfo:
-  description: assemble -> train -> eval gate -> package -> sign -> promotion PR (D022)
+  description: assemble -> train -> eval gate -> package -> sign -> Fleet promotion
+    PR (D022, D025)
   name: act-flywheel-promotion
 root:
   dag:
@@ -421,10 +448,21 @@ root:
         dependentTasks:
         - eval-gate
         - sign-modelcar
+        - trigger-and-wait
         inputs:
           parameters:
             candidate:
               componentInputParameter: candidate
+            checkpoint_uri:
+              taskOutputParameter:
+                outputParameterKey: checkpoint
+                producerTask: trigger-and-wait
+            consumer_file:
+              componentInputParameter: consumer_file
+            fleet_file:
+              componentInputParameter: fleet_file
+            fleet_ui_url:
+              componentInputParameter: fleet_ui_url
             github_repo:
               componentInputParameter: github_repo
             gitops_branch:
@@ -456,6 +494,8 @@ root:
                 producerTask: trigger-and-wait
             crane_version:
               componentInputParameter: crane_version
+            modelcar_base:
+              componentInputParameter: modelcar_base
             platform:
               componentInputParameter: platform
             registry_repo:
@@ -519,6 +559,10 @@ root:
         defaultValue: upstream-act-teacher
         isOptional: true
         parameterType: STRING
+      consumer_file:
+        defaultValue: gitops/flywheel/manifest-consumer.yaml
+        isOptional: true
+        parameterType: STRING
       cosign_version:
         defaultValue: v2.6.5
         isOptional: true
@@ -535,6 +579,14 @@ root:
         defaultValue: 1000.0
         isOptional: true
         parameterType: NUMBER_INTEGER
+      fleet_file:
+        defaultValue: gitops/rhem/fleet-act-inference.yaml
+        isOptional: true
+        parameterType: STRING
+      fleet_ui_url:
+        defaultValue: https://ui.flightctl.apps.sno-flywheel.local/devicemanagement/fleets/act-inference
+        isOptional: true
+        parameterType: STRING
       github_repo:
         defaultValue: RHPhysicalAI/hp-roscon-flywheel
         isOptional: true
@@ -557,6 +609,10 @@ root:
         parameterType: STRING
       mode:
         defaultValue: desktop
+        isOptional: true
+        parameterType: STRING
+      modelcar_base:
+        defaultValue: registry.access.redhat.com/ubi9/ubi-micro:9.8-1787778798
         isOptional: true
         parameterType: STRING
       platform:

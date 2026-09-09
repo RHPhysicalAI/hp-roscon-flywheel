@@ -1,6 +1,11 @@
-"""ACT flywheel promotion pipeline (KFP v2, RHOAI Data Science Pipelines) - D022.
+# This project was developed with assistance from AI tools.
+"""ACT flywheel promotion pipeline (KFP v2, RHOAI Data Science Pipelines) - D022, D025.
 
   trigger+wait -> gate -> package -> sign -> open_promotion_pr        (human merge = last gate)
+
+The promotion PR edits the RHEM Fleet (modelcar digest + MODEL_VERSION) and the trigger's lineage
+(manifest-consumer COLLECTOR/INCUMBENT/INCUMBENT_CHECKPOINT) in ONE commit; ResourceSync renders the
+Fleet after the human merge and RHEM rolls it out to the device (D025).
 
 Written for the in-cluster-GPU target. `mode="desktop"` is the [desktop shim]: train + eval are
 delegated to the host runner over Kafka (training-triggers / training-results) and the pipeline
@@ -14,7 +19,9 @@ cosign-signing-key (cosign.key), github-token (token).
 from kfp import dsl, compiler
 from kfp import kubernetes as k8s
 
-PY_IMG = "registry.access.redhat.com/ubi9/python-312:latest"
+# Pinned tags (D022: no runtime :latest); bump deliberately. crane ls registry.access.redhat.com/ubi9/<name>
+PY_IMG = "registry.access.redhat.com/ubi9/python-312:9.8-1788919789"
+UBI_MICRO = "registry.access.redhat.com/ubi9/ubi-micro:9.8-1787778798"
 
 
 @dsl.component(base_image=PY_IMG, packages_to_install=["kafka-python>=2.2,<4", "boto3==1.35.36"])
@@ -70,9 +77,9 @@ def eval_gate(eval_report_uri: str, s3_endpoint: str) -> str:
 
 @dsl.component(base_image=PY_IMG, packages_to_install=["boto3==1.35.36"])
 def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, platform: str,
-                     s3_endpoint: str, crane_version: str) -> str:
+                     s3_endpoint: str, crane_version: str, modelcar_base: str) -> str:
     """crane append: flat ACT checkpoint dir -> /models/act on ubi-micro. Returns image@digest."""
-    import os, subprocess, tarfile, io, boto3, urllib.request
+    import os, platform as _plat, subprocess, tarfile, io, boto3, urllib.request
     s3 = boto3.client("s3", endpoint_url=s3_endpoint, aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
                       aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"])
     b, k = checkpoint_uri[5:].split("/", 1)
@@ -83,7 +90,8 @@ def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, pl
             if m.isfile():
                 m.name = "models/act/" + os.path.basename(m.name); t.extract(m, "/tmp/layer")
     with tarfile.open("/tmp/layer.tar", "w") as t: t.add("/tmp/layer/models", arcname="models")
-    url = f"https://github.com/google/go-containerregistry/releases/download/{crane_version}/go-containerregistry_Linux_x86_64.tar.gz"
+    arch = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "arm64", "arm64": "arm64"}[_plat.machine()]
+    url = f"https://github.com/google/go-containerregistry/releases/download/{crane_version}/go-containerregistry_Linux_{arch}.tar.gz"
     urllib.request.urlretrieve(url, "/tmp/crane.tgz"); subprocess.run(["tar", "-xzf", "/tmp/crane.tgz", "-C", "/tmp", "crane"], check=True)
     # quay-push is a kubernetes.io/dockerconfigjson Secret: the mounted file is .dockerconfigjson,
     # while crane/cosign look for $DOCKER_CONFIG/config.json.
@@ -91,7 +99,7 @@ def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, pl
     cfg = _j.load(open("/etc/quay/.dockerconfigjson"))
     _j.dump({"auths": cfg.get("auths", {})}, open("/tmp/docker/config.json", "w"))  # drop credsStore/credHelpers
     os.environ["DOCKER_CONFIG"] = "/tmp/docker"
-    r = subprocess.run(["/tmp/crane", "append", "--platform", platform, "-b", "registry.access.redhat.com/ubi9/ubi-micro:latest",
+    r = subprocess.run(["/tmp/crane", "append", "--platform", platform, "-b", modelcar_base,
                         "-f", "/tmp/layer.tar", "-t", f"{registry_repo}:{candidate}"], capture_output=True, text=True)
     if r.returncode != 0:
         print("crane append failed:", r.stderr[-1500:]); raise SystemExit(1)
@@ -101,8 +109,9 @@ def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, pl
 @dsl.component(base_image=PY_IMG)
 def sign_modelcar(image_ref: str, rekor_url: str, cosign_version: str) -> str:
     """cosign v2.x sign by digest; Rekor transparency log when rekor_url is set (RHTAS)."""
-    import os, subprocess, urllib.request
-    urllib.request.urlretrieve(f"https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-amd64", "/tmp/cosign")
+    import os, platform as _plat, subprocess, urllib.request
+    arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[_plat.machine()]
+    urllib.request.urlretrieve(f"https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-{arch}", "/tmp/cosign")
     os.chmod("/tmp/cosign", 0o755); os.environ["COSIGN_PASSWORD"] = ""
     import json as _j; os.makedirs("/tmp/docker", exist_ok=True)
     cfg = _j.load(open("/etc/quay/.dockerconfigjson"))
@@ -114,48 +123,56 @@ def sign_modelcar(image_ref: str, rekor_url: str, cosign_version: str) -> str:
 
 
 @dsl.component(base_image=PY_IMG, packages_to_install=["PyGithub==2.4.0"])
-def open_promotion_pr(image_ref: str, candidate: str, report_json: str, github_repo: str,
-                      gitops_branch: str) -> str:
-    """ONE commit editing the three act-serving files atomically (thor-testing 5e3e87a), then a PR
-    whose body carries the eval report. Human merge is the last gate; Argo does the rest."""
+def open_promotion_pr(image_ref: str, candidate: str, checkpoint_uri: str, report_json: str, github_repo: str,
+                      gitops_branch: str, fleet_file: str, consumer_file: str, fleet_ui_url: str) -> str:
+    """ONE commit (thor-testing 5e3e87a: a partial flip is an outage) editing the RHEM Fleet - modelcar
+    digest + MODEL_VERSION - and the trigger's lineage in manifest-consumer, then a PR whose body carries
+    the eval report, the Fleet URL and the rollback (D025). Human merge is the last gate."""
     import json, re
     from github import Github, InputGitTreeElement
     tok = open("/etc/github/token").read().strip()
     repo = Github(tok).get_repo(github_repo)
     base_ref = repo.get_git_ref(f"heads/{gitops_branch}"); base = repo.get_git_commit(base_ref.object.sha)
     def get(p): return repo.get_contents(p, ref=gitops_branch).decoded_content.decode()
-    # Blue/green alternate: the LIVE side is whatever the Service selects; the candidate goes to
-    # the OTHER side. One GPU -> the live side scales to 0 in the same commit the candidate scales
-    # to 1 (Recreate on both; the candidate pod stays Pending until the GPU is released).
-    files = {"blue": "gitops/act-serving/deployment.yaml", "green": "gitops/act-serving/deployment-green.yaml"}
-    svc = get("gitops/act-serving/service.yaml")
-    live = re.search(r"^\s+color:\s*(blue|green)", svc, re.M).group(1)
-    target = "green" if live == "blue" else "blue"
-    cand_yaml = get(files[target]); live_yaml = get(files[live])
     digest = image_ref.split("@", 1)[1]
-    cand_yaml = re.sub(r"(soarm-act-modelcar)@sha256:[0-9a-f]{64}", r"\1@" + digest, cand_yaml, count=1)
-    cand_yaml = re.sub(r"(name: MODEL_VERSION\n\s+value: ).*", lambda m: m.group(1) + candidate, cand_yaml, count=1)
-    cand_yaml = re.sub(r"replicas: 0", "replicas: 1", cand_yaml, count=1)
-    live_yaml = re.sub(r"replicas: 1", "replicas: 0", live_yaml, count=1)
-    svc = re.sub(r"(^\s+color:\s*)" + live, r"\g<1>" + target, svc, count=1, flags=re.M)
+    # Fleet: the two-regex edit. Both must match exactly once or the promotion is not attempted.
+    fleet = get(fleet_file)
+    old_mv = re.search(r"^\s+MODEL_VERSION:\s*(\S+)", fleet, re.M).group(1)
+    fleet, n_img = re.subn(r"(soarm-act-modelcar)@sha256:[0-9a-f]{64}", r"\1@" + digest, fleet, count=1)
+    fleet, n_mv = re.subn(r"^(\s+MODEL_VERSION:\s*)\S+", lambda m: m.group(1) + candidate, fleet, count=1, flags=re.M)
+    # Trigger: the next round counts and fine-tunes from the new lineage (same commit, D025).
+    consumer = get(consumer_file)
+    n_c = 0
+    for key, val in (("INCUMBENT", candidate), ("COLLECTOR", candidate), ("INCUMBENT_CHECKPOINT", checkpoint_uri)):
+        consumer, n = re.subn(r"(\{name: " + key + r", value: \")[^\"]*(\")", lambda m: m.group(1) + val + m.group(2), consumer, count=1)
+        n_c += n
+    if (n_img, n_mv, n_c) != (1, 1, 3):
+        print(f"promotion edit did not match exactly: image={n_img} model_version={n_mv} consumer={n_c}"); raise SystemExit(1)
     rep = json.loads(report_json)
-    elems = [InputGitTreeElement(files[target], "100644", "blob", content=cand_yaml),
-             InputGitTreeElement(files[live], "100644", "blob", content=live_yaml),
-             InputGitTreeElement("gitops/act-serving/service.yaml", "100644", "blob", content=svc)]
+    elems = [InputGitTreeElement(fleet_file, "100644", "blob", content=fleet),
+             InputGitTreeElement(consumer_file, "100644", "blob", content=consumer)]
     tree = repo.create_git_tree(elems, base.tree)
-    msg = f"Promote {candidate}: {target} <- {image_ref.split('@')[1][:19]}..., {live} 0, service -> {target}\n\nEval gate: {rep['incumbent']} {rep['incumbent_success_rate']:.2f} -> {candidate} {rep['candidate_success_rate']:.2f}, fixed {rep['fixed']} broken {rep['broken']} net {rep['net']:+d} p={rep['sign_test_p']}"
+    msg = (f"Promote {candidate}: Fleet act-inference <- {digest[:19]}..., MODEL_VERSION {old_mv} -> {candidate}; manifest-consumer lineage -> {candidate}\n\n"
+           f"Eval gate: {rep['incumbent']} {rep['incumbent_success_rate']:.2f} -> {candidate} {rep['candidate_success_rate']:.2f}, fixed {rep['fixed']} broken {rep['broken']} net {rep['net']:+d} p={rep['sign_test_p']}")
     commit = repo.create_git_commit(msg, tree, [base])
     head = f"promote/{candidate}"; repo.create_git_ref(f"refs/heads/{head}", commit.sha)
     body = (f"## Promotion: `{candidate}` replaces `{rep['incumbent']}`\n\n"
             f"| | success | mean cubes |\n|---|---|---|\n| incumbent `{rep['incumbent']}` | {rep['incumbent_success_rate']:.0%} | {rep['incumbent_mean_cubes']:.2f} |\n"
             f"| candidate `{candidate}` | {rep['candidate_success_rate']:.0%} | {rep['candidate_mean_cubes']:.2f} |\n\n"
             f"Paired on {rep['n_paired']} identical seeded scenes: **{rep['fixed']} fixed / {rep['broken']} broken, net {rep['net']:+d}, sign-test p = {rep['sign_test_p']}** - gate rule: {rep['rule']} -> **{rep['verdict']}**.\n\n"
-            f"Signed modelcar: `{image_ref}`\n\nMerging flips blue/green atomically ({target} replicas 1, {live} replicas 0, Service -> {target}); with one GPU the {live} pod releases it and the {target} pod schedules (Recreate). Argo syncs it; the swap agent applies it on the desktop.")
+            f"Signed modelcar: `{image_ref}`\n\n"
+            f"Merging edits Fleet `act-inference` in one commit (`{fleet_file}`: modelcar digest + `MODEL_VERSION` `{old_mv}` -> `{candidate}`) "
+            f"and points the trigger at the new lineage (`{consumer_file}`: COLLECTOR/INCUMBENT/INCUMBENT_CHECKPOINT). "
+            f"ResourceSync renders the Fleet; RHEM rolls it out batch by batch; each device pulls the modelcar under its policy.json "
+            f"(cosign key + Rekor SET) and restarts the container, which publishes the new `model_version`.\n\n"
+            f"Fleet: {fleet_ui_url}\n\n"
+            f"Rollback: `git revert <sha>` - revert the merge commit of this PR and merge the revert. The previous modelcar is still in device storage "
+            f"(image volume `reclaimPolicy: Retain`), so rolling back does not re-pull.")
     pr = repo.create_pull(title=f"Promote {candidate} ({rep['incumbent_success_rate']:.0%} -> {rep['candidate_success_rate']:.0%})", body=body, base=gitops_branch, head=head)
     print(pr.html_url); return pr.html_url
 
 
-@dsl.pipeline(name="act-flywheel-promotion", description="assemble -> train -> eval gate -> package -> sign -> promotion PR (D022)")
+@dsl.pipeline(name="act-flywheel-promotion", description="assemble -> train -> eval gate -> package -> sign -> Fleet promotion PR (D022, D025)")
 def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher", collector: str = "upstream-act-teacher",
                           incumbent_checkpoint: str = "hf", steps_per_frame: float = 0.25, eval_n: int = 100,
                           eval_seed_base: int = 1000, mode: str = "desktop",
@@ -163,7 +180,9 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
                           registry_repo: str = "quay.io/jary/soarm-act-modelcar", platform: str = "linux/amd64",
                           rekor_url: str = "http://rekor-server.trusted-artifact-signer.svc", crane_version: str = "v0.20.3", cosign_version: str = "v2.6.5",
                           github_repo: str = "RHPhysicalAI/hp-roscon-flywheel", gitops_branch: str = "desktop-gpu-split",
-                          timeout_min: int = 600):
+                          fleet_file: str = "gitops/rhem/fleet-act-inference.yaml", consumer_file: str = "gitops/flywheel/manifest-consumer.yaml",
+                          fleet_ui_url: str = "https://ui.flightctl.apps.sno-flywheel.local/devicemanagement/fleets/act-inference",
+                          modelcar_base: str = UBI_MICRO, timeout_min: int = 600):
     run_id = dsl.PIPELINE_JOB_ID_PLACEHOLDER
     # mode == "cluster": in-pod train/eval components (Phase 4, GB10/GB300) replace this step; same outputs.
     t = trigger_and_wait(run_id=run_id, candidate=candidate, incumbent=incumbent, collector=collector,
@@ -173,14 +192,16 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
     g = eval_gate(eval_report_uri=t.outputs["eval_report"], s3_endpoint=s3_endpoint); g.set_caching_options(False)
     k8s.use_secret_as_env(g, secret_name="hub-credentials", secret_key_to_env={"s3-access-key": "AWS_ACCESS_KEY_ID", "s3-secret-key": "AWS_SECRET_ACCESS_KEY"})
     pk = package_modelcar(checkpoint_uri=t.outputs["checkpoint"], candidate=candidate, registry_repo=registry_repo,
-                          platform=platform, s3_endpoint=s3_endpoint, crane_version=crane_version).after(g)
+                          platform=platform, s3_endpoint=s3_endpoint, crane_version=crane_version, modelcar_base=modelcar_base).after(g)
     pk.set_caching_options(False)
     k8s.use_secret_as_env(pk, secret_name="hub-credentials", secret_key_to_env={"s3-access-key": "AWS_ACCESS_KEY_ID", "s3-secret-key": "AWS_SECRET_ACCESS_KEY"})
     k8s.use_secret_as_volume(pk, secret_name="quay-push", mount_path="/etc/quay")
     sg = sign_modelcar(image_ref=pk.output, rekor_url=rekor_url, cosign_version=cosign_version); sg.set_caching_options(False)
     k8s.use_secret_as_volume(sg, secret_name="quay-push", mount_path="/etc/quay")
     k8s.use_secret_as_volume(sg, secret_name="cosign-signing-key", mount_path="/etc/cosign")
-    pr = open_promotion_pr(image_ref=sg.output, candidate=candidate, report_json=g.output, github_repo=github_repo, gitops_branch=gitops_branch)
+    pr = open_promotion_pr(image_ref=sg.output, candidate=candidate, checkpoint_uri=t.outputs["checkpoint"], report_json=g.output,
+                           github_repo=github_repo, gitops_branch=gitops_branch, fleet_file=fleet_file, consumer_file=consumer_file,
+                           fleet_ui_url=fleet_ui_url)
     pr.set_caching_options(False)
     k8s.use_secret_as_volume(pr, secret_name="github-token", mount_path="/etc/github")
 
