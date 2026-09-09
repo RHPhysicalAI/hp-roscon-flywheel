@@ -93,7 +93,7 @@ The device runs **only the policy role** — the runtime image, the served model
 signed OCI image volume with `reclaimPolicy: Retain`, so a rollback never re-pulls), a lineage
 label, and a health check. It does not run the simulator, the coordinator, or the episode recorder
 — those stay on the sim/producer side and reach the device only through the promotion pipeline
-(role split documented in `DECISIONS.md` D057). Trust enforcement is on the device itself, not just
+(role split documented in `docs/internal/DECISIONS.md` D057). Trust enforcement is on the device itself, not just
 at the registry: `policy.json` requires both a valid signature and a valid Rekor transparency-log
 entry before podman will pull an image — proven by two standing negative tests (an unsigned image,
 and a signed-but-unlogged image; both are rejected with a distinct error).
@@ -136,4 +136,4 @@ running system:
 - The promotion pipeline's stages: `pipeline/act_flywheel_pipeline.py`
 - What image is built from what, and how: `docker/Dockerfile`, `docker/Dockerfile.gpu-inference`,
   `gitops/tekton/runtime-image-pipeline.yaml`
-- Every non-obvious architectural decision, with its reasoning: `DECISIONS.md`
+- Every non-obvious architectural decision, with its reasoning: `docs/internal/DECISIONS.md`

@@ -39,7 +39,7 @@ apples-to-apples policy comparison; use the MinIO stream for "what the fleet is 
 
 ## Schemas
 
-**Episode record** (curator contract; `THOR-TESTING-REUSE.md`):
+**Episode record** (curator contract; `docs/internal/THOR-TESTING-REUSE.md`):
 ```json
 {"episode_id": "uuid4", "timestamp": "ISO-8601 UTC", "scene": "place_cubes_on_tray",
  "model_version": "act-v2-ft160", "has_failure": false,

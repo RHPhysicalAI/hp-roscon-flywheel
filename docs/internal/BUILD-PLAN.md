@@ -23,7 +23,7 @@ Phase 3 closes it with governance; Phase 3+ makes the improvement autonomous.
 | 3 — Training + close the loop | **Complete** (2026-09-08) — eval harness (D020), self-improvement proof (D021: 73% → 86%, p=0.019), governed pipeline through RHOAI/RHTAS with PR #1 merged and swapped, loop closed on v2; static chart shipped | D015, D020–D022 |
 | 3+ — Bootstrap loop | Not started | `BOOTSTRAP-LOOP.md` |
 | 4 — Demo hardening + Fury prep | **In progress** — item 1 done (2026-09-08): `docs/DEMO_RUNBOOK.md`, Short Cut + Full Live, every screen verified live (D023) | D023 |
-| 4.5 — RHEM device plane | **In progress** — A–F, G-prep done; kit recording + rehearsal (operator), then Fury on site | D024–D112 |
+| 4.5 — RHEM device plane | **In progress** — A–F, G-prep done; full-project review + hardening done (D113–D120); kit recording + rehearsal (operator), then Fury on site | D024–D120 |
 
 ---
 
@@ -255,7 +255,7 @@ Live elements are layered on top of that, never depended on.
    - Beat 2: "The curator is watching — this is the curation stream"
    - Beat 3: "Training started from the curated data — here's the pipeline"
    - Beat 4: "Model improvement — v1 vs v2 side-by-side"
-   - Beat 5: "Promotion — signed, GitOps PR, blue/green swap"
+   - Beat 5: "Promotion — signed, GitOps PR, RHEM Fleet rollout" (was "blue/green swap" until D024/D025)
    - Beat 6: "The loop closes — same governed pipeline you'd run to a real fleet"
    - Short Cut (~4-5 min): pinned run, pre-loaded v1/v2 comparison
    - Full Live (~10-12 min): live training + promotion
@@ -294,9 +294,10 @@ Live elements are layered on top of that, never depended on.
    - SO-ARM sim + camera stream on aarch64
    - ACT policy serves on aarch64
    - All x86 assumptions resolved
-   - Node-side signature enforcement applied, not just documented: `policy.json` `sigstoreSigned`
-     + `registries.d` `use-sigstore-attachments: true` (thor-testing D015/D018; today only
-     described in `gitops/act-serving/README.md`)
+   - ✅ Node-side signature enforcement applied, not just documented: `policy.json` `sigstoreSigned`
+     + `registries.d` `use-sigstore-attachments: true` — written to the device by the RHEM Fleet's
+     inline config (`gitops/rhem/fleet-act-inference.yaml`) and proven by the negative-trust tests
+     (D091). The pre-RHEM `gitops/act-serving/README.md` that only described it is retired (D075).
 
 5. **Structured promotion record.** ✅ **Done (2026-09-09, Phase 4.5 E1).** Today the join across model version, modelcar digest,
    dataset URI, eval report, and Rekor index exists only in the PR body and git history
@@ -317,9 +318,9 @@ Live elements are layered on top of that, never depended on.
 - [ ] Demo runs from the contingency kit alone (recording + artifacts), no cluster or link needed
 - [ ] Demo-ready on desktop with runbook — *runbook done (D023); "demo-ready" waits on one full rehearsal of the Full Live cut (item 2)*
 - [ ] Contingency kit recorded (Short Cut recording + per-beat clips/screenshots)
-- [ ] arm64 images build
-- [ ] Fury porting checklist written
-- [ ] Promotion record emitted to a registry for at least one promoted candidate
+- [x] arm64 images build — Tekton builds and signs both arches with a Rekor entry per manifest (D101–D112, `docs/eval-records/runtime-image-tekton.md`)
+- [x] Fury porting checklist written — `docs/FURY-SETUP.md` (D120); the aarch64 GPU serving path is built but not yet exercised on hardware
+- [x] Promotion record emitted to a registry for at least one promoted candidate — Model Registry row for `act-v2-ft160-rhem` (D090, `docs/eval-records/model-registry.md`)
 
 ---
 

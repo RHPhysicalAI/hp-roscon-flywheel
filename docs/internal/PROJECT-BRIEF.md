@@ -20,25 +20,31 @@ robot arm in Gazebo. See `THOR-TESTING-REUSE.md` for the detailed reuse map.
 
 ## Architecture
 
+> Updated 2026-09-09 to reflect Phase 4.5 (D024): the model plane is delivered by Red Hat Edge
+> Manager to a managed device, not by an Argo CD blue/green selector flip (retired, D025/D075).
+> Current diagrams: `docs/ARCHITECTURE.md`, `docs/DATA-FLOW.md`.
+
 ```
-[SO-ARM101 in Gazebo]  <- runs ACT policy, generates rollout episodes
+[SO-ARM101 in Gazebo]  <- policy served from the managed device drives the arm; episodes recorded as bags
         |
         v
-/data/episodes/raw/*.json
+[curator]              <- ground-truth task success from simulator object poses; failures rejected
         |
-[curator]              <- scores quality (task success, action smoothness)
-        |         \
-   curated/      rejected/
+[sync-agent]           <- ported LeRobot dataset to MinIO + manifest on Kafka
         |
-[sync-agent]           <- uploads to MinIO + publishes manifest to Kafka
+[manifest-consumer]    <- 160 new curated successes for the live lineage -> starts a pipeline run
         |
-[KFP training pipeline] <- LeRobot ACT fine-tune on curated data
+[OpenShift AI pipeline] <- fine-tune incumbent on its own curated data -> paired eval gate (N=100, p<0.05)
         |
-eval -> package modelcar (crane append) -> cosign sign (RHTAS) -> promotion PR
+package multi-arch modelcar -> cosign sign + Rekor (RHTAS) -> Model Registry record -> promotion PR
         |
-[Argo CD blue/green]   <- merges, flips service selector, new policy goes live
+[human merge]          <- the approval gate
         |
-sim picks up v2 policy -> better rollouts -> loop closes
+[Red Hat Edge Manager] <- ResourceSync renders the Fleet from Git; rollout to the device
+        |
+[device: RHEL 10]      <- verifies signature + Rekor entry (policy.json) before pull; serves new policy
+        |
+episodes re-stamped with the new lineage -> loop closes
 ```
 
 ### What runs on the single box (SNO)

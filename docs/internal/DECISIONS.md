@@ -3949,3 +3949,41 @@ for the orchestrator to act on or dismiss — not resolved here. `PROJECT-BRIEF.
 section still describes the pre-RHEM blue/green design (out of this decision's scope to edit; the
 new `docs/ARCHITECTURE.md` reflects the current RHEM-based design and should be treated as
 authoritative over `PROJECT-BRIEF.md`'s diagram until that's reconciled).
+
+---
+
+## D121 — Engineering history moved under `docs/internal/`; README rewritten as a public front door; Phase 4 status reconciled
+
+**Date:** 2026-09-09
+**Context:** the operator's direction as the project nears its final phases: `PROJECT-BRIEF.md`,
+`BUILD-PLAN.md`, `DECISIONS.md`, `THOR-TESTING-REUSE.md` and `BOOTSTRAP-LOOP.md` "cannot sit at the
+root of the repo and draw attention nor should they be referenced more than necessary," but they
+stay versioned as durable record (an earlier option of untracking them was withdrawn — untracking
+would not have removed them from history anyway). The D120 README linked all five prominently, led
+with internal partnership framing, cited the internal `thor-testing` reuse, and carried no AI-
+assistance note; the operator rejected it.
+**Decision:**
+1. The five documents move to `docs/internal/` via `git mv` (history preserved). `AGENTS.md`'s
+   read-order now points there; prose references in `docs/*.md` and three GitOps YAML comments
+   updated. References between the five files themselves are bare sibling filenames and stay
+   valid; `DECISIONS.md` is not edited retroactively.
+2. `README.md` rewritten: one-line description, the Red Hat AI-assistance note immediately after
+   it, overview, the loop as an eight-stage table, evidence-linked results, three-plane
+   architecture with a development-vs-Fury table, platform versions, upstream attribution,
+   repository layout, documentation index, deploy pointers, dated status. Internal history gets one
+   sentence pointing at `docs/internal/`. No personal names, no workstation details, no internal
+   repo references.
+3. `BUILD-PLAN.md` Phase 4 reconciled with reality: "arm64 images build," "Fury porting checklist
+   written," and "promotion record emitted" checked with references (D101–D112, D120, D090); Beat 5's
+   narration line no longer says "blue/green swap"; item 4's node-side-enforcement bullet now cites
+   the Fleet inline config and D091 instead of the retired `gitops/act-serving/README.md`; the
+   status snapshot's Phase 4.5 reference range extends to D120. Phase 3+ is deliberately left as-is
+   pending the operator's decision on its scope.
+4. `PROJECT-BRIEF.md`'s architecture diagram replaced with the RHEM-era flow, with a note that it
+   was updated and that `docs/ARCHITECTURE.md`/`docs/DATA-FLOW.md` are current.
+**Also noted:** every commit this session carried `Co-Authored-By: Claude Sonnet 5`, contrary to
+the project rule of bare `Co-Authored-by: Claude` (no model name). Corrected from this commit on;
+pushed history is not rewritten.
+**Consequences:** `docs/internal/` is the only place engineering history is linked from the front
+door. C3/C10/C11/C12 from the review are fixed in source but still not deployed (host sim image
+rebuild; Tekton runtime rebuild + Fleet re-pin) — tracked as the next action, not closed.

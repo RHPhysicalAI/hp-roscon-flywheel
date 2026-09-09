@@ -72,7 +72,7 @@ sequenceDiagram
    p < 0.05) — not just a higher raw success rate. This gate has real teeth: earlier in this
    project's history, fine-tuning on too little curated data measurably made the policy *worse*,
    and the gate correctly refused to promote it. That result is documented, not hidden — see
-   `DECISIONS.md` and the demo runbook's eval numbers.
+   `docs/internal/DECISIONS.md` and the demo runbook's eval numbers.
 
 7. **Packaging and signing.** A candidate that passes is packaged as a signed OCI "ModelCar" image
    (cosign, RHTAS) and its signature is written to a Rekor transparency log. A missing or

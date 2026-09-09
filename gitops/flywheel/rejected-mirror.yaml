@@ -3,7 +3,7 @@
 # Mirrors rejected episode records to MinIO so the eval dashboard (Olga,
 # APPENG-6295) can compute a real success rate. The curator writes rejected
 # records to hostPath /var/lib/episodes/rejected/ and never uploads them
-# (only curated records reach MinIO/Kafka today) — see THOR-TESTING-REUSE.md
+# (only curated records reach MinIO/Kafka today) — see docs/internal/THOR-TESTING-REUSE.md
 # "The integration seam". This job only reads that hostPath (readOnly mount)
 # and never touches curated/, sent/, or raw/ — no interaction with the
 # curator or sync-agent pipeline.

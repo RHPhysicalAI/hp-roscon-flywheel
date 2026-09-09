@@ -8,7 +8,7 @@
 # leaving the primary workload API open would be inconsistent, not safer.
 # Auth (Perses's built-in OIDC/Kubernetes provider) is a real option to
 # add later as part of Phase 7 "Demo hardening" if this stack moves
-# beyond a PoC -- see DECISIONS.md D028's exposure rationale.
+# beyond a PoC -- see docs/internal/DECISIONS.md D028's exposure rationale.
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:

@@ -82,7 +82,7 @@ This page reflects a point-in-time check against the running desktop system. Two
 knowing if you're reading this expecting it to be perfectly current: the `minio` Argo app can show
 `OutOfSync` between image-pin updates and MinIO's own Job objects reconciling (a Kubernetes Job's
 pod template is immutable post-creation, so a pinned-image update to an already-completed Job needs
-that Job deleted before it reapplies cleanly — see `DECISIONS.md` for the specific incident); and
+that Job deleted before it reapplies cleanly — see `docs/internal/DECISIONS.md` for the specific incident); and
 `so-arm-sim`'s in-cluster manifest is intentionally not what's live (see the sim/producer table
 above). Both are documented, not hidden — if something here looks stale, `argocd/README.md` and
-`DECISIONS.md` are the sources of truth to re-check against.
+`docs/internal/DECISIONS.md` are the sources of truth to re-check against.

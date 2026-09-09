@@ -6,13 +6,14 @@ blue/green swap -> loop closes.
 
 ## Project context
 
-Read these files in order for full context:
-1. `PROJECT-BRIEF.md` — what, why, architecture, hardware, constraints
-2. `BUILD-PLAN.md` — phased execution plan (Phase 0-4) with exit criteria
-3. `THOR-TESTING-REUSE.md` — what copies from thor-testing, what adapts, known gotchas
+Read these files in order for full context (engineering history lives under `docs/internal/`;
+the public-facing material is `README.md` and `docs/`):
+1. `docs/internal/PROJECT-BRIEF.md` — what, why, architecture, hardware, constraints
+2. `docs/internal/BUILD-PLAN.md` — phased execution plan (Phase 0-4.5) with exit criteria
+3. `docs/internal/THOR-TESTING-REUSE.md` — what copies from thor-testing, what adapts, known gotchas
 
-When decisions are made during execution, record them in `DECISIONS.md` using the same
-numbered format as thor-testing's decision log (D001, D002, ...).
+When decisions are made during execution, record them in `docs/internal/DECISIONS.md` using the
+same numbered format as thor-testing's decision log (D001, D002, ...).
 
 ## Key facts
 

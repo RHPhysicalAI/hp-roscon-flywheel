@@ -76,7 +76,7 @@ Verified, not just designed:
   emulation) to be faster, not slower, but this hasn't been measured yet.
 - `torch` and its CUDA build for aarch64/Blackwell: aarch64 wheels exist, but only the base
   `torch` package carries the `+cu130` suffix on arm64 (torchvision/torchaudio don't) — the build
-  already accounts for this with per-architecture pins. See `DECISIONS.md` for the specific
+  already accounts for this with per-architecture pins. See `docs/internal/DECISIONS.md` for the specific
   finding.
 - RHEL 10.2's AppStream repo ships a podman version (5.8.2) that satisfies the image-volume
   feature RHEM 1.3 needs.
@@ -106,5 +106,5 @@ assumptions to build on:
 `docs/DEMO_RUNBOOK.md`'s "Failure recovery" table covers the operational failure modes already
 seen on the desktop stand-in (loop restart, dashboard hangs, port-forward drops, rollout stalls).
 Most of it transfers directly — the underlying components are identical, only their physical
-location changes. `DECISIONS.md` is the fuller record of what's already gone wrong once and how it
+location changes. `docs/internal/DECISIONS.md` is the fuller record of what's already gone wrong once and how it
 was actually fixed, searchable by symptom.
