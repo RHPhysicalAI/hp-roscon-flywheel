@@ -56,7 +56,7 @@ spec:
     - name: JOBS
       type: string
       default: "1"
-      description: "`buildah bud --jobs`: platforms built concurrently (1 = amd64 first, then arm64)"
+      description: "`buildah bud --jobs`: platforms built concurrently (1 = one after the other; buildah took arm64 first)"
     - name: TLS_VERIFY
       type: string
       default: "true"

@@ -1,6 +1,10 @@
 <!-- This project was developed with assistance from AI tools. -->
 # Interim amd64 runtime image — built on the host, signed into Rekor (D024/D026/D028 bridge)
 
+> **Superseded 2026-09-09** by the Tekton multi-arch build — `docs/eval-records/runtime-image-tekton.md`
+> (`quay.io/jary/soarm-flywheel@sha256:3d67f424…`, Rekor 11/12/13). The tags and Rekor indexes 2 and 3
+> below stay as history; nothing is deleted.
+
 **Date:** 2026-09-08 · **Unblocks:** Phase 4.5 C (Fleet-delivered application) · **Replaced by:** Phase 4.5 F (Tekton multi-arch)
 
 D028 makes Tekton the recorded build path for the runtime images. Item C needs a **signed,
