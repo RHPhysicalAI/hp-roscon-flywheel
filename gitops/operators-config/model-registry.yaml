@@ -135,3 +135,28 @@ subjects:
   - kind: ServiceAccount
     name: pipeline-runner-dspa
     namespace: flywheel
+---
+# The operator's own NetworkPolicy (`flywheel-https-route`) admits 8443 only from the ingress
+# router; policies are additive, so this one opens the same port to the DSP project so the KFP
+# `register_model`/`record_pr_url` pods can call the Service (the Route is not resolvable in-cluster).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: flywheel-https-pipeline
+  namespace: rhoai-model-registries
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  podSelector:
+    matchLabels:
+      app: flywheel
+      component: model-registry
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: flywheel
+      ports:
+        - port: 8443
+          protocol: TCP
