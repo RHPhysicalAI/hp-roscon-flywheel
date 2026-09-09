@@ -56,36 +56,44 @@ randomize scene ─► privileged expert solves it ─► record episode (frames
 | Ground-truth cube poses | `/world/pai_world/pose/info` | ✅ working (D016) |
 | Arm motion planning / IK | `so_arm100_moveit_config`, `pai_teleop_ik` | ✅ in upstream `ws_pai` |
 | Scene randomization | `src/sim-reset/sim_reset.py` | ✅ ours |
-| Episode recording (LeRobot format) | `pai_data_collection` | ⚠️ exists upstream, **not wired into our loop** |
+| Episode recording (LeRobot format) | Rosetta `episode_recorder` → per-episode MCAP bag → `port_bags` (Phase 2.5, D018) | ✅ wired — every rollout is recorded and curated bags port to LeRobot v2 |
+| Dataset assembly from the hub | `src/dataset-assembler/assemble_dataset.py --from-minio` (D019) | ✅ ours |
 | Quality gate | `curator` (+ HTTP receiver) | ✅ ours |
 | Success metric | `src/episode-emitter/task_eval.py` | ✅ fixed today (D016) |
 | Training | `lerobot-train` in `act-inference:latest` | ✅ proven |
 | Episode lifecycle / phasing | `src/inference-coordinator/coordinator.py` | ✅ ours (now with early-stop) |
 | Human-correction alternative | `pai_leader_teleop`, `pai_phone_teleop`, `feetech_ros2_driver` | ✅ available if we prefer DAgger |
 
-## ⚠️ The gap that blocks *any* real loop
+## The gap that used to block any real loop — closed
 
-**Our flywheel currently curates *metadata*, not *trainable data*.** `episode_emitter.py` emits a
-JSON record — `task_success`, `cubes_placed`, `smoothness`, `steps` — and the sync-agent ships that
-to MinIO/Kafka. There are **no observation frames or action vectors** in it. All training to date
-has used the upstream HuggingFace dataset
-(`francocipollone/rospai_sim_arm101_place_cubes_on_tray`), not anything the flywheel produced.
+When this was written the flywheel curated *metadata*, not *trainable data*, and all training used
+the upstream HuggingFace dataset. That is no longer true: Phase 2.5 (D017–D019) records every
+rollout as an MCAP bag, ports curated bags to LeRobot v2, ships them to MinIO with a Kafka
+manifest, and assembles training sets from the hub; Phase 3 (D020–D022) fine-tuned v2 on 160
+flywheel-captured successes and promoted it through the governed pipeline. The data path a real
+bootstrap needs exists and is exercised.
 
-So the loop today is: *sim → score → store score*. To train on flywheel-generated episodes at all —
-whether for a real bootstrap **or** for the D015 dataset-size ladder using self-generated data — we
-must add **LeRobot-format episode capture** (camera frames + joint actions per timestep) alongside
-the scoring path, and have the curator gate *those* datasets into MinIO.
+What remains is the bootstrap itself:
 
-`pai_data_collection` is the upstream package that already records in this format and is the natural
-thing to wire in rather than write from scratch.
+1. **The privileged expert** — a scripted pick-and-place that reads exact cube poses from
+   `/world/pai_world/pose/info` and plans per cube with `so_arm100_moveit_config` / `pai_teleop_ik`.
+   This is the bulk of the work and the only genuinely new robotics code.
+2. **A held-out randomized eval set** — the D020 harness with a seed range never used for training
+   data, so promotion measures generalization rather than memorization of the expert's scenes.
+3. **A curriculum controller** — widen `RANDOM_RADIUS` / `RANDOM_YAW_DEG` / `RANDOMIZE_ONLY` as the
+   held-out success rate rises; the expert keeps solving the wider distribution, producing frontier
+   data.
 
 ## Honest ceiling and effort
 
 - **Ceiling:** the vision policy chases the privileged planner — improvement is real and measurable
   but bounded by expert quality. That is fine and standard (this is policy distillation).
-- **Effort:** the expert script + LeRobot capture wiring is the bulk of it; the curator, metric,
-  training, and randomization already exist.
-- **Scope call:** this is **more than the ROSCon demo requires.** D015 stands — the staged v1→v2
-  proves the governed pipeline, which is the actual product story. Treat this as the post-deadline
-  upgrade that makes the flywheel claim literally true, or as the story we *describe* on stage as
-  the natural extension.
+- **Effort:** the expert script is most of it; recording, curation, assembly, training, the eval
+  harness, and randomization already exist.
+- **Scope call (operator, 2026-09-09): post-ROSCon.** D015 stands — the staged v1→v2 proves the
+  governed pipeline, which is the product story, and the runbook already says "retrained on the
+  curated episodes the loop captured," never "keeps improving on its own." Building this before
+  the booth would compete with the kit recording and the Fury bring-up on the same sim host for
+  no narrative gain. It is the first upgrade after the event, and the honest Q&A answer until
+  then: one round of self-improvement is proven; the next step is a privileged expert, designed,
+  with every prerequisite built.

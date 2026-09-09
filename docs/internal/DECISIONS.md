@@ -4006,3 +4006,21 @@ records stay where they are — the README's results link to them.
 **Consequences:** the public surface is `README.md`, `docs/` minus `docs/internal/`, and the
 operational READMEs. Anything that describes the state of the system at a point in time lives
 under `docs/internal/` or `docs/eval-records/`.
+
+---
+
+## D123 — Phase 3+ (bootstrap loop) is post-ROSCon: designed, prerequisites complete, not scheduled
+
+**Date:** 2026-09-09 (operator decision)
+**Context:** `BUILD-PLAN.md` listed Phase 3+ as "Not started," which read as unfinished work rather
+than a scope choice, and `BOOTSTRAP-LOOP.md` still claimed the flywheel curated metadata only and
+that all training used the upstream dataset — both false since Phase 2.5 (D017–D019) and Phase 3
+(D020–D022).
+**Decision:** Phase 3+ is not built before ROSCon. The status row now says so and names what is
+left (privileged expert, held-out randomized eval set, curriculum controller). `BOOTSTRAP-LOOP.md`'s
+"gap that blocks any real loop" section is rewritten as closed, its component table marks
+recording and assembly as done, and its scope call records this decision. Rationale: it competes
+with the kit recording and the Fury bring-up on the same sim host, and nothing in the booth
+narrative depends on it — the runbook already claims only one round of self-improvement.
+**Consequences:** the Q&A answer is "one round proven; the next step is a privileged expert,
+designed, with every prerequisite built." First upgrade after the event.
