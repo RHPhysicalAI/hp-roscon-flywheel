@@ -437,6 +437,11 @@ F. **Fidelity repairs, pre-Fury** (D026, D028)
    - GitOps completeness: commit `argocd/{flywheel,minio,observability}-app.yaml`; `prune: true`;
      MinIO root creds out of `gitops/flywheel/hub-credentials.yaml`; `gitops/operators/README.md`
      (RHEM + Model Registry rows, Tekton/KServe claims) and `PROJECT-BRIEF.md` "AMQ Streams" fixed.
+   - **F-GitOps done 2026-09-09 (D077+):** `argocd/{flywheel,minio,observability}-app.yaml`
+     committed; `prune: true` on all 8 apps (8 apps = 8 files); MinIO root creds out of git
+     (hand-created Secrets, documented); KFP `platform` list → OCI index + `cosign sign
+     --recursive`; `COSIGN_PASSWORD` from the `cosign-signing-key` Secret; operators README (RHEM,
+     Model Registry rows, KServe unused) and PROJECT-BRIEF AMQ Streams wording fixed.
    - **Exit:** `tkn pipelinerun` builds both arches with a Rekor entry; `argocd app list` count
      equals files in `argocd/`, every app Synced with `prune: true`; no `minioadmin` in git.
 
@@ -473,9 +478,10 @@ G. **Fury port + runbook** (on site, Sept 20–25)
 - [x] Rollback: `git revert`, merge → previous version serving, no re-pull (Retain) (2026-09-09, PR #3)
 - [ ] Tekton: runtime image built for both arches, Rekor entry created, `crane manifest` shows both
   platforms, the Fleet references its digest
-- [ ] `grep -r insecure-ignore-tlog` returns nothing; `argocd app list` count equals files in
+- [x] `grep -r insecure-ignore-tlog` returns nothing; `argocd app list` count equals files in
   `argocd/`; every Argo app Synced with `prune: true` — tlog bypass gone from code/config/procedures
-  (D3); Argo app count/prune → F-GitOps
+  (D3); Argo app count/prune → F-GitOps (2026-09-09: tlog bypass gone from code/config/procedures —
+  D3; 8 Argo apps = 8 files, all Synced with prune: true — F-GitOps)
 - [ ] Contingency kit recorded on the RHEM path (Phase 4 item 2); one full rehearsal of the Full Live cut on RHEM
 
 ---

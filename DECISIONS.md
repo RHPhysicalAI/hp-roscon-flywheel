@@ -2709,3 +2709,117 @@ and D071/D069's no-pull evidence.
 **Decision:** none of these are demo blockers. Dashboard badge fix (read the Fleet's `MODEL_VERSION`
 via the flightctl API, or drop the badge) and the remaining narrative rewrite are item G's call;
 container prune and the two historical prose lines are inbox items, not scheduled here.
+
+---
+
+## D077 — Every Argo app is in git with `prune: true`; hand-created Secrets are untracked, not ignored
+
+**Date:** 2026-09-09
+**Context:** D026 row 5. `flywheel`, `minio`, `observability` existed only on the cluster; every
+branch-tracking app ran `prune: false`; `observability` tracked `main`.
+**Record:** evidence before flipping (per app, `status.resources[?(@.requiresPruning==true)]`):
+operators, operators-config, storage, flywheel, minio, observability — all Synced, zero prune
+candidates, so the flip deleted nothing; no app was withheld. Committed in `85e9176`:
+`argocd/{flywheel,minio,observability}-app.yaml` from `oc get application` (spec only, same shape
+as `operators-app.yaml`); `observability` now tracks `desktop-gpu-split` like every other app —
+`gitops/observability` is byte-identical on `main` and the branch, so no behaviour change today,
+and later branch edits (OTel, post-ROSCon) will actually reach the cluster. `prune: true` applied
+by `oc apply -f` to operators, operators-config, storage, flywheel, minio, observability (rhem
+already; act-serving deleted by D3 the same day); all 8 apps Synced/Healthy. App count (8) equals
+`argocd/*-app.yaml` count: `flywheel, minio, observability, operators, operators-config, rhem,
+storage, tekton` — 8 files. `4a03801` carries the companion doc fixes (`gitops/operators/README.md`
+RHEM + Model Registry rows, KServe-unused note; `PROJECT-BRIEF.md` "AMQ Streams" wording, D026 row
+7).
+**Decision:** hand-created Secrets are *untracked* (no `argocd.argoproj.io/tracking-id` annotation)
+rather than listed in `ignoreDifferences`. With annotation tracking Argo only prunes what it
+stamped, so an untracked Secret is invisible to sync and prune; `ignoreDifferences` would still
+leave it in the app's resource tree and subject to prune once it left git. `argocd/README.md`
+carries the bootstrap order and a hand-created Secrets table (names, namespaces, keys, consumers —
+never values).
+**Consequences:** drift found on the way: the Perses/Tempo CRDs come from the Cluster Observability
+Operator v1.5.2 and tempo-operator v0.22.0-1, both installed by hand and absent from
+`gitops/operators/` — recorded in the README cell; a `gitops/operators/` Subscription pair is the
+fix (not done — outside F's scope, and a bad apply would re-install COO under the running Perses
+instance).
+
+---
+
+## D078 — MinIO root credentials left git by removing the manifests and untracking the live Secrets; values were not rotated
+
+**Date:** 2026-09-09
+**Context:** D026 row 13. `gitops/flywheel/hub-credentials.yaml` and the `minio-credentials` Secret
+inside `gitops/minio/minio.yaml` held `minioadmin`/`minioadmin`; `assemble_dataset.py` and
+`host_runner.py` defaulted to the same.
+**Record (ordering mattered):**
+1. Push the git removal first, with `prune: false` still live → Argo marks both Secrets
+   `requiresPruning` but deletes nothing (observed: `OutOfSync … prune-candidates:
+   Secret/hub-credentials`). Hand-applying first would have raced `selfHeal`, which re-applies from
+   git and re-stamps the annotation.
+2. Untrack the live Secrets by removing `argocd.argoproj.io/tracking-id` **and**
+   `kubectl.kubernetes.io/last-applied-configuration` (the latter carried the plaintext `stringData`
+   from the original apply). Metadata-only: the Secret values were never rewritten. `sha256` of
+   `~/.minio-env` `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY` equals the live `hub-credentials` and
+   `minio-credentials` values, so "hand-created from `~/.minio-env`" and "live" are the same bytes;
+   the README's `oc create secret … --dry-run=client -o yaml | oc apply -f -` pair is the
+   fresh-cluster path.
+3. Only then `prune: true`. After sync: both apps Synced, zero prune candidates, Secrets present
+   with their original `creationTimestamp`, MinIO `/minio/health/live` 200, sync-agent Ready.
+   Committed in `85e9176` (`gitops/flywheel/hub-credentials.yaml` removed; `gitops/minio/minio.yaml`
+   and `gitops/minio/minio-readonly-user.yaml` edited; `argocd/README.md` and
+   `gitops/flywheel/README.md` document the hand-created Secrets).
+**Not rotated:** the values are still the historical defaults. Rotating means restarting MinIO, the
+sync-agent, rejected-mirror, the DSPA, the host runner and the resident containers — that touches
+the loop in the pre-Fury window. Proposed follow-up: rotate at the Fury rebuild (Phase 4.5 G), where
+every consumer is recreated anyway.
+**Host side:** `host_runner.py` and `assemble_dataset.py --from-minio` now refuse to start without
+`MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY` (the `prune_bags.py` pattern); `in_image()` and
+`tools/host/assemble_all.sh` forward them — committed in `d240ec6`. The resident runner and the
+baked `act-inference:latest` image are unaffected until restart/rebuild; `docs/DEMO_RUNBOOK.md`
+line ~451's restart one-liner needs `set -a; source ~/.minio-env; set +a;` prepended (not edited —
+the file was mid-edit by D3).
+**Verification:** `grep -rn minioadmin` across the repo returns exactly two hits, both prose:
+`DECISIONS.md:1284` (the D026 drift-table row recording the historical state) and
+`BUILD-PLAN.md:441` (the item-F exit-criteria wording "no `minioadmin` in git") — no live
+credential, manifest, or default carries the value.
+
+---
+
+## D079 — Multi-arch modelcar: one OCI index per candidate, per-arch `crane append` + `crane index append`, signed `--recursive`
+
+**Date:** 2026-09-09
+**Context:** D026 row 12; D066 left `platform` as a single string.
+**Record:** pipeline param `platform: List[str] = ["linux/amd64", "linux/arm64"]`.
+`package_modelcar` runs `crane append --platform <p> -b ubi-micro -f layer.tar -t
+<repo>:<candidate>-<arch>` per entry (the `--platform` global flag picks that arch's `ubi-micro`
+from the manifest list), then `crane index append -m … -m … -t <repo>:<candidate>` and returns the
+index `repo@sha256:…`. Verified against a throwaway `crane registry serve` on 127.0.0.1 with the
+pinned `ubi-micro`: result is `application/vnd.oci.image.index.v1+json` with `linux/amd64` and
+`linux/arm64/v8`; the model layer digest is shared, only the base layer differs. Per-arch tags
+(`<candidate>-amd64`, `<candidate>-arm64`) remain in quay as a side effect — acceptable, they are
+what the index points at. `sign_modelcar` adds `--recursive`: containers/image resolves the index
+to one instance and looks up the sigstore attachment by that **instance** digest, so signing only
+the index would fail the device's `policy.json`. The Fleet keeps pinning the index digest
+(promotion regex unchanged). Committed in `d240ec6` (`pipeline/act_flywheel_pipeline.py`,
+`pipeline/act_flywheel_pipeline.yaml`, `device/README.md`).
+**Decision:** ship as described; the Fleet's promotion regex is unchanged since it still pins a
+single digest (the index).
+**Unverified until the next DSP run** (none run — a promotion run opens a PR): the recursive
+signature under the device's Rekor-enforcing policy, and the Rekor entries (expect one per instance
+plus the index).
+
+---
+
+## D080 — `COSIGN_PASSWORD` comes from the Secret; the key stays unencrypted for now
+
+**Date:** 2026-09-09
+**Context:** D026 row 13 (signing-hygiene half); companion to D079 in the same `d240ec6` commit.
+**Record:** `sign_modelcar` no longer hardcodes `COSIGN_PASSWORD=""`: `use_secret_as_env(
+cosign-signing-key, {"cosign.password": "COSIGN_PASSWORD"}, optional=True)` — same key name as the
+Tekton agent's `cosign-signing` Secret. If the key is absent the component logs it and assumes an
+unencrypted key.
+**Blocked:** adding the key to the live Secret was blocked by the session's write classifier; the
+operator runs `oc patch secret cosign-signing-key -n flywheel --type merge -p
+'{"stringData":{"cosign.password":""}}'` (empty because the current key has no passphrase — proven
+by every signing run to date) as a manual follow-up.
+**Decision:** ship the optional secretKeyRef now; re-keying with a passphrase would change
+`cosign.pub` on the device's `policy.json` and is a Fury-rebuild item.
