@@ -60,6 +60,13 @@ spec:
     - name: TLS_VERIFY
       type: string
       default: "true"
+    - name: FORMAT
+      type: string
+      default: docker
+      description: >-
+        Image manifest format. `docker` is required: the OCI image spec has no SHELL or
+        HEALTHCHECK, so under `oci` buildah ignores the Dockerfile's `SHELL ["/bin/bash","-c"]`
+        (`source` then fails with exit 127) and drops the HEALTHCHECK the Fleet's quadlet relies on.
   results:
     - name: IMAGE_URL
       description: Pushed image reference with tag
@@ -97,6 +104,8 @@ spec:
         value: $(params.JOBS)
       - name: PARAMS_TLS_VERIFY
         value: $(params.TLS_VERIFY)
+      - name: PARAMS_FORMAT
+        value: $(params.FORMAT)
       - name: WORKSPACES_SOURCE_PATH
         value: $(workspaces.source.path)
       - name: WORKSPACES_DOCKERCONFIG_BOUND
@@ -164,10 +173,11 @@ spec:
         read -ra EXTRA_ARGS <<< "${PARAMS_BUILD_EXTRA_ARGS}"
 
         phase "buildah $(buildah version | awk '/^Version/{print $2}')"
-        phase "Building ${IMAGE} for ${PARAMS_PLATFORMS} (jobs=${PARAMS_JOBS}) from ${PARAMS_DOCKERFILE}"
+        phase "Building ${IMAGE} for ${PARAMS_PLATFORMS} (format=${PARAMS_FORMAT}, jobs=${PARAMS_JOBS}) from ${PARAMS_DOCKERFILE}"
         df -h "${WORKSPACES_SOURCE_PATH}" | tail -1
 
         buildah --tls-verify="${PARAMS_TLS_VERIFY}" bud \
+          --format "${PARAMS_FORMAT}" \
           --platform "${PARAMS_PLATFORMS}" \
           --manifest "${IMAGE}" \
           --jobs "${PARAMS_JOBS}" \
