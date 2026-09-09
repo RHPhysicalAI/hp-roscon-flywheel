@@ -1,7 +1,7 @@
 <!-- This project was developed with assistance from AI tools. -->
 # CPU inference spike — desktop stand-in device (D024)
 
-**Date:** 2026-09-08 · **Gates:** Phase 4.5 C (Fleet-delivered application) · **Decision:** D024
+**Date:** 2026-09-08, updated 2026-09-09 · **Gates:** Phase 4.5 C (Fleet-delivered application) · **Decision:** D024
 
 The desktop stand-in device is a RHEL 10 KVM VM (8 vCPU / 16 GiB, no GPU) that runs the ACT
 policy on CPU while the sim, camera bridge and host runner stay on the host RTX 5090. D024 gates
@@ -11,8 +11,8 @@ for criteria 2–3.
 | # | Criterion (D024) | Result |
 |---|---|---|
 | 1 | p95 forward latency < 0.5 × (`n_action_steps`/50) s | **PASS** — 83.2 ms vs 1000 ms (8 threads) |
-| 2 | `ros2 topic hz` on the commanded-action topic: no gap > 40 ms | **FAIL** (2026-09-08, in the RHEM-managed container) — max 335 ms, 6.2 % of intervals > 40 ms; see Part 2 below |
-| 3 | 20-seed D020 eval within 10 points of GPU v2 (86%) | **INVALID from the VM** (2026-09-08) — the coordinator's seeded reset and cube judge use Gazebo transport, which is host-local; see Part 3 below |
+| 2 | `ros2 topic hz` on the commanded-action topic: no gap > 40 ms | **FAIL as written** — C2 (30/0.95): max 335 ms, 6.2 % > 40 ms; C3 (100/0.5, D058): max 313 ms, **0.34 %** > 40 ms; see Part 2 and "C3 part 2" below |
+| 3 | 20-seed D020 eval within 10 points of GPU v2 (86%) | **PASS** (2026-09-09, C3 role split) — **18/20 = 90 %** vs GPU 17/20; the 2026-09-08 attempt from the VM was invalid (Gazebo transport is host-local); see "C3 part 3" below |
 
 ## Model under test
 
@@ -397,3 +397,76 @@ Blocker and options: C3 decisions (disk).
 
 - `device/spike/bench_cpu_forward.py` — the part-1 benchmark (re-run on the VM to get in-guest numbers)
 - `device/README.md` — VM sizing, provisioning order, flags verified
+
+## C3 part 2 — commanded-action cadence at 100/0.5 (probe log read after the 2026-09-09 recovery)
+
+Log: `~/spike/cadence-c3-235449.log` on the VM (`cadence_probe.py 420 24.5`, same probe as C2,
+inside the device container, `ROLE=policy`, `actions_per_chunk=100`, `chunk_size_threshold=0.5`).
+Run 23:54:49–00:01:49Z, host coordinator driving 25 s episodes (`EPISODE_LEN=25`); eight full
+24.5 s windows plus a partial ninth:
+
+| ep | start (Z) | msgs | rate (wall) | gap p50 | p95 | p99 | max | > 40 ms | > 100 ms | > 200 ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 23:55:27 | 1145 | 46.8 Hz | 20.1 ms | 22.3 | 26.5 | **312.8** | 7 | 2 | 2 |
+| 2 | 23:56:17 | 1173 | 47.9 Hz | 20.1 ms | 22.5 | 25.5 | 61.0 | 3 | 0 | 0 |
+| 3 | 23:57:02 | 1164 | 47.5 Hz | 20.1 ms | 23.0 | 29.9 | 112.4 | 8 | 1 | 0 |
+| 4 | 23:57:47 | 1172 | 47.9 Hz | 20.2 ms | 22.8 | 26.5 | 64.7 | 4 | 0 | 0 |
+| 5 | 23:58:37 | 1176 | 48.0 Hz | 20.1 ms | 22.5 | 27.0 | 63.3 | 2 | 0 | 0 |
+| 6 | 23:59:22 | 1176 | 48.0 Hz | 20.1 ms | 22.6 | 26.8 | 59.0 | 4 | 0 | 0 |
+| 7 | 00:00:07 | 1176 | 48.0 Hz | 20.1 ms | 22.6 | 25.7 | 35.0 | 0 | 0 | 0 |
+| 8 | 00:00:52 | 1173 | 47.9 Hz | 20.1 ms | 22.5 | 26.6 | 99.6 | 4 | 0 | 0 |
+| 9 (partial, 11.5 s) | 00:01:38 | 531 | 46.2 Hz | 20.1 ms | 22.8 | 24.9 | 35.1 | 0 | 0 | 0 |
+
+All eight full windows: **9347 intervals, max 312.8 ms, 32 (0.34 %) over 40 ms**. Criterion "no
+gap > 40 ms" → **still FAIL as written**. Against C2 (30/0.95, D053: 6408 intervals, max 335.2 ms,
+398 = 6.21 % over 40 ms): the over-threshold share fell 18× (6.21 % → 0.34 %), the wall rate rose
+from ~36 Hz to ~48 Hz (the client now misses ~4 % of 50 Hz ticks instead of ~28 %), p95 moved from
+~55 ms to ~22.5 ms and p99 from ~225 ms to ~27 ms, and the > 200 ms stalls (28–46 per C2 episode)
+are gone except for two in the first episode after the coordinator start (ep 1's 312.8 ms; the next
+worst window is 112.4 ms, and two windows — ep 7 and the partial ep 9 — had no gap over 40 ms at
+all). Excluding ep 1, 25 of 8203 intervals (0.30 %) exceed 40 ms with max 112.4 ms. The residual
+gaps are still one forward pass each (~60–110 ms), landing where a chunk boundary meets a slow
+forward; at 100/0.5 the queue hides most of them but not all. D053's conclusion stands: part 2 is
+a FAIL on the letter of the criterion, D024's first fallback (raise the chunk toward
+`n_action_steps`) does most of what it promised, and part 3 remains the arbiter.
+
+## C3 part 3 — 20-seed D020 eval, coordinator on the host, policy on the VM: **PASS 18/20 (90 %)**
+
+Run 11:15:46–11:40:03Z (2026-09-09), after the disk recovery (D062), with the disk guard armed and
+266 GB free, the loop coordinator stopped, and the device app target restarted first (a goal left
+executing at the 00:44Z pause made the rosetta client answer `Rejected: already running` to every
+new goal; the first attempt at 11:15Z recorded 11 seeds as `goal rejected — episode recorded as
+aborted` and was stopped — log `~/eval-cpu-v2-ft160-c3-INVALID-stale-goal.log`; see the recovery
+addendum). Command, from the host:
+
+```bash
+IMAGE=quay.io/jary/soarm-flywheel@sha256:2ad1fb1c393a6a5c5281abab83187d9e4aeecc05fdca8e12b7d247ced0009e11 \
+  MODE=eval MODEL_VERSION=eval-cpu-v2-ft160 tools/host/run-coordinator.sh 20 1000
+```
+
+Device: `ROLE=policy`, CPU, `actions_per_chunk=100`, `chunk_size_threshold=0.5`, served
+`act-v2-ft160` (recorded as `served_model_version`). Host: reset + judge over local Gazebo
+transport, D020 config (`EPISODE_LEN=60`, `cube_medium`, radius 0.03, yaw 180, `RECORD=false`).
+Result JSON: `docs/eval-records/eval-cpu-v2-ft160.json` (copy of
+`~/flywheel-data/eval/eval-cpu-v2-ft160.json`); all 20 episodes `goal_accepted: true`.
+
+| seed | 1000 | 1001 | 1002 | 1003 | 1004 | 1005 | 1006 | 1007 | 1008 | 1009 | 1010 | 1011 | 1012 | 1013 | 1014 | 1015 | 1016 | 1017 | 1018 | 1019 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| CPU (VM, 100/0.5) cubes | 3 | 3 | 3 | 3 | 3 | 3 | 3 | **1** | 3 | 3 | 3 | 3 | 3 | **2** | 3 | 3 | 3 | 3 | 3 | 3 |
+| GPU (host, 30/0.95) | fail | pass | pass | pass | pass | pass | pass | pass | pass | pass | fail | pass | pass | pass | pass | pass | pass | pass | fail | pass |
+
+```
+[eval] DONE — 18/20 success (90.0%), mean_cubes=2.85, cubes_hist={'0': 0, '1': 1, '2': 1, '3': 18}, mean_smooth=0.005143
+```
+
+Successful episodes took 1172–2444 `/joint_states` steps (23–49 s at 50 Hz; the host coordinator
+counts them, so the D056 step artefact is gone); the two failures ran to the 60 s cap (2955 and
+2932 steps). **Criterion 3: 18/20 = 90 % vs the GPU same-seed baseline 17/20 = 85 % and the 86 %
+full-run figure → PASS** (threshold ≥ 15/20). The two seed sets do not overlap: CPU missed 1007
+and 1013, the GPU missed 1000, 1010 and 1018 — at n = 20 this is one run's noise on a ~85–90 %
+policy, not evidence that CPU is better; the GPU baseline was also taken at 30/0.95 (D059 caveat).
+
+**D024 status after C3:** criterion 1 PASS (part 1), criterion 2 FAIL as written but 0.34 % over
+40 ms at 100/0.5 (C3 part 2), criterion 3 PASS. The first fallback (chunk toward `n_action_steps`,
+D058) is applied and sufficient; lower RTF, vCPU pinning and VFIO were not needed. The desktop
+stand-in is a valid device for the demo path on task success, with the cadence residual recorded.
