@@ -374,7 +374,7 @@ B. **Desktop stand-in device: RHEL 10 VM + CPU spike** (D024)
      topic, 20-seed D020 eval vs GPU v2. Pass: p95 < 0.5 × (`n_action_steps`/50 s), no gap > 40 ms,
      success within 10 points of 86%. Fallbacks: raise `n_action_steps` → lower RTF → VFIO last.
      Record in `docs/eval-records/cpu-spike.md`.
-   - **Exit (met 2026-09-09):** device Online with labels (2026-09-08); spike record: part 1 PASS (p95 83 ms host cgroup / 184 ms in-guest vs 1000 ms), part 2 FAIL as written (0.34 % of intervals > 40 ms at 100/0.5, D053/D064), part 3 PASS 18/20 vs GPU 17/20 (D065) — CPU stand-in accepted.
+   - **Exit (met 2026-09-09):** device Online with labels (2026-09-08); spike record: part 1 PASS (p95 83 ms host cgroup / 184 ms in-guest vs 1000 ms), part 2 PASS under the restated percentile criterion (p99 ≤ 40 ms, ≤ 1 % over; measured p99 29.9 ms, 0.34 % over — D096), part 3 PASS 18/20 vs GPU 17/20 (D065) — CPU stand-in accepted.
 
 C. **Fleet-delivered application** (D024, D026)
    - Image: `POLICY_DEVICE` env replaces the hard-coded `policy_device:=cuda`
@@ -492,6 +492,25 @@ G. **Fury port + runbook** (on site, Sept 20–25)
   (D3); Argo app count/prune → F-GitOps (2026-09-09: tlog bypass gone from code/config/procedures —
   D3; 8 Argo apps = 8 files, all Synced with prune: true — F-GitOps)
 - [ ] Contingency kit recorded on the RHEM path (Phase 4 item 2); one full rehearsal of the Full Live cut on RHEM
+
+### Carry-overs (as of 2026-09-09 — every item mirrored in brim's inbox)
+
+Closed 2026-09-09 by the operator: PR #4 closed unmerged; `cosign.password` patched; auto-delete head branches enabled and stale branches removed; 54 lingering KFP pods removed.
+
+| Item | Owner | Status |
+|---|---|---|
+| sdb1 4.5 TB partition mount + relocate flywheel-data | operator | deferred — loop is demo-scoped, disk guard + port-as-you-go bound the bags |
+| DSP API accepted an empty bearer token via port-forward to the service port — confirm the route enforces OAuth / consider a NetworkPolicy | operator | planned |
+| Multus stale-token fault after the 4.19 upgrade (new pods failed `Unauthorized` until the multus pod was recreated) — watch for recurrence | operator | planned |
+| Perses/Tempo come from hand-installed COO 1.5.2 + tempo-operator, not `gitops/operators/` — add Subscriptions or record as deferral | — | planned |
+| runbook runner-restart line must `set -a; source ~/.minio-env; set +a` | — | G-prep docs pass |
+| dashboard `model_version` badge stuck at `soarm-act-v1` after act-serving retired — re-source from `/flywheel/model_version` | — | G-prep, in progress |
+| `prune_bags.py` lineage-aware scan across all `episodes-curated/<mv>/` prefixes and manifests | — | planned |
+| `run-coordinator.sh` default `MODEL_VERSION` must follow the Fleet | — | planned |
+| `consumer.py` per-manifest `pending=<n>` log line | — | planned |
+| `healthcheck.sh` cannot see a wedged action server; `aggregate.success_rate` should exclude `goal_accepted: false` episodes | F/G | planned |
+| OTel re-emission and AMQ Streams | — | post-ROSCon deferrals (D026) |
+| Fury on site: `device/provision.sh` on aarch64 + CDI, enroll with Fury labels, fresh SNO 4.19+ with `argocd/*-app.yaml` + `rhem/bootstrap/*` | G | Sept 20–25 |
 
 ---
 

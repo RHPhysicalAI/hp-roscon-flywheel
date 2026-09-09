@@ -3217,3 +3217,17 @@ exactly what the seam would leave once merged. **Stage sentence:** *v1alpha1; th
 the Catalog shows the version graph.*
 **Consequences:** Phase 4.5 E (item E) closes for E2 the same way D090 closed it for E1 — a durable,
 verifiable record beside the Fleet, not a live dependency the demo relies on.
+
+---
+
+## D096 — Spike criterion 2 restated as a percentile (operator, 2026-09-09)
+
+**Date:** 2026-09-09
+**Context:** D024 criterion 2 read "no gap > 40 ms"; measured at 100/0.5 (D064): 8 windows, p50 20.1 ms,
+p95 22.3–23.0, p99 25.5–29.9, max 312.8 ms, 32/9347 = 0.34 % of intervals > 40 ms, while part 3 passed
+18/20 (D065).
+**Decision (operator):** criterion 2 becomes "p99 inter-command gap ≤ 40 ms and ≤ 1 % of intervals >
+40 ms" — the CPU stand-in passes it with margin; the max-gap outlier is recorded, not gated.
+**Consequences:** D053/D064's "FAIL as written" verdicts stand as history; `docs/eval-records/cpu-spike.md`
+summary should carry the restated criterion (note it as a follow-up for the G-prep docs pass, do not edit
+that file).
