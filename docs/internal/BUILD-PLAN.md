@@ -23,7 +23,7 @@ Phase 3 closes it with governance; Phase 3+ makes the improvement autonomous.
 | 3 — Training + close the loop | **Complete** (2026-09-08) — eval harness (D020), self-improvement proof (D021: 73% → 86%, p=0.019), governed pipeline through RHOAI/RHTAS with PR #1 merged and swapped, loop closed on v2; static chart shipped | D015, D020–D022 |
 | 3+ — Bootstrap loop | **Post-ROSCon** — designed, prerequisites complete (recording + trainable data landed in Phase 2.5, flywheel-data training proven in Phase 3), not scheduled; the remaining work is the privileged expert, a held-out randomized eval set, and the curriculum controller (operator decision 2026-09-09) | `BOOTSTRAP-LOOP.md` |
 | 4 — Demo hardening + Fury prep | **In progress** — item 1 done (2026-09-08): `docs/DEMO_RUNBOOK.md`, Short Cut + Full Live, every screen verified live (D023) | D023 |
-| 4.5 — RHEM device plane | **In progress** — A–F, G-prep done; full-project review, hardening and deployment done (D113–D130); kit recording + rehearsal (operator), then Fury on site | D024–D120 |
+| 4.5 — RHEM device plane | **In progress** — A–F, G-prep done; full-project review, hardening and deployment done (D113–D130); kit recording + rehearsal (operator), then Fury on site | D024–D130 |
 
 ---
 
