@@ -176,7 +176,7 @@ spec:
         phase "Building ${IMAGE} for ${PARAMS_PLATFORMS} (format=${PARAMS_FORMAT}, jobs=${PARAMS_JOBS}) from ${PARAMS_DOCKERFILE}"
         df -h "${WORKSPACES_SOURCE_PATH}" | tail -1
 
-        buildah --tls-verify="${PARAMS_TLS_VERIFY}" bud \
+        buildah bud --tls-verify="${PARAMS_TLS_VERIFY}" \
           --format "${PARAMS_FORMAT}" \
           --platform "${PARAMS_PLATFORMS}" \
           --manifest "${IMAGE}" \
@@ -191,29 +191,59 @@ spec:
         df -h "${WORKSPACES_SOURCE_PATH}" | tail -1
 
         phase "Pushing manifest list + platform images to docker://${IMAGE}"
-        buildah --tls-verify="${PARAMS_TLS_VERIFY}" manifest push --all \
+        buildah manifest push --all --tls-verify="${PARAMS_TLS_VERIFY}" \
           --digestfile /tmp/digest \
           "${IMAGE}" "docker://${IMAGE}"
         DIGEST="$(cat /tmp/digest)"
         [[ -n "${DIGEST}" ]] || { echo "empty digest file" >&2; exit 1; }
         phase "Pushed ${IMAGE} -> ${DIGEST}"
 
-        # Platform digests as the registry now serves them (falls back to the local list).
-        LIST_JSON="$(buildah --tls-verify="${PARAMS_TLS_VERIFY}" manifest inspect "docker://${PARAMS_IMAGE_REPO}@${DIGEST}" 2>/dev/null \
-          || buildah manifest inspect "${IMAGE}")"
-        PLATFORM_DIGESTS="$(python3 - <<'PY' "${LIST_JSON}"
-        import json, sys
-        d = json.loads(sys.argv[1])
+        # Platform digests as the registry serves them. The local list's instance digests differ
+        # from the pushed ones (layers are compressed on push) and this buildah cannot inspect a
+        # remote list, so read the pushed index over the registry API with the same credentials.
+        cat > /tmp/platform_digests.py <<'PY'
+        import json, os, sys, urllib.error, urllib.parse, urllib.request
+        repo, digest = sys.argv[1], sys.argv[2]
+        host, path = repo.split("/", 1)
+        url = f"https://{host}/v2/{path}/manifests/{digest}"
+        headers = {"Accept": "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json"}
+        auth = ""
+        cfg = os.path.join(os.environ.get("DOCKER_CONFIG", os.path.expanduser("~/.docker")), "config.json")
+        try:
+            for k, v in json.load(open(cfg)).get("auths", {}).items():
+                if k.rstrip("/").endswith(host) and v.get("auth"):
+                    auth = v["auth"]
+                    break
+        except OSError:
+            pass
+        def get(u, h):
+            return urllib.request.urlopen(urllib.request.Request(u, headers=h), timeout=60)
+        try:
+            r = get(url, headers)
+        except urllib.error.HTTPError as e:
+            if e.code != 401:
+                raise
+            www = e.headers.get("WWW-Authenticate", "")
+            parts = dict(p.strip().split("=", 1) for p in www.split(" ", 1)[1].split(","))
+            q = {k: parts[k].strip('"') for k in ("service", "scope") if k in parts}
+            th = {"Authorization": "Basic " + auth} if auth else {}
+            tok = json.load(get(parts["realm"].strip('"') + "?" + urllib.parse.urlencode(q), th))
+            headers["Authorization"] = "Bearer " + (tok.get("token") or tok.get("access_token"))
+            r = get(url, headers)
         out = []
-        for m in d.get("manifests", []):
+        for m in json.load(r).get("manifests", []):
             p = m.get("platform", {})
             if p.get("os", "unknown") == "unknown":
                 continue
-            out.append(f"{p.get('os')}/{p.get('architecture')}{('/' + p['variant']) if p.get('variant') else ''}={m['digest']}")
+            out.append(f"{p['os']}/{p['architecture']}{'/' + p['variant'] if p.get('variant') else ''}={m['digest']}")
         print(" ".join(out))
         PY
-        )"
-        phase "Platform digests: ${PLATFORM_DIGESTS}"
+        if PLATFORM_DIGESTS="$(python3 /tmp/platform_digests.py "${PARAMS_IMAGE_REPO}" "${DIGEST}")" && [[ -n "${PLATFORM_DIGESTS}" ]]; then
+          phase "Platform digests (registry): ${PLATFORM_DIGESTS}"
+        else
+          PLATFORM_DIGESTS="LOCAL-PRE-PUSH $(buildah manifest inspect "${IMAGE}" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(f"{m[\"platform\"][\"os\"]}/{m[\"platform\"][\"architecture\"]}={m[\"digest\"]}" for m in d.get("manifests", []) if m.get("platform", {}).get("os") != "unknown"))')"
+          phase "WARNING: registry query failed; reporting local pre-push digests: ${PLATFORM_DIGESTS}"
+        fi
 
         printf '%s' "${IMAGE}" > "$(results.IMAGE_URL.path)"
         printf '%s' "${TAG}" > "$(results.IMAGE_TAG.path)"
