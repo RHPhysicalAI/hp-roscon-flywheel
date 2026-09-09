@@ -3589,3 +3589,40 @@ rather than new Subscription manifests against operator versions this pass didn'
 **Verification:** `bash -n` on both shell scripts, `ast.parse` on `prune_bags.py` and
 `coordinator.py`, and an `ast.parse` of the embedded `consumer.py` block extracted from the YAML —
 all clean. No live cluster or device state changed by this decision.
+
+---
+
+## D114 — DSP empty-bearer-token finding closed: real gap, bounded blast radius, NetworkPolicy would not have fixed it
+
+**Date:** 2026-09-09
+**Context:** carry-over row "DSP API accepted an empty bearer token via port-forward to the service
+port — confirm the route enforces OAuth / consider a NetworkPolicy" (owner: operator). `svc/
+ds-pipeline-dspa` exposes three ports: `8443/oauth` (fronted by the oauth-proxy container, the only
+one the Route uses) and `8888/http` + `8887/grpc` (the raw `ml-pipeline-api-server`, no auth of its
+own — the runbook's own `oc port-forward … 8888:8888` hits this port directly).
+**Record (verified live, 2026-09-09):**
+- Route, no `Authorization` header: **403**. Route, `Authorization: Bearer ` (empty): **403**. The
+  oauth-proxy path is correctly gated.
+- Port-forward to `8888`, `Authorization: Bearer ` (empty): **200**, full `pipelines` list returned
+  — the finding reproduces exactly as reported.
+- The operator-managed `NetworkPolicy/ds-pipelines-dspa` (owned by the `DataSciencePipelinesApplication`
+  CR, `manifestival: new`) already restricts ingress to 8888/8887 to a specific set of in-cluster pod
+  selectors — and it does not stop this. `oc port-forward` tunnels apiserver → kubelet → pod directly
+  and never traverses the pod network a NetworkPolicy governs, so **a NetworkPolicy cannot close this
+  gap**, regardless of how it's written. This corrects the carry-over's suggested remedy.
+- `oc auth can-i create pods/portforward -n flywheel` is **no** for `system:authenticated` and for
+  the namespace's default ServiceAccount. Enumerating every non-`system:` RoleBinding/
+  ClusterRoleBinding in the cluster: the only User/Group bindings are `kube:admin` (cluster-admin —
+  the credential `~/sno-flywheel/auth/kubeconfig` already holds) and `rhods-admins` (RHOAI dashboard
+  admin group, **membership empty**). Nobody can reach the unauthenticated port who doesn't already
+  hold cluster-admin.
+**Decision:** accept as a documented, bounded defense-in-depth gap — the actual mitigating control is
+RBAC on `pods/portforward` (already correctly scoped to cluster-admin only), not a NetworkPolicy. No
+manifest changes made: writing a NetworkPolicy for this would be theater, and locking `pods/
+portforward` down further than "cluster-admin only" is not meaningful on a single-operator SNO. If
+DSP/RHOAI ever gains a way to disable the plain-HTTP backend port or front it with its own auth,
+revisit; that would be an RHOAI product change, out of this repo's scope to hack around.
+**Consequences:** the carry-over row is closed (not "planned"); the runbook's own use of `oc
+port-forward … svc/ds-pipeline-dspa 8888:8888` (Beat 3, Full Live Part 3) is unaffected — it was
+always run from the same cluster-admin kubeconfig this finding shows is the only principal who can
+reach it anyway.

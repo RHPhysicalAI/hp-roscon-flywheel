@@ -516,7 +516,7 @@ Closed 2026-09-09 (D113): lineage-aware prune, Fleet-following coordinator defau
 | Item | Owner | Status |
 |---|---|---|
 | sdb1 4.5 TB partition mount + relocate flywheel-data | operator | deferred — loop is demo-scoped, disk guard + port-as-you-go bound the bags |
-| DSP API accepted an empty bearer token via port-forward to the service port — confirm the route enforces OAuth / consider a NetworkPolicy | operator | planned |
+| DSP API accepted an empty bearer token via port-forward to the service port — confirm the route enforces OAuth / consider a NetworkPolicy | operator | **closed (D114)** — Route confirmed 403 on empty token; the raw 8888 backend is genuinely unauthenticated but a NetworkPolicy can't gate `oc port-forward` (bypasses the SDN); RBAC already restricts `pods/portforward` in `flywheel` to cluster-admin only (verified) — accepted as bounded |
 | Multus stale-token fault after the 4.19 upgrade (new pods failed `Unauthorized` until the multus pod was recreated) — watch for recurrence | operator | planned |
 | Perses/Tempo come from hand-installed COO 1.5.2 + tempo-operator, not `gitops/operators/` — add Subscriptions or record as deferral | — | deferred (D113) — `argocd/README.md` row 6 already documents the gap; no Subscription manifests against unverified operator versions this pass |
 | runbook runner-restart line must `set -a; source ~/.minio-env; set +a` | — | **done (3095ced)** |
