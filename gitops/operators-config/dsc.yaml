@@ -36,7 +36,8 @@ spec:
     modelmeshserving:
       managementState: Removed
     modelregistry:
-      managementState: Removed
+      managementState: Managed
+      registriesNamespace: rhoai-model-registries   # Phase 4.5 E1 (D027): ModelRegistry CR + MariaDB in model-registry.yaml
     ray:
       managementState: Removed
     kueue:
