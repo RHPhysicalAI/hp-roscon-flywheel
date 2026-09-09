@@ -25,3 +25,10 @@ spec:
   source: redhat-operators
   sourceNamespace: openshift-marketplace
   installPlanApproval: Automatic
+  config:
+    # SNO: the CSV asks 3 replicas x 500m CPU (99% of the node's requests were allocated while it
+    # ran at 12%); the override keeps the CSV limits and drops the request so the Model Registry
+    # (Phase 4.5 E1) and the DSP run pods can schedule. Real load is unchanged.
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {cpu: 500m, memory: 4Gi}
