@@ -4,8 +4,9 @@ Applied AFTER the operators in `gitops/operators/` reach `Succeeded` (Argo canno
 CRDs don't exist yet). Owned by the Argo `operators-config` Application.
 
 - `dsc.yaml` — RHOAI `DataScienceCluster`, minimal: **Data Science Pipelines** (runs
-  `pipeline/act_flywheel_pipeline.py`) and **KServe** (serves the modelcar on the GB10/GB300 target)
-  managed; dashboard, workbenches, model registry, Ray, Kueue, TrustyAI etc. removed. SNO headroom is
+  `pipeline/act_flywheel_pipeline.py`) and **KServe** (managed but unused — the RHEM device serves the
+  policy, D057) managed; dashboard, workbenches, Ray, Kueue, TrustyAI etc. removed; model registry
+  arrives with Phase 4.5 E1. SNO headroom is
   fine but there's no reason to carry them.
 - `dspa.yaml` — `DataSciencePipelinesApplication` in the `flywheel` project, object storage = our MinIO
   (`minio.minio.svc:9000`, bucket `pipelines`, creds from `hub-credentials`). The pipeline's

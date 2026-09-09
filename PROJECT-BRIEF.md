@@ -43,7 +43,8 @@ sim picks up v2 policy -> better rollouts -> loop closes
 
 ### What runs on the single box (SNO)
 
-- **Hub/platform plane:** Single-Node OpenShift hosting Argo CD, MinIO, Kafka (AMQ Streams),
+- **Hub/platform plane:** Single-Node OpenShift hosting Argo CD, MinIO, Kafka (a single-broker
+  Strimzi-image Deployment — the AMQ Streams operator is deferred past ROSCon, D026),
   RHTAS/sigstore trust plane, KServe, Perses/Tempo observability, dashboard.
 - **Device plane (simulated):** SO-ARM101 in Gazebo, serving an ACT policy, generating episodes.
 - **Data plane (the flywheel):** sim -> curator -> sync-agent -> Kafka -> training -> sign -> promote.
