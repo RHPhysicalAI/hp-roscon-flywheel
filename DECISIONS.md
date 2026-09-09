@@ -2354,3 +2354,79 @@ and hours of assembly — not a guard).
 **Consequences:** lesson recorded in brim: never retire a limiter without arming its replacement in
 the same step. `sdb1` (4.5 TB ext4, unmounted) remains an inbox todo for a durable second-disk
 solution.
+
+---
+
+## D063 — A resumed VM is not recovered until its clock is stepped and the policy action server is restarted
+
+**Date:** 2026-09-09
+**Context:** D062 records the archive, the resume and the clock finding. Two further facts from
+the same recovery: (1) `virsh domtime --sync` fixed `sno-flywheel` (11:00:47Z, node heartbeat
+11:01:01Z, still Ready, COs clean) but not `act-device`; `virsh -c qemu:///system domtime --now
+act-device` did (11:15:24Z, chrony 0.09 µs of NTP). (2) After the resume the device container was
+`(healthy)` (podman probe + `Published model_version`) and flightctl said Online/UpToDate/Healthy,
+yet the rosetta client answered every `/run_policy` goal with `Rejected: already running` — the
+goal that was executing at 00:44:45Z when qemu paused the guest was never cancelled or timed out,
+so the first part-3 attempt (11:15:56Z) recorded 11 seeds as `goal rejected — episode recorded as
+aborted` before it was stopped (log kept as `~/eval-cpu-v2-ft160-c3-INVALID-stale-goal.log`). The
+coordinator's own 2188 `Goal rejected` lines during the outage were the same symptom.
+`sudo systemctl restart act-inference-128875-flightctl-quadlet-app.target` on the VM (11:21:04Z,
+`(healthy)` in 57 s) cleared it; the eval was re-run from seed 1000.
+**Decision:** the post-resume checklist for the desktop stand-in is: resume → `virsh
+domtime --now` on each guest (verify `date -u` in the guest) → restart the Fleet app target on the
+device → confirm `Published model_version` → only then start the coordinator. And `healthcheck.sh`
+is blind to a wedged action server: it compares the latched `/flywheel/model_version` with
+`$MODEL_VERSION`, which stays true while every goal is refused. Candidates, cheapest first: the
+coordinator cancels all goals on the server (`CancelGoal` with a zero goal id) when it sees N
+consecutive rejections, or the policy role's health probe fails after the server has rejected
+goals for longer than one episode. Not chosen here — the fix owner is the runtime image (F).
+**Consequences:** the runbook's contingency section should carry the checklist; the eval JSON's
+`steps=1`/`steps=7–11` rows with `task_success=false` are the signature of a rejected goal, not a
+policy result; the per-episode `goal_accepted` field already flags them, but `aggregate.success_rate`
+still counts them as failures — it should exclude (or separately report) non-accepted episodes.
+
+---
+
+## D064 — Part 2 read-out does not change D053's conclusion
+
+**Date:** 2026-09-09
+**Context:** the C3 probe log (`~/spike/cadence-c3-235449.log`, 23:54:49–00:01:49Z, 100/0.5) was
+read after the resume: eight full 24.5 s windows, 9347 intervals, **max 312.8 ms, 32 (0.34 %) over
+40 ms**, wall rate 46.8–48.0 Hz, p50 20.1 ms, p99 25.5–29.9 ms. C2 at 30/0.95 (D053): 6.21 % over
+40 ms, max 335.2 ms, ~36 Hz, p99 ≈ 225 ms. Excluding the first window after the coordinator
+start: 25 of 8203 (0.30 %), max 112.4 ms; two windows had no gap over 40 ms.
+**Decision:** D053 stands as written — part 2 is still a FAIL on the letter of "no gap
+> 40 ms" — with the note that D024's first fallback (chunk toward `n_action_steps`, D058) removed
+18× of the over-threshold share and all of the sustained > 200 ms stalls; the residual gaps are
+single slow forwards at chunk boundaries. Part 3 remains the arbiter (next entry). Full table in
+`docs/eval-records/cpu-spike.md`, "C3 part 2".
+**Consequences:** none beyond the standing D053 verdict; see D065 for the criterion-2 wording
+question this leaves open.
+
+---
+
+## D065 — Part 3 passes: the CPU stand-in at 100/0.5 scores 18/20 on the D020 seeds; D024 criterion 3 closed, criterion 2 stays a documented residual
+
+**Date:** 2026-09-09
+**Context:** `IMAGE=<2ad1fb1c…> MODE=eval MODEL_VERSION=eval-cpu-v2-ft160 tools/host/run-coordinator.sh
+20 1000`, 11:15:46–11:40:03Z, guard armed, 266 GB free, loop stopped, device app target restarted
+first (stale goal, D063). Result `aggregate.success_rate` 0.90 (18/20, mean cubes 2.85,
+hist 0/1/1/18), `served_model_version: act-v2-ft160`, all 20 `goal_accepted: true`; failures at
+seeds 1007 (1/3) and 1013 (2/3), both at the 60 s cap. GPU same-seed baseline (30/0.95): 17/20,
+failures 1000, 1010, 1018 — all three passed on CPU. JSON copied to
+`docs/eval-records/eval-cpu-v2-ft160.json` (commit `c06f391`); write-up in `cpu-spike.md`, "C3
+part 3".
+**Decision:** D024 criterion 3 is met (≥ 15/20); together with criterion 1 this
+qualifies the desktop VM as the stand-in device for the demo on task success. D053's "success rate
+is the arbiter" resolves in favour of the stand-in; criterion 2 remains FAIL on the letter
+(0.34 % of intervals > 40 ms at 100/0.5, D064) and should be restated in D024 as a monitored
+residual rather than a gate, or re-cut to a rate/percentile form (e.g. ≤ 1 % of intervals > 40 ms,
+no sustained > 200 ms stall outside the first episode) that the current numbers pass. The wording
+decision is the operator's — recorded as an inbox todo — and D053 stands meanwhile. The
+non-overlapping failure sets (CPU 1007/1013 vs GPU 1000/1010/1018) are one run's noise at n = 20
+on a ~85–90 % policy, not a CPU-over-GPU claim; the GPU baseline also predates D059's 100/0.5
+defaults. No further D024 fallback (RTF, vCPU pinning, VFIO) is needed.
+**Consequences:** the runbook's Beat 6 may quote a device-served success rate again (18/20 with
+the role split), replacing the "lineage proof only" caveat from C2. The loop coordinator is left
+stopped after the eval per D062; restart is `IMAGE=<digest> tools/host/run-coordinator.sh` and
+requires the guard.

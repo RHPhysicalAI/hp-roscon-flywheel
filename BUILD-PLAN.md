@@ -23,7 +23,7 @@ Phase 3 closes it with governance; Phase 3+ makes the improvement autonomous.
 | 3 — Training + close the loop | **Complete** (2026-09-08) — eval harness (D020), self-improvement proof (D021: 73% → 86%, p=0.019), governed pipeline through RHOAI/RHTAS with PR #1 merged and swapped, loop closed on v2; static chart shipped | D015, D020–D022 |
 | 3+ — Bootstrap loop | Not started | `BOOTSTRAP-LOOP.md` |
 | 4 — Demo hardening + Fury prep | **In progress** — item 1 done (2026-09-08): `docs/DEMO_RUNBOOK.md`, Short Cut + Full Live, every screen verified live (D023) | D023 |
-| 4.5 — RHEM device plane | **In progress** (2026-09-08) — A done (SNO 4.19.44, RHEM 1.3.0 under Argo, ResourceSync Synced), B done except enrollment, C in progress | D024–D048 |
+| 4.5 — RHEM device plane | **In progress** — A, B, C done (device serves the policy role on RHEM, CPU stand-in validated 18/20); D next | D024–D065 |
 
 ---
 
@@ -374,7 +374,7 @@ B. **Desktop stand-in device: RHEL 10 VM + CPU spike** (D024)
      topic, 20-seed D020 eval vs GPU v2. Pass: p95 < 0.5 × (`n_action_steps`/50 s), no gap > 40 ms,
      success within 10 points of 86%. Fallbacks: raise `n_action_steps` → lower RTF → VFIO last.
      Record in `docs/eval-records/cpu-spike.md`.
-   - **Exit:** device Online in the RHEM UI with labels; spike record with numbers and a verdict.
+   - **Exit (met 2026-09-09):** device Online with labels (2026-09-08); spike record: part 1 PASS (p95 83 ms host cgroup / 184 ms in-guest vs 1000 ms), part 2 FAIL as written (0.34 % of intervals > 40 ms at 100/0.5, D053/D064), part 3 PASS 18/20 vs GPU 17/20 (D065) — CPU stand-in accepted.
 
 C. **Fleet-delivered application** (D024, D026)
    - Image: `POLICY_DEVICE` env replaces the hard-coded `policy_device:=cuda`
@@ -395,10 +395,7 @@ C. **Fleet-delivered application** (D024, D026)
    - **Superseded (C3, D057+):** the device runs the policy role only; coordinator + recorder + sim
      reset run beside the sim on the host (`tools/host/run-coordinator.sh`), bags stay on the host
      disk, and `tools/host/disk-guard.sh` must be armed before the loop runs.
-   - **Exit (2026-09-08, partial):** `applicationsSummary: Healthy` met (device `act-device`, Fleet
-     renderedVersion 3); curator receives `act-v2-ft160` episodes from the VM (lineage met; task
-     outcomes invalid until the C3 role split lands — gz-transport reset/judge is host-local);
-     unsigned tag fails to pull met (C-prep); `--insecure-ignore-tlog` removal pending item D.
+   - **Exit (met 2026-09-09 except the last):** `applicationsSummary: Healthy` (device policy role, renderedVersion 4, signed image Rekor index 3); curator receives `act-v2-ft160` episodes from the VM with real verdicts and non-null `dataset_path` (curated 194→214, rejected 58→104 on 2026-09-08 23:54–00:44Z); unsigned tag fails to pull (C-prep); `--insecure-ignore-tlog` removal → item D.
 
 D. **Promotion path rewrite** (D025)
    - `open_promotion_pr` becomes a two-regex edit of the Fleet (digest + `MODEL_VERSION`); the same
@@ -453,8 +450,8 @@ G. **Fury port + runbook** (on site, Sept 20–25)
 
 ### Exit criteria
 - [x] `flightctl get devices` shows the desktop VM Online, labels correct, `applicationsSummary: Healthy` (2026-09-08 22:52Z, device s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg)
-- [ ] Sim loop running against the VM: curator stamps episodes with the Fleet's `MODEL_VERSION`,
-  `episodes-curated/<mv>/` fills, `manifest-consumer` count advances
+- [x] Sim loop running against the VM: curator stamps episodes with the Fleet's `MODEL_VERSION`,
+  `episodes-curated/<mv>/` fills, `manifest-consumer` count advances (2026-09-09: curator stamps `act-v2-ft160`, `episodes-curated/act-v2-ft160/` 194→214; manifest-consumer count to be confirmed in D)
 - [ ] A DSP run on a pre-trained candidate (D023 path) opens a PR editing the Fleet (+ CatalogItem
   if E2); Model Registry shows the version with digest + metrics; merge → ResourceSync Synced →
   RHEM rollout completes → VM container restarts with the new `Published model_version:` → episodes
