@@ -14,8 +14,8 @@ on the presenting laptop and a USB stick (too large / binary for git — list th
 | `run6-swap-agent.log` | Beat 6 | the swap agent verifying the signature, exporting `models/act`, recreating the policy container as `act-v2-ft160` |
 
 Elsewhere in the repo: `docs/phase3-ladder.html` + `docs/eval-records/phase3-ladder/` +
-`src/eval-report/ladder_report.py` (Beat 4, reproduces every number), `gitops/act-serving/` (the
-merged flip), `docs/data-contract-eval-dashboard.md` (what Beat 2's stream contains).
+`src/eval-report/ladder_report.py` (Beat 4, reproduces every number), `git show 1eab082:gitops/act-serving/service.yaml`
+(the merged flip; the path is retired, D025), `docs/data-contract-eval-dashboard.md` (what Beat 2's stream contains).
 
 Still to capture (item 2): the full Short Cut screen recording; arm clip (Beat 1); dashboard
 recording + MinIO screenshot (Beat 2); terminal screenshot (Beat 3); chart PNG (Beat 4); PR

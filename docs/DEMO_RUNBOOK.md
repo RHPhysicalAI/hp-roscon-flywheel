@@ -95,8 +95,8 @@ before you start, present its kit item and do not try to fix it on stage.
 | 2 | dashboard | `docs/data-contract-eval-dashboard.md` (what the stream contains) | 60 s screen recording of the dashboard with pass/reject rows landing; MinIO console screenshot of `episodes-curated/act-v2-ft160/` |
 | 3 | runner / poller logs, KFP task list | `docs/demo-kit/run6-task-states.txt`, `docs/demo-kit/run6-host-runner.log`, `docs/demo-kit/run6-pipeline-run.log` | screenshot of the terminal; a live run recording if the Full Live is ever rehearsed |
 | 4 | static chart | `docs/phase3-ladder.html`, `docs/eval-records/phase3-ladder/`, `src/eval-report/ladder_report.py`, published chart https://claude.ai/code/artifact/84a1ec60-403d-4a34-ba3f-a0cbb69e5e71 | PNG export of the chart for slides |
-| 5 | PR #1, Rekor UI, Argo | `docs/demo-kit/pr1.md` (title, body, files), `docs/demo-kit/rekor-entry-1.json`, `gitops/act-serving/` (the merged flip) | screenshots of PR #1 *Files changed*, the Rekor UI entry, Argo `act-serving` |
-| 6 | swap-agent log, badge | `docs/demo-kit/run6-swap-agent.log`, `gitops/act-serving/README.md` | screenshot of the badge flipping; clip of v2's first episode |
+| 5 | PR #1, Rekor UI, Argo | `docs/demo-kit/pr1.md` (title, body, files), `docs/demo-kit/rekor-entry-1.json`, `git show 1eab082:gitops/act-serving/service.yaml` (the merged flip; path retired, D025) | screenshots of PR #1 *Files changed*, the Rekor UI entry, Argo `act-serving` |
+| 6 | swap-agent log, badge | `docs/demo-kit/run6-swap-agent.log`, `git show 1eab082:gitops/act-serving/README.md` (retired, D025) | screenshot of the badge flipping; clip of v2's first episode |
 | all | — | HP status brief https://claude.ai/code/artifact/5359ed44-5028-4ba5-b7bf-d13914e4d0cc; private HF copies of datasets and checkpoints (`jeremyary/soarm-*`) | **the full Short Cut screen recording** (non-negotiable, Phase 4 item 2) |
 
 Keep the recording and the screenshots on the presenting laptop **and** on a USB stick; the venue
@@ -113,7 +113,7 @@ network is not part of the plan.
 | Operational dashboard (Beat 2) | SNO, NodePort | `http://10.0.0.49:30801` (`/api/status` for JSON) |
 | MinIO console | SNO route | `https://minio-console-minio.apps.sno-flywheel.local` |
 | DSP (KFP) API | SNO, via port-forward on the host | `oc port-forward -n flywheel svc/ds-pipeline-dspa 8888:8888` → `https://localhost:8888` + SA token |
-| Host runner / pipeline poll / swap agent logs | host | `~/host-runner.log`, `~/pipeline-run.log`, `~/swap-agent.log` |
+| Host runner / pipeline poll logs | host | `~/host-runner.log`, `~/pipeline-run.log` (the swap agent and its log are retired, D025) |
 | Static chart (Beat 4) | repo, local file | `open docs/phase3-ladder.html` |
 | Promotion PR | GitHub | https://github.com/RHPhysicalAI/hp-roscon-flywheel/pull/1 |
 | Rekor search UI / API | SNO routes (RHTAS) | `https://rekor-search-ui-trusted-artifact-signer.apps.sno-flywheel.local/?logIndex=1` · `https://rekor-server-trusted-artifact-signer.apps.sno-flywheel.local/api/v1/log/entries?logIndex=1` |
@@ -128,12 +128,9 @@ Pipeline id `99ec0aab-51fb-412e-bd2f-47bc6a0d3e3d`, experiment `flywheel-promoti
 
 ### Known screen artifacts (narrate, don't debug)
 
-- **Argo `act-serving` shows Degraded** — green's pod is `Pending` because the PR sets
-  `replicas: 1` (right for the target) and the desktop has no in-cluster GPU. The swap agent keys on
-  the Service colour + digest, not the pod. Line: *"that pending pod is the shape of the real
-  deployment; on this desktop the GPU is outside the cluster."*
-- **Dashboard model badge reads `soarm-act-v2`** (generic: it maps Service colour green → v2), not
-  `act-v2-ft160`. The real label is on the episodes and in `docker inspect`.
+- **Dashboard model badge reads `soarm-act-v1`** since D025 retired the `act-policy` Service it
+  mapped to v1/v2 (D073: the badge is not the lineage). The real label is on the episodes and in
+  `flightctl get device/<name> -o json | jq .status.applications`.
 - **Dashboard bottom card "Policy comparison v1 vs v2" is empty** (Cosmos-era rollout videos;
   none exist). Keep it below the fold. Beat 4 is not on this dashboard.
 - **Dashboard progress bar counts local `sent/` files since the last Clear**; the authoritative
@@ -155,19 +152,19 @@ Pipeline id `99ec0aab-51fb-412e-bd2f-47bc6a0d3e3d`, experiment `flywheel-promoti
    the Mac on `desktop-gpu-split` (for the chart and the report script).
 3. **State check** — run this and read it against the expected block below:
    ```bash
-   ssh -n jary@10.0.0.48 'docker ps --format "{{.Names}}  {{.Status}}" | grep -E "^(act-inference|so-arm-sim|pose-ui) ";
-     docker inspect act-inference --format "{{range .Config.Env}}{{println .}}{{end}}" | grep ^MODEL_VERSION;
-     pgrep -af "host_runner|swap_agent|bag_watchdog" | grep -v pgrep | awk "{print \$3, \$4, \$5}";
+   ssh -n jary@10.0.0.48 'docker ps --format "{{.Names}}  {{.Status}}" | grep -E "^(so-arm-sim|pose-ui) ";
+     ~/.local/bin/flightctl get device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg -o json | jq -c ".status.applicationsSummary";
+     pgrep -af "host_runner" | grep -v pgrep | awk "{print \$3, \$4, \$5}";
      echo "bags: $(ls ~/flywheel-data/bags | wc -l)  free: $(df -h / | awk "NR==2{print \$4}")";
      export KUBECONFIG=~/sno-flywheel/auth/kubeconfig;
      oc get applications.argoproj.io -n openshift-gitops -o custom-columns=APP:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status;
      oc get deploy so-arm-sim -n flywheel -o jsonpath="in-cluster sim replicas: {.spec.replicas}{\"\n\"}"'
    gh pr list -R RHPhysicalAI/hp-roscon-flywheel --state all
    ```
-   Expected (Short Cut): `act-inference`, `so-arm-sim`, `pose-ui` all **Up**; `MODEL_VERSION=act-v2-ft160`;
-   the three residents (`host_runner.py`, `swap_agent.py --loop 300`, `bag_watchdog.sh`) present;
-   bags < 330 and free > 60 GB (the watchdog parks the loop otherwise); seven Argo apps Synced
-   (`act-serving` Degraded is expected); in-cluster sim replicas **0**; PR #1 MERGED.
+   Expected (Short Cut): `so-arm-sim`, `pose-ui` **Up**; the RHEM device `applicationsSummary`
+   `Healthy` (the Fleet pins `MODEL_VERSION=act-v2-ft160`); the host runner (`host_runner.py`)
+   resident (the swap agent and bag watchdog are retired, D025; `~/disk-guard.sh` guards the disk);
+   bags < 330 and free > 60 GB; seven Argo apps Synced; in-cluster sim replicas **0**; PR #1 MERGED.
    Full Live expects `MODEL_VERSION=upstream-act-teacher` instead — see § *Reset to start state*.
 4. **Credentials you may need on screen** (read them on the host, never paste them into a doc):
    - Argo: user `admin`, password `oc extract secret/openshift-gitops-cluster -n openshift-gitops --keys=admin.password --to=-`
@@ -188,7 +185,7 @@ Pipeline id `99ec0aab-51fb-412e-bd2f-47bc6a0d3e3d`, experiment `flywheel-promoti
 4. **Chart** `open docs/phase3-ladder.html` from the repo — Beat 4.
 5. **PR #1** https://github.com/RHPhysicalAI/hp-roscon-flywheel/pull/1 — Beat 5.
 6. **Rekor UI** `https://rekor-search-ui-trusted-artifact-signer.apps.sno-flywheel.local/?logIndex=1` — Beat 5.
-7. **Argo CD** → application `act-serving` — Beat 5/6 (log in during setup).
+7. **RHEM UI** `https://ui.flightctl.apps.sno-flywheel.local` → Fleets → `act-inference` — Beat 5/6 (log in during setup; item G rewrites the beat).
 
 Pre-fill the terminal (tab 3) so Beat 3 is one keypress:
 ```bash
@@ -304,10 +301,12 @@ table and the signed digest in the body, then *Files changed*: green gets the di
 the Rekor UI: entry **log index 1**, kind `hashedrekord`, integrated 2026-09-08 — the
 transparency-log record of that signature. Optional live verify on the host:
 ```bash
-ssh -n jary@10.0.0.48 '~/bin/cosign verify --key ~/cosign/cosign.pub --insecure-ignore-tlog quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b 2>/dev/null | head -3'
+# needs `oc port-forward -n trusted-artifact-signer svc/rekor-server 8090:80` resident on the host
+ssh -n jary@10.0.0.48 'SIGSTORE_REKOR_PUBLIC_KEY=~/rekor-live.pub ~/bin/cosign verify --key ~/cosign/cosign.pub --rekor-url http://localhost:8090 quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b 2>&1 | grep -E "^  - "'
+#   -> claims validated; existence in the transparency log verified offline (bundle logIndex 1); signature verified
 ```
-Then tab 7, Argo `act-serving`: Synced; the Service selects green (see *Known screen artifacts*
-for the Degraded/Pending pod line).
+Then tab 7, the RHEM UI Fleet `act-inference`: rollout complete, device `Healthy` (item G
+rewrites this beat).
 
 **Say:**
 > "The gate passed, so the pipeline packaged the checkpoint as an OCI model image, **signed it**
@@ -321,14 +320,14 @@ for the Degraded/Pending pod line).
 **If it breaks:** GitHub unreachable → `gh pr view 1 -R RHPhysicalAI/hp-roscon-flywheel` in the
 terminal. Rekor UI blank (usually a missing hosts entry for `rekor-server-…` — the UI calls it from
 the browser) → the API URL in the cheat-sheet returns the raw entry. Argo login fails → skip it;
-Beat 6's swap log proves the sync happened.
+Beat 6's `flightctl` device status proves the rollout happened.
 
 ### Beat 6 — "The loop closes: the same governed pipeline you'd run to a real fleet" (~30 s)
 
 **Screen:** tab 3, the host terminal:
 ```bash
-tail -n 4 ~/swap-agent.log          # live=green model_version=act-v2-ft160 image=sha256:bdb513ca… running=act-v2-ft160 (running)
-docker inspect act-inference --format '{{range .Config.Env}}{{println .}}{{end}}' | grep ^MODEL_VERSION
+~/.local/bin/flightctl get device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg -o json | jq .status.applicationsSummary   # "status": "Healthy"
+~/.local/bin/flightctl console device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg --notty -- sudo -n podman logs --tail 20 act-inference-128875-act-inference | grep 'Published model_version'
 ```
 Back to tab 2: the dashboard badge reads **v2** and the newest log rows are v2's episodes.
 
@@ -376,24 +375,23 @@ reuses them when the candidate is named `act-v2-ft160` (D023). Timing from run 6
 
 ### Reset to start state — T-30 min **[not rehearsed end to end]**
 
-The demo promotes v2 over v1, so v1 must be live first. This is D022's rollback: the same three
-edits reversed, on the branch Argo watches.
+The demo promotes v2 over v1, so v1 must be live first. This is D025's rollback: `git revert` of
+the promotion merge on the branch ResourceSync and Argo watch (rehearsed 2026-09-09 as PR #3,
+`docs/eval-records/promotion-2.md`).
 
 ```bash
 # 0. the stale head branch from PR #1 would make the PR step fail (create_git_ref: reference exists)
 gh api -X DELETE repos/RHPhysicalAI/hp-roscon-flywheel/git/refs/heads/promote/act-v2-ft160
 
-# 1. flip act-serving back to blue = upstream-act-teacher (sha256:d5e5897f…, signed) — one commit
+# 1. revert the merge that promoted the live version (Fleet digest + MODEL_VERSION and the consumer lineage go back together)
 cd ~/redhat/git/hp-roscon-flywheel && git checkout desktop-gpu-split && git pull --ff-only
-sed -i '' 's/^  replicas: 0 /  replicas: 1 /' gitops/act-serving/deployment.yaml
-sed -i '' 's/^  replicas: 1 /  replicas: 0 /' gitops/act-serving/deployment-green.yaml
-sed -i '' 's/^    color: green /    color: blue  /' gitops/act-serving/service.yaml
-git diff --stat   # expect exactly the three files
-git commit -am "demo: reset act-serving to blue (upstream-act-teacher) for the Full Live cut" && git push
+git revert -m 1 --no-edit <merge commit of the promotion PR>
+git diff --stat HEAD~1   # expect exactly gitops/rhem/fleet-act-inference.yaml + gitops/flywheel/manifest-consumer.yaml
+git push origin desktop-gpu-split
 
-# 2. make Argo pick it up now (it polls every ~3 min), then apply it on the desktop now
-ssh -n jary@10.0.0.48 'export KUBECONFIG=~/sno-flywheel/auth/kubeconfig; oc patch applications.argoproj.io act-serving -n openshift-gitops --type merge -p "{\"metadata\":{\"annotations\":{\"argocd.argoproj.io/refresh\":\"hard\"}}}"; sleep 20; ~/venv-runner/bin/python ~/swap_agent.py'
-#    expect in the output: live=blue model_version=upstream-act-teacher … signature verified … recreated act-inference serving upstream-act-teacher
+# 2. nothing to apply by hand: ResourceSync polls ~2 min, the device restarts the container (no re-pull, Retain), Argo re-syncs the consumer ~3 min
+ssh -n jary@10.0.0.48 '~/.local/bin/flightctl get device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg -o json | jq -c ".status.applicationsSummary,.status.applications[0].volumes"'
+#    expect: Healthy and the reverted digest; `Published model_version: <previous>` in the container log
 ```
 
 Verify with the state check: `MODEL_VERSION=upstream-act-teacher`, dashboard badge **v1**, arm
@@ -457,20 +455,21 @@ the artifacts are identical in kind.
 
 ### Part 4 — Beat 5 live: merge (~1.5 min)
 
-Tab 8: the new PR `Promote act-v2-ft160 (73% -> 86%)` is open. Show the body and the **three**
-files changed (blue → 0, green → digest + 1, Service → green). **Merge it** in the browser (or
+Tab 8: the new PR `Promote act-v2-ft160 (73% -> 86%)` is open. Show the body and the **two**
+files changed (`gitops/rhem/fleet-act-inference.yaml`: digest + `MODEL_VERSION`;
+`gitops/flywheel/manifest-consumer.yaml`: lineage). **Merge it** in the browser (or
 `gh pr merge <n> -R RHPhysicalAI/hp-roscon-flywheel --merge`). Say the Beat 5 line.
 
-### Part 5 — Beat 6 live: the swap lands (~2.5 min)
+### Part 5 — Beat 6 live: the rollout lands (~2.5 min)
 
-Compress Argo's poll and the swap agent's 5-minute loop:
+Nothing to compress: ResourceSync polls ~2 min, everything after it is seconds (D069). Watch:
 ```bash
-ssh -n jary@10.0.0.48 'export KUBECONFIG=~/sno-flywheel/auth/kubeconfig; oc patch applications.argoproj.io act-serving -n openshift-gitops --type merge -p "{\"metadata\":{\"annotations\":{\"argocd.argoproj.io/refresh\":\"hard\"}}}"; sleep 20; ~/venv-runner/bin/python ~/swap_agent.py; tail -n 5 ~/swap-agent.log'
+ssh -n jary@10.0.0.48 'watch -n 5 "~/.local/bin/flightctl get device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg -o json | jq -c .status.config.renderedVersion,.status.updated.status,.status.applicationsSummary.status"'
 ```
-Expected: `live=green model_version=act-v2-ft160 … signature verified → exported → recreated
-act-inference serving act-v2-ft160 (watchdog armed)`. Tab 7: Argo `act-serving` re-synced, Service
-→ green. Tab 2: the badge flips to **v2** within a few seconds; the arm resumes after ~1 min
-(policy load) and the next log rows carry `act-v2-ft160`. Say the Beat 6 line. Stop recording.
+Expected: `renderedVersion` +1 and `UpToDate` at about +1:30 from the merge, `Healthy` at about
++2:00–2:45, the container log `Published model_version: act-v2-ft160`. Tab 7: the RHEM UI Fleet
+`act-inference` rollout completes. Tab 2: the next log rows carry `act-v2-ft160` (the badge is not
+the lineage, D073). Say the Beat 6 line. Stop recording.
 
 ### After the show
 
@@ -506,9 +505,11 @@ teacher's weights, ~2 epochs, LR 1e-5; eval = seeds 1000–1049, +1050–1099 fo
   success = 3/3 by ground-truth pose; smoothness = mean |Δjoint| between `/joint_states` samples.
 - **Likely questions:** *"Is the improvement just more training?"* — No: same recipe at 20/40
   got worse; the variable is the amount of the policy's own curated data. *"Does cosign verify the
-  Rekor entry on the device?"* — Today the swap agent verifies the **key** (`--insecure-ignore-tlog`);
-  tlog verification against RHTAS needs its TUF root initialised on the host (follow-up). The Rekor
-  UI shows inclusion. *"Why is the green pod Pending?"* — desktop shim; see *Known screen artifacts*.
+  Rekor entry on the device?"* — Yes: the device's `policy.json` (`sigstoreSigned` +
+  `rekorPublicKeyPath`) checks the signature and its Rekor SET at pull, and on the host
+  `SIGSTORE_REKOR_PUBLIC_KEY=~/rekor-live.pub cosign verify --key … --rekor-url …` checks the same
+  entry (no tlog bypass anywhere since D025; an unsigned tag fails to pull). The Rekor UI shows
+  inclusion. *"Why is the green pod Pending?"* — desktop shim; see *Known screen artifacts*.
   *"Where are the datasets?"* — MinIO `episodes-data/` and private HF `jeremyary/soarm-flywheel-*`
   / `soarm-act-*`, LeRobot-native.
 
@@ -547,11 +548,9 @@ components and need the arm64 equivalents.
 | Camera stream blank | `curl -s -m 3 http://10.0.0.48:8081/health`; pose UI `:8090` has its own streams; last resort **[not rehearsed]** `docker restart so-arm-sim; sleep 60; docker restart act-inference pose-ui` |
 | Arm frozen, no `Early stop`/`Resetting cubes` in `docker logs --since 5m act-inference` | `docker restart act-inference` (policy reload ~1 min); if the watchdog parked it (bags ≥ 330 or free < 60 GB), port + prune first (`~/assemble_all.sh` pattern, `~/prune_bags.py`), then `~/start_v2_loop.sh` |
 | Dashboard not updating | `/api/status` moving? reload; else `oc delete pod -n flywheel -l app=dashboard` (host) |
-| Dashboard badge says v1 while v2 is live (or vice versa) | badge = Service colour; `oc get svc act-policy -n flywheel -o jsonpath='{.spec.selector.color}'` vs `docker inspect act-inference … MODEL_VERSION`; run `~/venv-runner/bin/python ~/swap_agent.py` to reconcile |
+| Dashboard badge says v1 while v2 is live | the badge is not the lineage (D073): it read the retired `act-policy` Service colour and now always falls back to v1; the lineage is `flightctl get device/<name> -o json \| jq .status.applications` |
 | DSP port-forward dies | plain `http://` on 8888 kills it (ops gotcha 5) — always `https://`; `pkill -f "port-forward -n flywheel svc/ds-pipeline-dspa"` and re-run |
 | Pipeline `trigger-and-wait` FAILED | runner not resident or its message in `~/host-runner.log`; restart the runner; MinIO clock skew after a VM pause → set the node clock (ops extract) |
 | `open-promotion-pr` FAILED | 403 → token scope (`github-token` Secret, ops gotcha 8); "reference already exists" → delete `promote/act-v2-ft160` on GitHub |
-| Swap agent `REFUSING: signature verification failed` | the digest in `deployment-*.yaml` isn't the one the pipeline signed — check the PR diff; never edit the digest by hand |
-| Argo `act-serving` OutOfSync after a manual `oc apply` | selfHeal reverts it (gotcha 9): commit to the branch, hard-refresh |
 | Rekor UI shows nothing | browser can't resolve `rekor-server-…` → hosts entry; API URL in the cheat-sheet as fallback |
 | Catastrophic (no desktop, no Fury, no link) | present from the **contingency kit** (§ above): the Short Cut screen recording plus the per-beat artifacts in `docs/demo-kit/`. Until the recording exists (Phase 4 item 2), the text artifacts, the chart and PR #1 carry the results |

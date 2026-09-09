@@ -1,8 +1,8 @@
 <!-- This project was developed with assistance from AI tools. -->
 # Promotion 2 — first RHEM Fleet promotion: `act-v2-ft160` → `act-v2-ft160-rhem` (Phase 4.5 D1, D025)
 
-**Date:** 2026-09-09 (run 06:53–06:57 CDT; merged 12:04:27Z; D2 rollout + rollback rehearsal 12:04–12:21Z, section at the end). **State at hand-off: PR #2 merged and rolled out; rollback PR #3 open, NOT merged.** The
-operator merges (Gate 3); D2 records what happens after.
+**Date:** 2026-09-09 (run 06:53–06:57 CDT; merged 12:04:27Z; D2 rollout + rollback rehearsal 12:04–12:21Z, section at the end). **State: PR #2 merged and rolled out (D2); rollback PR #3 merged 12:35:10Z and observed (D3, last section);
+`act-serving`/swap agent retired (D025).**
 
 ## What was run
 
@@ -15,7 +15,7 @@ operator merges (Gate 3); D2 records what happens after.
 | Gate | PASS on the reused N=100 records: `upstream-act-teacher` 0.73 → `act-v2-ft160-rhem` 0.86, fixed 20 / broken 7, net +13, p = 0.0192 |
 | Modelcar | `quay.io/jary/soarm-act-modelcar@sha256:1375d0bcc2c7c81867365b55a08bdd5fa03bf31d20cc7bde04044fdcf1a0784e` (crane append, `linux/amd64`, base `ubi9/ubi-micro:9.8-1787778798`) |
 | Rekor | log index **4**, `hashedrekord` 0.0.1, integratedTime 1788954952 (= 2026-09-09T11:55:52Z), tree size after = 5, logID `37f4fa09cc7f385b…` |
-| cosign verify (desktop, `~/bin/cosign` v2.6.5) | `SIGSTORE_REKOR_PUBLIC_KEY=~/rekor-live.pub cosign verify --key ~/cosign/cosign.pub --rekor-url http://localhost:8090 <image@digest>` (port-forward to `svc/rekor-server` in `trusted-artifact-signer`; no `--insecure-ignore-tlog`): claims validated, transparency-log existence verified offline (bundle logIndex 4), signature verified against the key |
+| cosign verify (desktop, `~/bin/cosign` v2.6.5) | `SIGSTORE_REKOR_PUBLIC_KEY=~/rekor-live.pub cosign verify --key ~/cosign/cosign.pub --rekor-url http://localhost:8090 <image@digest>` (port-forward to `svc/rekor-server` in `trusted-artifact-signer`; no tlog bypass flag): claims validated, transparency-log existence verified offline (bundle logIndex 4), signature verified against the key |
 | Device pull under `policy.json` | on the VM (10.0.0.51, rootful podman 5.8.2, `sigstoreSigned` + `rekorPublicKeyPath` for `quay.io/jary/soarm-act-modelcar`): `sudo podman pull quay.io/jary/soarm-act-modelcar@sha256:1375d0bc…` → "Storing signatures", image id `46c6257a557a…`, 230 MB. Both digests (`bdb513ca…` live, `1375d0bc…` promoted) now sit in the device's storage, so the RHEM rollout's pre-pull is a no-op and the rollback never re-pulls |
 | Host loop | `act-coordinator` stayed stopped the whole time (the runner's `loop_park()` only looks for a docker container named `act-inference`, which has been stopped since the C2 cut-over). The host runner was restarted for this run (`nohup ~/venv-runner/bin/python ~/host_runner.py …`, pid 1201467) and is left resident |
 
@@ -205,3 +205,69 @@ D3 then verifies the no-pull rollback and retires `act-serving`/`swap-agent` (D0
 `~/run-coordinator.sh` defaults `MODEL_VERSION=act-v2-ft160`; after a promotion it must be passed explicitly
 (`MODEL_VERSION=act-v2-ft160-rhem`) so it equals the device's value (D057 healthcheck contract). Open item: derive the
 default from the Fleet file or make it required like `IMAGE`.
+
+## D3 — Rollback observed (2026-09-09, 12:35–12:40Z)
+
+PR #3 (`ff39942`, the revert of `4ce6a8a5`) merged by the operator at **12:35:10Z**, merge commit
+`1eab082462b7b865bcbd370366b70109dd7a824e`. No human touched the device. Times are UTC from
+`flightctl get events`, the agent journal, `podman events` on the VM and the ROS log clock
+(`1788957397.875` = 12:36:37.9Z).
+
+| Z | +merge | hop | evidence |
+|---|---|---|---|
+| 12:30:01 | −5:09 | RS `rhem-fleets` last pre-merge poll: `ResourceSyncCommitDetected 144efb8a…` (D069–D073 records commit) | events |
+| 12:35:10 | 0:00 | merge | `gh pr view 3 --json mergedAt,mergeCommit` |
+| 12:36:01 | +0:51 | RS: `ResourceSyncCommitDetected 1eab0824…`; Fleet `ResourceUpdated (spec.template)`; `TemplateVersion` created; `FleetRolloutStarted` — same second; `observedCommit: 1eab0824…`, `templateVersion: v6`, `MODEL_VERSION: act-v2-ft160` | events; RS + Fleet JSON |
+| 12:36:10 | +1:00 | `FleetRolloutBatchDispatched`; Device `ResourceUpdated (spec)`; `DeviceContentUpdating … renderedVersion: 6`; agent `New spec version received: 5 -> 6` (12:36:10.138) | events; `journalctl -u flightctl-agent` |
+| 12:36:20.45–21.01 | +1:10 | container `b1583a30…` `died` → `remove` (20.45 / 20.55); `volume remove` / `volume create systemd-act-inference-128875-models` (20.70 / 20.88); container `be399189…` `create` → `init` → `start` (20.94 / 21.00 / 21.01); agent `Removed quadlet application` (20.59) / `Started quadlet application` (21.00) / `Spec reconciliation complete: current version 6` (21.01) | `podman events`; agent journal |
+| 12:36:21.02 | +1:11 | `DeviceContentUpToDate` (`Updated to desired renderedVersion: 6`); `DeviceApplicationDegraded: Not started: act-inference` | events; device condition `Updating: False / Updated` at 12:36:21.013Z |
+| 12:36:37.9 | +1:28 | **`Published model_version: act-v2-ft160`** (log line 29) | `podman logs` |
+| 12:36:40 | +1:30 | `FleetRolloutBatchCompleted batch 1 … 100%`; `FleetRolloutCompleted`; `RolloutInProgress: Inactive` (before health, D070 again) | events; Fleet conditions |
+| 12:37:09 | +1:59 | **`DeviceApplicationHealthy`** — `applicationsSummary: Healthy`, `applications[0]: Running 1/1`, volume reference `@sha256:bdb513ca…` | events; device JSON |
+| 12:37:26 | +2:16 | Argo `flywheel` auto-sync on `1eab0824…` (no refresh; `reconciledAt` before it 12:35:00Z) | `operationState.startedAt/finishedAt` 12:37:26–28Z |
+| 12:37:28 | +2:18 | `manifest-consumer` pod `6bb589887b-gt2pm` started **on the pre-PR #2 ReplicaSet** `6bb589887b` (2026-09-08T16:50:44Z) — Argo rolled the Deployment back to the identical prior pod template; env `INCUMBENT=COLLECTOR=act-v2-ft160`, `INCUMBENT_CHECKPOINT=s3://episodes-data/checkpoints/act-v2-ft160/pretrained_model.tar.gz` | `oc get rs,pods`, `oc get deploy -o json` |
+
+**Merge → device serving the rolled-back version: 1 min 28 s. Merge → Healthy: 1 min 59 s.** Faster
+than the promotion (2:10 / 2:42) only because the merge landed 51 s before a ResourceSync poll
+instead of 26 s after one; every hop after `ResourceSyncCommitDetected` matched D2 to the second.
+
+### No-pull evidence (D071 confirmed for the rollback)
+
+```
+journalctl -u flightctl-agent --since 12:34 | grep -ciE 'copying blob|pulling|pulled'   -> 0
+podman events --since 15m --filter event=pull ->
+  2026-09-09 12:36:20.922 +0000 UTC image pull b21e9348… quay.io/jary/soarm-flywheel@sha256:2ad1fb1c…   (runtime image, local resolve 17 ms before `container create`; NO modelcar pull event)
+podman images --digests | grep modelcar ->
+  quay.io/jary/soarm-act-modelcar  <none>  sha256:bdb513ca…  e97419105416  13 days ago  230 MB
+  quay.io/jary/soarm-act-modelcar  <none>  sha256:1375d0bc…  46c6257a557a  13 days ago  230 MB
+/etc/containers/systemd/act-inference/act-inference-128875-models.volume -> Image=quay.io/jary/soarm-act-modelcar@sha256:bdb513ca…
+podman inspect act-inference-128875-act-inference -> started=2026-09-09 12:36:21.002 health=healthy failing=0 ; MODEL_VERSION=act-v2-ft160
+podman ps -> be399189dfa6 act-inference-128875-act-inference Up (healthy)
+```
+The rolled-back digest `bdb513ca…` was served from local storage (`reclaimPolicy: Retain`); the
+promoted digest `1375d0bc…` is still there too, so a re-promotion would also not pull.
+
+### Retirement executed after the rollback (D025)
+
+- Git: `gitops/act-serving/{deployment.yaml,deployment-green.yaml,service.yaml,README.md}`,
+  `src/swap-agent/swap_agent.py`, `argocd/act-serving-app.yaml` removed (history keeps them;
+  `git show 1eab082:<path>`).
+- Cluster (12:39:38Z): the `act-serving` Application had **no** `resources-finalizer.argocd.argoproj.io`
+  (and `prune: false`), so `oc delete applications.argoproj.io act-serving -n openshift-gitops` did
+  **not** cascade — its three managed resources (`Service/act-policy`, `Deployment/act-policy`,
+  `Deployment/act-policy-green`, all ns `flywheel`, per `status.resources`) were still present and were
+  deleted explicitly; `act-policy-green`'s Pending pod went with it. `oc get deploy,svc -n flywheel`
+  before/after differs by exactly those three objects (13 Deployments, 12 Services remain). Seven
+  Applications remain, all `Synced/Healthy`.
+- Host (desktop): `docker rm act-inference` (stopped since the C2 cut-over); `~/swap_agent.py` and
+  `~/bag_watchdog.sh` moved to `~/retired-2026-09-09/`. Left in place: 15 stopped
+  `act-inference-pre-act-v2-ft160-<ts>` containers (the swap agent's per-pass backups) — not in
+  scope, listed for a later prune.
+- Side effect: the dashboard's `get_model_version()` (`gitops/flywheel/dashboard.yaml`) read
+  `Service/act-policy`'s selector colour; with the Service gone it falls back to `soarm-act-v1`.
+  D073 already records that field as not-the-lineage; the runbook now says so.
+- `cosign verify` of the rolled-back digest with the transparency log
+  (`SIGSTORE_REKOR_PUBLIC_KEY=~/rekor-live.pub … --rekor-url http://localhost:8090`): claims validated,
+  tlog existence verified offline (bundle logIndex **1**), signature verified — the runbook's Beat 5
+  verify line now uses this form.
+

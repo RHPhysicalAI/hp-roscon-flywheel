@@ -18,9 +18,10 @@ export KUBECONFIG=~/sno-flywheel/auth/kubeconfig
 | 1 | `storage-app.yaml` | `storage` | `local-path-storage` | — (default StorageClass `local-path`) |
 | 2 | `operators-app.yaml` | `operators` | `openshift-operators` | 1 |
 | 3 | `operators-config-app.yaml` | `operators-config` | `redhat-ods-operator` | 2 — all CSVs `Succeeded` (`oc get csv -A`) |
-| 4 | `act-serving-app.yaml` | `act-serving` | `flywheel` | 3 — retired after the first RHEM promotion (D025) |
+| 4 | — | `act-serving` | `flywheel` | retired 2026-09-09 after the first RHEM promotion and rollback (D025): file removed, app and its Deployments/Service deleted |
 | 5 | `repo-flightctl-charts.yaml` | — (repository Secret) | `openshift-gitops` | — |
 | 6 | `rhem-app.yaml` | `rhem` | `flightctl` | 1, 5, **OCP ≥ 4.19** (chart `kubeVersion >= 1.32`) |
+| 7 | `tekton-app.yaml` | `tekton` | `flywheel` | 2 (Pipelines CSV, `pipeline` SA); Secrets `quay-push` + `cosign-signing` (below) |
 
 The `flywheel`, `minio` and `observability` Applications exist on the cluster but are not yet
 in this directory (Phase 4.5 F ride-along).
@@ -31,8 +32,16 @@ oc apply -f argocd/operators-app.yaml
 oc apply -f argocd/operators-config-app.yaml     # after CSVs are Succeeded
 oc apply -f argocd/repo-flightctl-charts.yaml
 oc apply -f argocd/rhem-app.yaml                 # after the cluster is on 4.19
+oc apply -f argocd/tekton-app.yaml               # runtime-image build + sign (D028)
 oc get applications.argoproj.io -n openshift-gitops
 ```
+
+## Hand-created Secrets (never in git)
+
+| Secret (ns `flywheel`) | Keys | Used by | Created with |
+|---|---|---|---|
+| `cosign-signing` | `cosign.key`, `cosign.pub`, `cosign.password` | `tekton` app — `cosign-sign` Task (workspace `cosign-key`) | `oc create secret generic cosign-signing -n flywheel --from-file=cosign.key=$HOME/cosign/cosign.key --from-file=cosign.pub=$HOME/cosign/cosign.pub --from-literal=cosign.password="$COSIGN_PASSWORD"` on the desktop (same key as the KFP `cosign-signing-key` Secret and the Fleet's `cosign.pub`) |
+| `quay-push` | `.dockerconfigjson` | KFP `package_modelcar`/`sign_modelcar`; `tekton` app projects it as `config.json` (PipelineRun workspace `items:`) | quay.io robot dockerconfigjson |
 
 ## The Helm OCI repository Secret (`repo-flightctl-charts.yaml`)
 
