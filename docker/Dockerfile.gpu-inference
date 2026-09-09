@@ -12,8 +12,9 @@
 #     -v ~/.cache/huggingface:/root/.cache/huggingface \
 #     act-inference:latest
 
+# Fully qualified: buildah in the Tekton build enforces short-name resolution (no TTY to prompt).
 ARG DISTRO=kilted
-FROM ros:${DISTRO}
+FROM docker.io/library/ros:${DISTRO}
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-c"]

@@ -163,7 +163,7 @@ spec:
         for a in "$@"; do [[ -n "$a" ]] && BUILD_ARGS+=("--build-arg=$a"); done
         read -ra EXTRA_ARGS <<< "${PARAMS_BUILD_EXTRA_ARGS}"
 
-        phase "buildah $(buildah version | awk '/^Version/{print $2}') qemu handlers: $(ls /proc/sys/fs/binfmt_misc | grep -c qemu || true)"
+        phase "buildah $(buildah version | awk '/^Version/{print $2}')"
         phase "Building ${IMAGE} for ${PARAMS_PLATFORMS} (jobs=${PARAMS_JOBS}) from ${PARAMS_DOCKERFILE}"
         df -h "${WORKSPACES_SOURCE_PATH}" | tail -1
 
