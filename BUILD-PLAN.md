@@ -23,7 +23,7 @@ Phase 3 closes it with governance; Phase 3+ makes the improvement autonomous.
 | 3 — Training + close the loop | **Complete** (2026-09-08) — eval harness (D020), self-improvement proof (D021: 73% → 86%, p=0.019), governed pipeline through RHOAI/RHTAS with PR #1 merged and swapped, loop closed on v2; static chart shipped | D015, D020–D022 |
 | 3+ — Bootstrap loop | Not started | `BOOTSTRAP-LOOP.md` |
 | 4 — Demo hardening + Fury prep | **In progress** — item 1 done (2026-09-08): `docs/DEMO_RUNBOOK.md`, Short Cut + Full Live, every screen verified live (D023) | D023 |
-| 4.5 — RHEM device plane | **In progress** — A–D done (promotion + rollback proven on RHEM, act-serving retired); F running, E1 next | D024–D076 |
+| 4.5 — RHEM device plane | **In progress** — A–D, E1, F-GitOps done; F-Tekton building; E2/G-prep next | D024–D090 |
 
 ---
 
@@ -297,7 +297,7 @@ Live elements are layered on top of that, never depended on.
      + `registries.d` `use-sigstore-attachments: true` (thor-testing D015/D018; today only
      described in `gitops/act-serving/README.md`)
 
-5. **Structured promotion record.** Today the join across model version, modelcar digest,
+5. **Structured promotion record.** ✅ **Done (2026-09-09, Phase 4.5 E1).** Today the join across model version, modelcar digest,
    dataset URI, eval report, and Rekor index exists only in the PR body and git history
    (`open_promotion_pr` in `pipeline/act_flywheel_pipeline.py`; `eval_report.json` carries no
    digest or dataset URI). Add a pipeline step that writes one record per candidate binding all
@@ -423,10 +423,10 @@ E. **Model Registry (E1) + Catalog (E2, stretch)** (D027)
    - E1: `modelregistry` Managed in `gitops/operators-config/dsc.yaml`; `ModelRegistry` CR + MariaDB
      in `gitops/operators-config/model-registry.yaml`; KFP `register_model` between sign and PR
      carrying digest, dataset URI, eval numbers, Rekor index, PR URL. Closes Phase 4 item 5.
-   - **E1 built 2026-09-09 (D081+):** `modelregistry` Managed; `ModelRegistry/flywheel` Available
-     with MariaDB under Argo; REST route `flywheel-rest.apps.sno-flywheel.local` (v1alpha3);
-     `register_model` + `record_pr_url` in the pipeline (`v-202609090850-registry`); proof run
-     `3afee844` parked on a Multus stale-token fault awaiting the operator — exit criterion pending.
+   - **E1 done 2026-09-09 (D081–D090):** `ModelRegistry/flywheel` under Argo; pipeline registers each
+     candidate before the PR and fills `pr_url` after (idempotent on version name); run `9015ecd4` →
+     registry shows `soarm-act` / `act-v2-ft160-rhem` with digest `18cc4412…`, eval metrics, Rekor
+     index 8, PR #4. Closes Phase 4 item 5.
    - E2: `rhem/bootstrap/catalog.yaml` + `gitops/rhem/catalogitem-soarm-act.yaml`; pipeline
      `append_catalog_version(...)` as a removable seam; Fleet pins `catalogItemRef.version`.
    - **Exit:** the registry shows the promoted version with digest + metrics for at least one
@@ -474,9 +474,10 @@ G. **Fury port + runbook** (on site, Sept 20–25)
 - [x] Sim loop running against the VM: curator stamps episodes with the Fleet's `MODEL_VERSION`,
   `episodes-curated/<mv>/` fills, `manifest-consumer` count advances (2026-09-09: curator stamps `act-v2-ft160`, `episodes-curated/act-v2-ft160/` 194→214; manifest-consumer count to be confirmed in D)
 - [x] A DSP run on a pre-trained candidate (D023 path) opens a PR editing the Fleet (+ CatalogItem
-  if E2); Model Registry shows the version with digest + metrics; merge → ResourceSync Synced →
-  RHEM rollout completes → VM container restarts with the new `Published model_version:` → episodes
-  re-stamp (2026-09-09: PR #2, Rekor index 4; Model Registry part → E1)
+  if E2); Model Registry shows the version with digest + metrics (met 2026-09-09, E1); merge →
+  ResourceSync Synced → RHEM rollout completes → VM container restarts with the new
+  `Published model_version:` → episodes re-stamp (2026-09-09: PR #2, Rekor index 4; Model Registry
+  part → E1)
 - [ ] Negative test: an unsigned tag fails with a signature error; a tag signed *without*
   `--tlog-upload` also fails on the VM (Rekor SET enforced)
 - [x] Rollback: `git revert`, merge → previous version serving, no re-pull (Retain) (2026-09-09, PR #3)

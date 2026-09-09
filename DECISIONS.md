@@ -2988,3 +2988,102 @@ curl -sk --resolve $H:443:10.0.0.49 -H "Authorization: Bearer $T" https://$H/api
 curl -sk --resolve $H:443:10.0.0.49 -H "Authorization: Bearer $T" "https://$H/api/model_registry/v1alpha3/model_versions"
 curl -sk --resolve $H:443:10.0.0.49 -H "Authorization: Bearer $T" "https://$H/api/model_registry/v1alpha3/model_artifacts"
 ```
+
+---
+
+## D087 — Promotion branch made unique per run; ref creation is idempotent (amends D066)
+
+**Date:** 2026-09-09
+**Context:** Phase 4.5 E1b, following D086. The proof run **`3afee844-007a-4c97-ab70-5f9cc38b9853`**
+registered the version (id 2, `rekor_index` 5) and then died in `open_promotion_pr`:
+`github.GithubException 422 Reference already exists` at
+`repo.create_git_ref("refs/heads/promote/act-v2-ft160-rhem")`. Merging a PR does not delete its head
+branch on this repo, so D066's fixed branch name `promote/<candidate>` collides with itself on any
+second run for the same candidate (rerun after a fault, rehearsal, re-release) — and because ordering
+(a) (D083) opens the PR after registration, the failure left a registered version with `pr_url: ""`
+and no PR: exactly the visible-not-hidden state D083 wanted, but caused by the pipeline's own naming.
+**Record:** `open_promotion_pr` now takes `run_id` (the same `dsl.PIPELINE_JOB_ID_PLACEHOLDER` value
+`register_model` already records as `dsp_run_id`) and names the head
+**`promote/<candidate>-<run_id[:8]>`** (UTC `%Y%m%d%H%M%S` if the id is empty). The branch name now
+carries the DSP run that produced it, so PR ↔ registry version ↔ run join without a lookup. If the ref
+exists anyway (a retried task within one run), it is force-moved to the new commit
+(`get_git_ref(...).edit(sha, force=True)`) instead of failing; an open PR for the same head is reused
+rather than duplicated. `register_model` → `open_promotion_pr` → `record_pr_url` are now all safe to
+retry. Committed **`8d90222`** (`pipeline/act_flywheel_pipeline.py`,
+`pipeline/act_flywheel_pipeline.yaml`); pipeline version **`v-202609091102-registry2`**
+(`3f700dc3-7f0f-4366-9073-a05624e7722a`); proven by rerun
+**`9015ecd4-5524-45cf-b6c7-f045a17860bc`** — SUCCEEDED, 4 m 10 s, seven tasks, PR #4 opened, `pr_url`
+recorded.
+**Rejected:** deleting the stale branch first (destroys the merged PR's head, which GitHub shows as
+"branch deleted" and breaks the PR's compare view); keeping `promote/<candidate>` and appending `-2`,
+`-3` (needs a listing round-trip and encodes nothing useful).
+**Decision:** ship the run-scoped branch name and force-move/reuse semantics now; amends D066.
+
+---
+
+## D088 — `register_model` made idempotent on the version name (realises D027's "one version per candidate")
+
+**Date:** 2026-09-09
+**Context:** Phase 4.5 E1b, same rerun as D087.
+**Record:** client `model-registry==0.3.11` (D083) checks `get_model_version_by_params(rm.id, version)`
+inside `register_model` and raises `StoreError("Version <v> already exists")` — it never updates. A
+rerun for a candidate whose version record already exists (the E1 situation: version id 2 from
+`3afee844`) would therefore fail at `register_model`, before the PR, on every retry. `register_model`
+now looks the version up first: missing → register as before; present → overwrite the version's custom
+properties with this run's values (`dsp_run_id`, `rekor_index`, `eval_report_uri`, metrics,
+`pr_url: ""`), update the description, and update the model artifact's `uri` if the signed digest
+changed (it does not on the D023 path — same weights, same modelcar). The log line reads
+`updated (previous dsp_run_id=…)`. `record_pr_url` then fills `pr_url` as before. Same commit as D087
+(`8d90222`).
+**Consequence:** the registry keeps one version row per candidate name; the row reflects the latest run
+for that candidate, and the previous run's ids are recoverable from the PR history and the DSP run
+list, not from the registry. That matches D027's intent (a durable promotion record, not a run ledger).
+If a run ledger is ever wanted, add `dsp_run_ids` (append-only list) to the custom properties rather
+than creating extra version rows.
+**Decision:** ship idempotent-on-name registration now.
+
+---
+
+## D089 — Recommended, not applied: GitHub "Automatically delete head branches" (operator's call)
+
+**Date:** 2026-09-09
+**Context:** Phase 4.5 E1b, hygiene follow-on to D087.
+**Record:** `gh api repos/RHPhysicalAI/hp-roscon-flywheel --jq .delete_branch_on_merge` →
+`null`/false. With it enabled, `promote/*` and `rollback/*` branches disappear on merge and the
+collision that caused D087's failure cannot recur even for a fixed name. D087 stands on its own without
+it — the unique name is the real fix; deletion is hygiene. Path: Settings → General → Pull Requests →
+"Automatically delete head branches."
+**Blocked:** not changed by the agent — repo settings are the owner's, and the write classifier would
+block it anyway.
+**Also for the inbox:** stale `promote/act-v2-ft160`, `promote/act-v2-ft160-rhem`,
+`rollback/act-v2-ft160-rhem` branches on GitHub are harmless; delete them by hand or leave them once
+this setting is on. PR #4 is a rehearsal for the same weights already on the Fleet
+(act-v2-ft160-rhem, D1/D2): close it without merging once the registry record is captured, or leave it
+open as the demo's "PR waiting for the human gate" screen.
+
+---
+
+## D090 — E1 exit criterion met: registry shows `act-v2-ft160-rhem` with digest, full eval metrics, Rekor index, and PR #4; multi-arch digest is not run-to-run reproducible; Phase 4 item 5 closed
+
+**Date:** 2026-09-09
+**Context:** Phase 4.5 E1 exit criterion (BUILD-PLAN.md item E) — "the registry shows the promoted
+version with digest + metrics for at least one candidate." D086 left this **NOT met**, parked on a
+Multus stale-token fault; D087 and D088 fixed the branch-collision and registration faults that the
+fault's rerun then hit.
+**Record:** rerun **`9015ecd4-5524-45cf-b6c7-f045a17860bc`** completed past all of the above. Registry
+now shows: registered model `soarm-act` (id 1), one version `act-v2-ft160-rhem` (id 2), artifact
+`uri` `quay.io/jary/soarm-act-modelcar@sha256:18cc4412a21bfdd48d27b654558d1268e7c95f168f28b50873c4e2417369e61a`,
+customProperties including `rekor_index=8`, success rates 0.73/0.86, fixed 20 / broken 7 / net 13,
+`sign_test_p` 0.0192, `verdict` PASS, and `pr_url` pointing to **PR #4**
+(https://github.com/RHPhysicalAI/hp-roscon-flywheel/pull/4, head
+`promote/act-v2-ft160-rhem-9015ecd4`, commit `b33b5133`, not merged). `docs/eval-records/
+model-registry.md` updated to this completed state; committed **`712d26e`**.
+**Observation (multi-arch digest, D079):** the OCI-index digest is not byte-reproducible across
+runs — this rerun's `18cc4412…` vs the failed run's `2879ddae…` vs D1's `1375d0bc…`; each run is
+signed fresh and gets its own Rekor triple (the failed run at indices 5–7, this rerun at 8–10).
+Expected given D079's per-arch layer timestamps; D088's update path already rewrites the artifact
+`uri` to match on every registration. Consequence: "same weights" is not "same digest" — the registry's
+`checkpoint_uri` is the stable identity, the digest is only the deployable one. Not worth fixing; noted.
+**Decision:** the registry holds a durable promotion record — digest, full eval metrics, Rekor index,
+and PR — for an actual promoted candidate. **E1's exit criterion is met.** Phase 4 item 5 (structured
+promotion record / Model Registry) is closed.
