@@ -4,6 +4,8 @@ kind: Application
 metadata:
   name: operators-config
   namespace: openshift-gitops
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
 spec:
   destination:
     namespace: flywheel

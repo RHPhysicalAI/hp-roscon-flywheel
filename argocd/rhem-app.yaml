@@ -20,6 +20,8 @@ kind: Application
 metadata:
   name: rhem
   namespace: openshift-gitops
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
 spec:
   destination:
     namespace: flightctl

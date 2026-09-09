@@ -9,6 +9,8 @@ kind: Application
 metadata:
   name: flywheel
   namespace: openshift-gitops
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
 spec:
   destination:
     namespace: flywheel

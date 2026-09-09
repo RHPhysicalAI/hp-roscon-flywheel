@@ -4,6 +4,8 @@ kind: Application
 metadata:
   name: storage
   namespace: openshift-gitops
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
 spec:
   destination:
     namespace: local-path-storage

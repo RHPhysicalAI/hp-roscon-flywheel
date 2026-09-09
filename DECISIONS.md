@@ -3725,3 +3725,69 @@ in the log, not code execution. Broker-level SASL/ACL hardening (and coordinatin
 Olga's dashboard) is a real residual, tracked as a follow-up for a session that can reach and test
 against her actual consumer — not closed here. C9 (MinIO creds in git history, same NodePort-family
 risk class) was separately waived by the operator as out of scope for this project.
+
+---
+
+## D117 — C6/C7/C8 closed: Argo finalizers on all 8 bootstrap apps, a Securesign namespace manifest, and four `:latest` tags pinned
+
+**Date:** 2026-09-09
+**Context:** review D115's platform findings (`.changes/reviews/code-review-platform.md`).
+**Decision:**
+- **C6.** Added `metadata.finalizers: [resources-finalizer.argocd.argoproj.io]` to all 8
+  `argocd/*-app.yaml` Application manifests (the review said 9; the actual count of `kind:
+  Application` files in `argocd/` is 8 — `repo-flightctl-charts.yaml` is a Repository Secret, not
+  an Application). Live-patched all 8 Application objects on the desktop cluster immediately
+  (`oc patch applications.argoproj.io <name> ... --type=merge`), not just committed for next sync,
+  since these bootstrap Applications are applied by hand once and not themselves continuously
+  GitOps-reconciled. `rhem`'s live object already carried
+  `post-delete-finalizer.argocd.argoproj.io` + `.../cleanup` (handles the flightctl API objects
+  Argo can't natively manage, D024) — a naive merge patch would have replaced, not appended, and
+  wiped those; patched with all three finalizers explicitly to preserve them. One operational
+  hazard found and worth recording: `oc get application <name>` (singular, unqualified) resolves
+  ambiguously on this cluster — there's a second, unrelated `applications.app.k8s.io` CRD installed
+  (likely from an OLM/KubeVirt-adjacent operator) that the short name matches first, giving a
+  false "not found" for a real Argo Application. Always use the fully-qualified
+  `applications.argoproj.io` on this cluster.
+- **C7.** Added `gitops/operators-config/namespace-securesign.yaml` (`Namespace/trusted-artifact-signer`,
+  sync-wave `"0"`, one wave ahead of `securesign.yaml`'s `"1"`) rather than a documented manual
+  step — self-contained, no new bootstrap instruction needed. Server dry-run against the live
+  cluster confirms it reconciles as a no-op against the namespace that already exists there
+  (created by some earlier, undocumented means); a from-scratch Fury bring-up now creates it
+  declaratively instead of leaving `Securesign/securesign` stuck.
+- **C8.** Pinned four of the five floating tags the review found, using digests read from what's
+  actually live on the cluster (not just "any recent release"):
+  - `gitops/minio/minio.yaml`: `quay.io/minio/minio@sha256:14cea493…` — confirmed via
+    `docker buildx imagetools inspect` that this digest *is* the multi-arch manifest list (amd64/
+    arm64/ppc64le), matching the live pod's `imageID` exactly.
+  - `gitops/minio/minio-readonly-user.yaml`: `quay.io/minio/mc@sha256:a7fe349e…` — same
+    verification, matches the completed `minio-olga-readonly-setup` Job's `imageID`.
+  - `gitops/storage/local-path-provisioner.yaml`: `registry.access.redhat.com/ubi9/ubi-minimal:9.8`
+    — a real, resolvable version tag, not a digest: no helper pod has run recently to read a live
+    `imageID` from, and this is baked into a ConfigMap template rather than a running container.
+  - `gitops/flywheel/so-arm-sim.yaml`: `quay.io/jary/soarm-flywheel@sha256:9b0e0123…` (`:latest`'s
+    current resolved digest). **Important nuance, not a full fix**: this Deployment is scaled to 0
+    replicas and vestigial (D097) — the real sim producer runs as a host Docker container tagged
+    `:sim-only`, built locally via `docker buildx build --load` and **never pushed to quay** (no
+    `RepoDigests` recorded — confirmed via `docker inspect`). So this pin removes the
+    floating-tag anti-pattern but pins to content that is stale relative to what's actually
+    running; it does not and cannot make the manifest describe reality, because the real image was
+    never published under any tag. If this Deployment is ever meant to run for real (e.g. an
+    in-cluster sim on the Fury), `:sim-only` needs to be pushed to quay first — flagged in a code
+    comment at the pin site, not silently left implicit.
+  - Also dropped the now-dead `FAILURE_RATE` env var from `so-arm-sim.yaml` while in the file for
+    the image pin (the code that read it was removed in D115) — small, same-file, low-risk.
+  - Left `gitops/flywheel/manifest-consumer.yaml`'s `python-312:latest` untouched, per the
+    already-tracked D066/D068 deferral.
+**Verification:** all five touched YAML files parse (`yaml.safe_load`); server-side dry-run
+(`oc apply --dry-run=server`) against the live desktop cluster succeeded for `minio.yaml`,
+`local-path-provisioner.yaml`, and `so-arm-sim.yaml`. `minio-readonly-user.yaml`'s dry-run reports
+"field is immutable" on the completed `minio-olga-readonly-setup` Job — expected Kubernetes
+behavior (Job pod templates are immutable once created; this Job finished successfully 5 days ago)
+and unrelated to the digest pin itself. Actually applying this file requires deleting the completed
+Job first, a one-time step left for the operator/orchestrator rather than done here (out of this
+fork's scope to delete a live cluster object). The 8 live-patched Application finalizers were
+verified via `oc get applications.argoproj.io -n openshift-gitops -o custom-columns=...`.
+**Not done, out of scope for this fix:** the git-committed finalizer change and the live-patched
+Application objects are two separate actions taken together deliberately (see C6 above); no
+Application was deleted or resynced to test the finalizer, per the "nothing destructive" constraint
+on this pass.

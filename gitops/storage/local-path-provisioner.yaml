@@ -92,7 +92,7 @@ data:
     spec:
       containers:
         - name: helper-pod
-          image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+          image: registry.access.redhat.com/ubi9/ubi-minimal:9.8  # was :latest (C8, review D115); real, stable version tag — no helper pod has run recently to get a resolved digest
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true

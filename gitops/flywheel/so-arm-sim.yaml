@@ -29,14 +29,19 @@ spec:
     spec:
       containers:
         - name: so-arm-sim
-          image: quay.io/jary/soarm-flywheel:latest
+          # was :latest (C8, review D115). NOTE: this Deployment is scaled to 0 replicas and
+          # vestigial (D097) — the real sim producer runs as a host Docker container tagged
+          # :sim-only, built locally and never pushed to quay (no registry digest exists for it).
+          # This pin is to :latest's own current content, which is stale relative to :sim-only —
+          # pinning removes the floating-tag anti-pattern but does not make this manifest
+          # accurately describe what's live. If this Deployment is ever meant to run for real
+          # (e.g. an in-cluster sim on the Fury), :sim-only needs to be pushed to quay first.
+          image: quay.io/jary/soarm-flywheel@sha256:9b0e0123f96c3607328dc1bc18aebc595617b506a53bb3cc6c493f4755f17af2
           env:
             - name: MODEL_VERSION
               value: "soarm-act-v1"
             - name: SCENE
               value: "place_cubes_on_tray"
-            - name: FAILURE_RATE
-              value: "0.1"
             - name: EPISODE_TIMEOUT_S
               value: "30.0"
             - name: MAX_EPISODE_S
