@@ -1,0 +1,19 @@
+# This project was developed with assistance from AI tools.
+#
+# Public key of the in-cluster RHTAS Rekor log (GET /api/v1/log/publicKey on the rekor-server
+# route). The cosign-sign Task's verify step needs it as SIGSTORE_REKOR_PUBLIC_KEY: with a custom
+# --rekor-url, cosign v2 otherwise looks the log key up in the public Sigstore TUF root and fails
+# with "rekor log public key not found for payload" (D045). Same bytes the Fleet writes to
+# /etc/pki/containers/rekor.pub on every device (gitops/rhem/fleet-act-inference.yaml), so the
+# pipeline verifies exactly what the device will enforce. Public material; safe in git.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rekor-public-key
+  namespace: flywheel
+data:
+  rekor.pub: |
+    -----BEGIN PUBLIC KEY-----
+    MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEpWlAeU1HRJIh3nRDD9chGR50khDP
+    kSs7UmieeG3iE9zHnCcU0rAUx8QsH2kDVpdFMr8IELMeRzPiqAv1E9qaAg==
+    -----END PUBLIC KEY-----

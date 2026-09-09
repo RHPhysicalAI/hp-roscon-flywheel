@@ -1,0 +1,141 @@
+# This project was developed with assistance from AI tools.
+#
+# runtime-image: git-clone -> buildah (amd64 + arm64 under qemu, one manifest list, tag
+# act-inference-<git short sha>) -> cosign sign + verify into RHTAS Rekor (D028). Lifted from
+# thor-testing tekton/02-pipeline.yaml. The Fleet (gitops/rhem/fleet-act-inference.yaml) pins
+# the IMAGE_DIGEST result; the device's policy.json verifies the signature and the Rekor SET.
+#
+# Start it from gitops/tekton/runtime-image-pipelinerun.example.yaml (`oc create -f`), which
+# binds the workspaces: one 60 Gi local-path PVC for checkout + buildah storage (Tekton's
+# affinity assistant allows one PVC per TaskRun), the quay-push and cosign-signing Secrets and
+# the rekor-public-key ConfigMap. Runs as the `pipeline` SA (privileged SCC, pipeline-sa-scc.yaml).
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: runtime-image
+  namespace: flywheel
+spec:
+  description: Build, push and sign the multi-arch ACT runtime image.
+  params:
+    - name: git-url
+      type: string
+      default: https://github.com/RHPhysicalAI/hp-roscon-flywheel.git
+    - name: git-revision
+      type: string
+      default: desktop-gpu-split
+    - name: image-repo
+      type: string
+      default: quay.io/jary/soarm-flywheel
+    - name: tag-prefix
+      type: string
+      default: act-inference-
+    - name: dockerfile
+      type: string
+      default: docker/Dockerfile.gpu-inference
+      description: Relative to the repository root
+    - name: context
+      type: string
+      default: .
+      description: Build context relative to the repository root
+    - name: platforms
+      type: string
+      default: linux/amd64,linux/arm64
+    - name: build-jobs
+      type: string
+      default: "1"
+    - name: rekor-url
+      type: string
+      default: http://rekor-server.trusted-artifact-signer.svc
+  workspaces:
+    - name: shared
+      description: PVC — git checkout under source/ and buildah storage under .buildah/
+    - name: docker-credentials
+      description: quay-push Secret projected as config.json
+    - name: cosign-key
+      description: cosign-signing Secret (cosign.key, cosign.pub, cosign.password)
+    - name: rekor-public-key
+      description: rekor-public-key ConfigMap (rekor.pub)
+  tasks:
+    - name: git-clone
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: git-clone
+          - name: namespace
+            value: openshift-pipelines
+      workspaces:
+        - name: output
+          workspace: shared
+      params:
+        - name: URL
+          value: $(params.git-url)
+        - name: REVISION
+          value: $(params.git-revision)
+        - name: DEPTH
+          value: "1"
+        - name: SUBDIRECTORY
+          value: source
+
+    - name: build-and-push
+      taskRef:
+        name: buildah-cross-arch
+      runAfter:
+        - git-clone
+      workspaces:
+        - name: source
+          workspace: shared
+        - name: dockerconfig
+          workspace: docker-credentials
+      params:
+        - name: IMAGE_REPO
+          value: $(params.image-repo)
+        - name: TAG_PREFIX
+          value: $(params.tag-prefix)
+        - name: GIT_COMMIT
+          value: $(tasks.git-clone.results.COMMIT)
+        - name: DOCKERFILE
+          value: source/$(params.dockerfile)
+        - name: CONTEXT
+          value: source/$(params.context)
+        - name: PLATFORMS
+          value: $(params.platforms)
+        - name: JOBS
+          value: $(params.build-jobs)
+
+    - name: sign
+      taskRef:
+        name: cosign-sign
+      runAfter:
+        - build-and-push
+      workspaces:
+        - name: cosign-key
+          workspace: cosign-key
+        - name: rekor-public-key
+          workspace: rekor-public-key
+        - name: dockerconfig
+          workspace: docker-credentials
+      params:
+        - name: IMAGE
+          value: $(params.image-repo)@$(tasks.build-and-push.results.IMAGE_DIGEST)
+        - name: REKOR_URL
+          value: $(params.rekor-url)
+
+  results:
+    - name: IMAGE_URL
+      value: $(tasks.build-and-push.results.IMAGE_URL)
+    - name: IMAGE_TAG
+      value: $(tasks.build-and-push.results.IMAGE_TAG)
+    - name: IMAGE_DIGEST
+      description: Manifest-list digest — pin this in the Fleet
+      value: $(tasks.build-and-push.results.IMAGE_DIGEST)
+    - name: PLATFORM_DIGESTS
+      value: $(tasks.build-and-push.results.PLATFORM_DIGESTS)
+    - name: REKOR_INDEX
+      value: $(tasks.sign.results.REKOR_INDEX)
+    - name: REKOR_INDEXES
+      value: $(tasks.sign.results.REKOR_INDEXES)
+    - name: GIT_COMMIT
+      value: $(tasks.git-clone.results.COMMIT)

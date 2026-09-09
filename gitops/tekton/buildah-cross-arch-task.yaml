@@ -1,0 +1,217 @@
+# This project was developed with assistance from AI tools.
+#
+# Multi-arch buildah Task for the runtime images (D028). Lifted from thor-testing
+# tekton/00-buildah-cross-arch-task.yaml (the OpenShift Pipelines buildah Task with a privileged
+# build step, thor D009) and reduced to what this pipeline needs:
+#   - one `buildah bud --platform linux/amd64,linux/arm64 --manifest <image>` builds both
+#     architectures (arm64 under qemu-user, see qemu-binfmt.yaml) into a local manifest list,
+#     then `buildah manifest push --all` publishes the list + both platform images under one tag
+#     and reports the *manifest-list* digest, which is what the Fleet pins and cosign signs.
+#   - the tag is `<TAG_PREFIX><git short sha>`; no `:latest` is ever pushed (D022).
+#   - overlay storage on the `source` workspace PVC (a 60 Gi local-path claim, see the
+#     PipelineRun template) with native overlayfs; the image's default storage.conf points at
+#     fuse-overlayfs, which is both slower and unnecessary in a privileged step.
+# The build step is privileged: qemu-user segfaults under `pipelines-scc` (thor D009); the
+# `pipeline` SA is bound to the privileged SCC in pipeline-sa-scc.yaml.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: buildah-cross-arch
+  namespace: flywheel
+spec:
+  description: >-
+    Build a container image for several platforms with buildah + qemu-user, push the manifest
+    list to a registry under <TAG_PREFIX><git short sha>, and report the manifest-list digest.
+  params:
+    - name: IMAGE_REPO
+      type: string
+      description: Registry repository to push to (no tag), e.g. quay.io/jary/soarm-flywheel
+    - name: TAG_PREFIX
+      type: string
+      default: act-inference-
+      description: Tag prefix; the git short sha (7 chars of GIT_COMMIT) is appended
+    - name: GIT_COMMIT
+      type: string
+      description: Full commit sha of the checkout (git-clone's COMMIT result)
+    - name: DOCKERFILE
+      type: string
+      default: ./Dockerfile
+      description: Dockerfile path relative to the `source` workspace
+    - name: CONTEXT
+      type: string
+      default: .
+      description: Build context relative to the `source` workspace
+    - name: PLATFORMS
+      type: string
+      default: linux/amd64,linux/arm64
+      description: Comma-separated platforms passed to `buildah bud --platform`
+    - name: BUILD_ARGS
+      type: array
+      default: [""]
+      description: Dockerfile build arguments, key=value
+    - name: BUILD_EXTRA_ARGS
+      type: string
+      default: ""
+      description: Extra `buildah bud` arguments (whitespace separated)
+    - name: JOBS
+      type: string
+      default: "1"
+      description: "`buildah bud --jobs`: platforms built concurrently (1 = amd64 first, then arm64)"
+    - name: TLS_VERIFY
+      type: string
+      default: "true"
+  results:
+    - name: IMAGE_URL
+      description: Pushed image reference with tag
+    - name: IMAGE_TAG
+      description: The tag that was pushed
+    - name: IMAGE_DIGEST
+      description: Digest of the pushed manifest list (sign and pin this)
+    - name: PLATFORM_DIGESTS
+      description: Space-separated <os>/<arch>=<digest> of the platform images in the list
+  workspaces:
+    - name: source
+      description: >-
+        Git checkout plus buildah's overlay storage (in .buildah/ at the workspace root, so
+        the PVC must be sized for the images, not just the source).
+    - name: dockerconfig
+      optional: true
+      description: Registry credentials as config.json or .dockerconfigjson at the workspace root
+  stepTemplate:
+    env:
+      - name: PARAMS_IMAGE_REPO
+        value: $(params.IMAGE_REPO)
+      - name: PARAMS_TAG_PREFIX
+        value: $(params.TAG_PREFIX)
+      - name: PARAMS_GIT_COMMIT
+        value: $(params.GIT_COMMIT)
+      - name: PARAMS_DOCKERFILE
+        value: $(params.DOCKERFILE)
+      - name: PARAMS_CONTEXT
+        value: $(params.CONTEXT)
+      - name: PARAMS_PLATFORMS
+        value: $(params.PLATFORMS)
+      - name: PARAMS_BUILD_EXTRA_ARGS
+        value: $(params.BUILD_EXTRA_ARGS)
+      - name: PARAMS_JOBS
+        value: $(params.JOBS)
+      - name: PARAMS_TLS_VERIFY
+        value: $(params.TLS_VERIFY)
+      - name: WORKSPACES_SOURCE_PATH
+        value: $(workspaces.source.path)
+      - name: WORKSPACES_DOCKERCONFIG_BOUND
+        value: $(workspaces.dockerconfig.bound)
+      - name: WORKSPACES_DOCKERCONFIG_PATH
+        value: $(workspaces.dockerconfig.path)
+  steps:
+    - name: build-and-push
+      # registry.redhat.io/rhel9/buildah, the digest the operator's buildah-1-23-0 Task uses (buildah 1.43.2)
+      image: registry.redhat.io/rhel9/buildah@sha256:61eccd0b8b3a6b87233376e6529ce08e4e002d9bef07f27c8fb431a500947792
+      args:
+        - $(params.BUILD_ARGS[*])
+      securityContext:
+        privileged: true
+        capabilities:
+          add: ["SETFCAP"]
+      computeResources:
+        requests:
+          cpu: "4"
+          memory: 8Gi
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        phase() { echo "---> $(date -u +%FT%TZ) $*"; }
+
+        # --- storage: native overlay on the workspace PVC
+        STORAGE="${WORKSPACES_SOURCE_PATH}/.buildah"
+        mkdir -p "${STORAGE}" /tmp/buildah-run
+        cat > /tmp/storage.conf <<EOF
+        [storage]
+        driver = "overlay"
+        runroot = "/tmp/buildah-run"
+        graphroot = "${STORAGE}"
+        [storage.options.overlay]
+        mountopt = "nodev"
+        EOF
+        export CONTAINERS_STORAGE_CONF=/tmp/storage.conf
+        export BUILDAH_ISOLATION=chroot
+
+        # --- registry credentials (workspace root config.json or .dockerconfigjson)
+        if [[ "${WORKSPACES_DOCKERCONFIG_BOUND}" == "true" ]]; then
+          if [[ -f "${WORKSPACES_DOCKERCONFIG_PATH}/config.json" ]]; then
+            export DOCKER_CONFIG="${WORKSPACES_DOCKERCONFIG_PATH}"
+          elif [[ -f "${WORKSPACES_DOCKERCONFIG_PATH}/.dockerconfigjson" ]]; then
+            mkdir -p /tmp/.docker
+            cp "${WORKSPACES_DOCKERCONFIG_PATH}/.dockerconfigjson" /tmp/.docker/config.json
+            export DOCKER_CONFIG=/tmp/.docker
+          else
+            echo "dockerconfig workspace has neither config.json nor .dockerconfigjson" >&2; exit 1
+          fi
+        fi
+
+        # --- names
+        TAG="${PARAMS_TAG_PREFIX}${PARAMS_GIT_COMMIT:0:7}"
+        IMAGE="${PARAMS_IMAGE_REPO}:${TAG}"
+        DOCKERFILE_FULL="${WORKSPACES_SOURCE_PATH}/${PARAMS_DOCKERFILE}"
+        CONTEXT_FULL="${WORKSPACES_SOURCE_PATH}/${PARAMS_CONTEXT}"
+        [[ -r "${DOCKERFILE_FULL}" ]] || { echo "Dockerfile not found: ${DOCKERFILE_FULL}" >&2; exit 1; }
+        [[ -d "${CONTEXT_FULL}" ]] || { echo "context not found: ${CONTEXT_FULL}" >&2; exit 1; }
+
+        BUILD_ARGS=()
+        for a in "$@"; do [[ -n "$a" ]] && BUILD_ARGS+=("--build-arg=$a"); done
+        read -ra EXTRA_ARGS <<< "${PARAMS_BUILD_EXTRA_ARGS}"
+
+        phase "buildah $(buildah version | awk '/^Version/{print $2}') qemu handlers: $(ls /proc/sys/fs/binfmt_misc | grep -c qemu || true)"
+        phase "Building ${IMAGE} for ${PARAMS_PLATFORMS} (jobs=${PARAMS_JOBS}) from ${PARAMS_DOCKERFILE}"
+        df -h "${WORKSPACES_SOURCE_PATH}" | tail -1
+
+        buildah --tls-verify="${PARAMS_TLS_VERIFY}" bud \
+          --platform "${PARAMS_PLATFORMS}" \
+          --manifest "${IMAGE}" \
+          --jobs "${PARAMS_JOBS}" \
+          "${EXTRA_ARGS[@]}" \
+          "${BUILD_ARGS[@]}" \
+          --file "${DOCKERFILE_FULL}" \
+          "${CONTEXT_FULL}"
+
+        phase "Built; local list:"
+        buildah manifest inspect "${IMAGE}"
+        df -h "${WORKSPACES_SOURCE_PATH}" | tail -1
+
+        phase "Pushing manifest list + platform images to docker://${IMAGE}"
+        buildah --tls-verify="${PARAMS_TLS_VERIFY}" manifest push --all \
+          --digestfile /tmp/digest \
+          "${IMAGE}" "docker://${IMAGE}"
+        DIGEST="$(cat /tmp/digest)"
+        [[ -n "${DIGEST}" ]] || { echo "empty digest file" >&2; exit 1; }
+        phase "Pushed ${IMAGE} -> ${DIGEST}"
+
+        # Platform digests as the registry now serves them (falls back to the local list).
+        LIST_JSON="$(buildah --tls-verify="${PARAMS_TLS_VERIFY}" manifest inspect "docker://${PARAMS_IMAGE_REPO}@${DIGEST}" 2>/dev/null \
+          || buildah manifest inspect "${IMAGE}")"
+        PLATFORM_DIGESTS="$(python3 - <<'PY' "${LIST_JSON}"
+        import json, sys
+        d = json.loads(sys.argv[1])
+        out = []
+        for m in d.get("manifests", []):
+            p = m.get("platform", {})
+            if p.get("os", "unknown") == "unknown":
+                continue
+            out.append(f"{p.get('os')}/{p.get('architecture')}{('/' + p['variant']) if p.get('variant') else ''}={m['digest']}")
+        print(" ".join(out))
+        PY
+        )"
+        phase "Platform digests: ${PLATFORM_DIGESTS}"
+
+        printf '%s' "${IMAGE}" > "$(results.IMAGE_URL.path)"
+        printf '%s' "${TAG}" > "$(results.IMAGE_TAG.path)"
+        printf '%s' "${DIGEST}" > "$(results.IMAGE_DIGEST.path)"
+        printf '%s' "${PLATFORM_DIGESTS}" > "$(results.PLATFORM_DIGESTS.path)"
+
+        # Free the node disk now rather than when the PipelineRun (and its PVC) is deleted.
+        phase "Cleaning local storage"
+        buildah rmi --all --force >/dev/null 2>&1 || true
+        rm -rf "${STORAGE}"
+        df -h "${WORKSPACES_SOURCE_PATH}" | tail -1
