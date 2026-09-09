@@ -23,7 +23,7 @@ Phase 3 closes it with governance; Phase 3+ makes the improvement autonomous.
 | 3 — Training + close the loop | **Complete** (2026-09-08) — eval harness (D020), self-improvement proof (D021: 73% → 86%, p=0.019), governed pipeline through RHOAI/RHTAS with PR #1 merged and swapped, loop closed on v2; static chart shipped | D015, D020–D022 |
 | 3+ — Bootstrap loop | Not started | `BOOTSTRAP-LOOP.md` |
 | 4 — Demo hardening + Fury prep | **In progress** — item 1 done (2026-09-08): `docs/DEMO_RUNBOOK.md`, Short Cut + Full Live, every screen verified live (D023) | D023 |
-| 4.5 — RHEM device plane | **In progress** — A–E done, F-GitOps done; F-Tekton finishing; G-prep (runbook + kit) next | D024–D095 |
+| 4.5 — RHEM device plane | **In progress** — A–F, G-prep done; kit recording + rehearsal (operator), then Fury on site | D024–D100 |
 
 ---
 
@@ -279,6 +279,7 @@ Live elements are layered on top of that, never depended on.
    *Contingency kit* table (text artifacts already in `docs/demo-kit/`). Copies on the presenting
    laptop and a USB stick. Non-negotiable. The Full Live cycle (reset → run → merge → swap) gets
    its one rehearsal in this session and stays conditional (D023).
+   **Script ready (Phase 4.5 G-prep):** recording is the operator's.
 
 3. **Multi-arch image prep:** every custom image builds for `linux/amd64` and `linux/arm64`.
    Document every x86-specific assumption. The GPU inference image (PyTorch cu130) on aarch64
@@ -343,6 +344,11 @@ green, the fallback is the Phase 3 durable artifacts already in `docs/demo-kit/`
 | 4–5 | **D** promotion rewrite; one promotion end to end | Proves Beat 5/6 on RHEM |
 | 5–7 | **F** Tekton multi-arch runtime image; **E1** Model Registry | arm64 runtime image is a Fury prerequisite; closes Phase 4 item 5 |
 | 7–9 | **E2** Catalog (stretch); runbook rewrite; **Phase 4 item 2: record the contingency kit**; rehearsal | |
+
+**G-prep done 2026-09-09 (D097+):** runbook rewritten for Beats 5/6 on RHEM (Short Cut = run
+`192f3ec5` / PR #2; Full Live from today's state; Fury table = device-is-the-host); dashboard badge
+sourced from the consumer's `COLLECTOR` (a3cd943); `docs/demo-kit/rhem-kit-script.md` clip list —
+operator records; one full rehearsal pending.
 | 10–12 | Buffer; **F** ride-alongs (Argo apps, secrets, arch-derived binaries, docs) | |
 | Sept 20–25 | **G** Fury | Stand the flywheel up; everything else stretch (Phase 4 sequencing note) |
 
@@ -491,7 +497,7 @@ G. **Fury port + runbook** (on site, Sept 20–25)
   `argocd/`; every Argo app Synced with `prune: true` — tlog bypass gone from code/config/procedures
   (D3); Argo app count/prune → F-GitOps (2026-09-09: tlog bypass gone from code/config/procedures —
   D3; 8 Argo apps = 8 files, all Synced with prune: true — F-GitOps)
-- [ ] Contingency kit recorded on the RHEM path (Phase 4 item 2); one full rehearsal of the Full Live cut on RHEM
+- [ ] Contingency kit recorded on the RHEM path (Phase 4 item 2); one full rehearsal of the Full Live cut on RHEM — kit script ready, recording + rehearsal pending (operator)
 
 ### Carry-overs (as of 2026-09-09 — every item mirrored in brim's inbox)
 
@@ -503,14 +509,15 @@ Closed 2026-09-09 by the operator: PR #4 closed unmerged; `cosign.password` patc
 | DSP API accepted an empty bearer token via port-forward to the service port — confirm the route enforces OAuth / consider a NetworkPolicy | operator | planned |
 | Multus stale-token fault after the 4.19 upgrade (new pods failed `Unauthorized` until the multus pod was recreated) — watch for recurrence | operator | planned |
 | Perses/Tempo come from hand-installed COO 1.5.2 + tempo-operator, not `gitops/operators/` — add Subscriptions or record as deferral | — | planned |
-| runbook runner-restart line must `set -a; source ~/.minio-env; set +a` | — | G-prep docs pass |
-| dashboard `model_version` badge stuck at `soarm-act-v1` after act-serving retired — re-source from `/flywheel/model_version` | — | G-prep, in progress |
+| runbook runner-restart line must `set -a; source ~/.minio-env; set +a` | — | **done (3095ced)** |
+| dashboard `model_version` badge stuck at `soarm-act-v1` after act-serving retired — re-source from `/flywheel/model_version` | — | **done (a3cd943)** |
 | `prune_bags.py` lineage-aware scan across all `episodes-curated/<mv>/` prefixes and manifests | — | planned |
 | `run-coordinator.sh` default `MODEL_VERSION` must follow the Fleet | — | planned |
 | `consumer.py` per-manifest `pending=<n>` log line | — | planned |
 | `healthcheck.sh` cannot see a wedged action server; `aggregate.success_rate` should exclude `goal_accepted: false` episodes | F/G | planned |
 | OTel re-emission and AMQ Streams | — | post-ROSCon deferrals (D026) |
 | Fury on site: `device/provision.sh` on aarch64 + CDI, enroll with Fury labels, fresh SNO 4.19+ with `argocd/*-app.yaml` + `rhem/bootstrap/*` | G | Sept 20–25 |
+| Mac `/etc/hosts`: add `ui.flightctl…` and `flywheel-rest…` | operator, sudo | planned |
 
 ---
 

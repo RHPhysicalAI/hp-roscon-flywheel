@@ -3231,3 +3231,103 @@ p95 22.3–23.0, p99 25.5–29.9, max 312.8 ms, 32/9347 = 0.34 % of intervals > 
 **Consequences:** D053/D064's "FAIL as written" verdicts stand as history; `docs/eval-records/cpu-spike.md`
 summary should carry the restated criterion (note it as a follow-up for the G-prep docs pass, do not edit
 that file).
+
+---
+
+## D097 — The dashboard's lineage source is the manifest-consumer's `COLLECTOR`, not the device
+
+**Date:** 2026-09-09
+**Context:** D073/D076: `get_model_version()` read the deleted `act-policy` Service and the badge was
+stuck at `soarm-act-v1`; `counts.curated` read 0 (sync-agent moves curated → sent within seconds) and
+`trigger.triggered` was stale from PR #1's 160. Options weighed: (a) subscribe to the device's latched
+`/flywheel/model_version` — the dashboard is a plain Flask pod (`pip install flask kubernetes`) with no
+ROS or zenoh, so this means a new image; (b) the flightctl API — needs a hub token in the pod; (c) read
+`COLLECTOR` from the `manifest-consumer` Deployment, which Argo syncs from the same promotion commit that
+edits the Fleet (D072) — the dashboard SA already has `deployments get/list` in `flywheel`.
+**Decision:** (c). `_lineage()` returns `(COLLECTOR, Progressing.lastUpdateTime)` from the Deployment
+(10 s cache); `counts.curated` and the trigger bar count curated + sent episode files stamped with that
+lineage and newer than that epoch — the same thing the consumer counts (its pending count restarts at 0
+on every rollout, D072); `promoted` = lineage ≠ `BASELINE_MODEL_VERSION` (`upstream-act-teacher`);
+`flywheel_running` = an episode landed in the last `LOOP_ACTIVE_SECONDS` (180) instead of the in-cluster
+sim replicas (always 0 on the desktop). `DASHBOARD_CODE_REV` env on the Deployment is bumped with
+`dashboard.py` so Argo rolls the pod (the ConfigMap is read once at start).
+**Record:** `/api/status` before → `{"model_version":"soarm-act-v1","counts":{"curated":0,"sent":196},
+"trigger":{"triggered":true}}`; after the G-prep rollout the badge reads `model_version: act-v2-ft160`,
+`promoted: true`, `trigger: {"threshold":160,"progress":0,"pct":0,"triggered":false}` (the bar resets to
+0/160 by design at the new lineage's epoch) and a populated `lineage_since` (the consumer Deployment's
+`Progressing.lastUpdateTime`). Commit: `a3cd943`.
+**Consequences:** the badge follows the *hub's* lineage cut, which lands ~1–3 min after the device serves
+the new version (Argo's poll; D072); the runbook says "the badge is the consumer's view, the device's
+is the console log." Right after a promotion the bar reads 0 / 160 by design. Residual: a consumer crash
+restart inside the same ReplicaSet does not move the epoch, and the consumer's post-trigger reset is not
+observable — both are noted, neither matters for the demo.
+
+---
+
+## D098 — Runbook plan of record on RHEM: the pinned promotion is PR #2 (run `192f3ec5`), the Full Live candidate is `act-v2-ft160-rhem`
+
+**Date:** 2026-09-09
+**Context:** D023's Short Cut pinned run 6 / PR #1, whose diff edits the retired `gitops/act-serving/`
+files (D025/D075). The RHEM promotion that was actually merged, rolled out and measured is PR #2 (run
+`192f3ec5`, Rekor index 4, D068–D070), rolled back by PR #3 (D074). The registry proof run `9015ecd4`
+(PR #4, closed unmerged) is what the Model Registry row and the Catalog head node point at (digest
+`18cc4412…`, Rekor 8 — per-run digests, D090).
+**Decision:** the Short Cut's Beat 3 pinned run is `192f3ec5` (kit: `run-192f3ec5-*`), Beat 5 is PR #2 +
+Rekor 4 + the RHEM Fleet page, Beat 6 is the device Applications tab + `flightctl console` log + the
+registry row + the Catalog graph, narrated as "one registry row per candidate, refreshed by the latest
+run." The Full Live's reset state is *today's* state (`act-v2-ft160` @ `bdb513ca…`), its candidate is
+`act-v2-ft160-rhem` (D067) and its rollback is `git revert -m 1` of the merge — no reset to the teacher
+(the Fleet has never served `upstream-act-teacher`; there is no teacher modelcar). Run 6 / PR #1 / Rekor 1
+stay in the kit as history.
+**Consequences:** the narration's "v1 → v2" is the *gate's* comparison (teacher vs. the fine-tuned
+weights); what the Fleet flips on stage is `act-v2-ft160` → `act-v2-ft160-rhem`, and the runbook says so
+in "the one honest shortcut." The kit's Beat 5/6 clips (`docs/demo-kit/rhem-kit-script.md`) are the one
+Full Live rehearsal on RHEM, filmed. Commit: `3095ced` (runbook), `ec08e73` (kit script + artifacts).
+
+---
+
+## D099 — Runbook "known artifacts" on RHEM (replaces the "Argo Degraded" line)
+
+**Date:** 2026-09-09
+**Record:** (1) the Fleet banner goes green ~30 s before the app is Healthy (D070) — show the
+Applications tab, not the banner; (2) the dashboard badge lags the device by Argo's poll (D072, D097)
+and, until the G-prep ConfigMap is rolled, reads `soarm-act-v1`; (3) the CPU stand-in's cadence residual
+(0.34 % of intervals > 40 ms) passes the restated criterion (D096) — say "the stand-in serves on CPU,
+the Fury on the GPU"; (4) the registry/Catalog head version carries PR #4's digest, not PR #2's (D090);
+(5) `flightctl` may answer `connection refused 127.0.0.1:3443` for a few seconds while the desktop
+port-forward loop re-establishes; (6) the trigger bar reads 0 / 160 right after a promotion by design.
+**Gap (Mac):** the presenting Mac's `/etc/hosts` does not yet resolve `ui.flightctl…` or
+`flywheel-rest…` — an operator, sudo task, not scriptable from the agent side; noted as a BUILD-PLAN
+carry-over rather than fixed here.
+**Consequences:** runbook commit `3095ced` carries all six lines; the Mac `/etc/hosts` gap blocks the
+kit recording session's pre-conditions checklist (item 6) until the operator adds the entries.
+
+---
+
+## D100 — Contingency-kit clip list for Beats 5/6 on RHEM, and what's verified vs. marked unverified in the runbook
+
+**Date:** 2026-09-09
+**Context:** the runbook (`3095ced`) and the kit script (`ec08e73`, `docs/demo-kit/rhem-kit-script.md`)
+were both rewritten for the RHEM path in the same G-prep pass; every command in the runbook is marked
+run-today unless flagged otherwise, so the two files needed to agree on what's actually been exercised.
+**Record — verified today (2026-09-09):** the runbook's state check; `flightctl get`/`flightctl console`;
+the registry `curl`; the KFP task-list read; `cosign verify` with a Rekor lookup; the RHEM UI routes
+including `/catalog`; `gh` (PR list/view); the dashboard `/api/status` read.
+**Record — marked unverified/not-run in the runbook:** `count_curated.py` (Beat 2 terminal alternative);
+`oc delete pod -n flywheel -l app=dashboard`; the host-runner restart line (only needed because the
+runner was resident today); the Full Live `POST /runs` trigger path; a re-run of the device negative-pull
+commands (D091's strings are quoted from the same-day run in `negative-trust-tests.md`, not re-executed
+today); the first `run-coordinator.sh` invocation on the Tekton runtime digest (last loop ran on the
+interim digest `2ad1fb1c…`); the `so-arm-sim` container restart fallback; `ENGINE=podman` on the Fury.
+**Record — clip list (`docs/demo-kit/rhem-kit-script.md`):** `5a-pr`, `5b-rekor` (+ optional
+`5b2-verify`), `6d-registry`, `6e-catalog`, `N1-negtrust` as the static pre-merge set; `5c-merge`,
+`5d-fleet`, `5e-watch` as the one continuous promotion take; `6a-device`, `6b-console`, `6c-dashboard`
+(+ optional `6f-minio`) as the post-merge set; `R1-revert-pr`, `R2-rollback` for the rollback. The
+recording session doubles as the one Full Live rehearsal (BUILD-PLAN Phase 4.5 exit line).
+**Decision:** the runbook's per-command markers stand as the source of truth for what's rehearsed vs.
+scripted-but-unexercised; the kit script's clip table is the recording checklist; neither list is
+re-verified by this pass — this entry only cross-indexes them for the record.
+**Consequences:** the unverified items above are the ones a live Q&A or a Full Live attempt could
+surface as untested; the operator's one recording session (kit script pre-conditions) is where the
+Full Live rehearsal actually happens, closing the BUILD-PLAN Phase 4.5 exit criterion together with the
+recording itself.
