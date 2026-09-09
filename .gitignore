@@ -1,5 +1,6 @@
 # Working notes, planning artifacts, scratch — not repo-worthy
 .plans/
+.changes/
 
 # Editor / OS
 .DS_Store

@@ -81,7 +81,7 @@ The policy architecture used by the SO-ARM upstream:
 RHEL 10.2. Remote SSH access targeted Sept 20-25 (Rick Gosalvez, HP).
 
 **Development stand-in:** Ubuntu desktop — i9-13900K, RTX 5090, 128 GB RAM, x86_64.
-At 10.0.0.41 on Jeremy's local network (SSH as `jary`). Ubuntu stays as the host OS; SNO runs
+At 10.0.0.48 on Jeremy's local network (SSH as `jary`). Ubuntu stays as the host OS; SNO runs
 in a KVM VM with the RTX 5090 passed through via VFIO. This answers the topology/contention
 question (does the whole flywheel collapse onto one GPU node?) but not architecture-specific
 questions (aarch64/Blackwell issues surface on the Fury, not here).

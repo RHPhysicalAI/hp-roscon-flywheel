@@ -16,7 +16,7 @@ numbered format as thor-testing's decision log (D001, D002, ...).
 
 ## Key facts
 
-- **Desktop (dev stand-in):** i9-13900K / RTX 5090 / 128 GB / Ubuntu / x86_64 / 10.0.0.41
+- **Desktop (dev stand-in):** i9-13900K / RTX 5090 / 128 GB / Ubuntu / x86_64 / 10.0.0.48
   SSH as `jary`. Ubuntu stays — SNO runs in a KVM VM with GPU passthrough.
 - **Target (demo):** HP ZGX Fury GB300 / Grace Blackwell / 748 GB / RHEL 10.2 / aarch64
 - **Reuse source:** `~/redhat/git/thor-testing` — gitops/, tekton/, pipeline/ are the reusable
@@ -34,3 +34,6 @@ numbered format as thor-testing's decision log (D001, D002, ...).
 - The RTX 5090 is the only GPU. Do not assume MIG capability (desktop GPU, not data center).
 - `.plans/` is gitignored — use it for scratch notes, working drafts, and artifacts that aren't
   ready for the repo. Move things to tracked files when they're solid.
+- `.changes/` is gitignored too — the `review`/`consolidate-reviews`/`archive-changes` skills' own
+  working area (findings, consolidated triage tables, tech debt). Same rule as `.plans/`: it's
+  workflow scratch, not project deliverable, so it stays local and untracked.
