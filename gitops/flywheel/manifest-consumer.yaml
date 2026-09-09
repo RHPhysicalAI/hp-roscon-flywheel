@@ -12,6 +12,9 @@ data:
     import json, os, time, urllib.request, ssl
     from kafka import KafkaConsumer, KafkaProducer
     BOOT = os.environ.get("KAFKA_BOOTSTRAP", "edge-kafka.flywheel.svc:9092")
+    # DSP's oauth-proxy serves an OpenShift service-serving cert; verify it against the service CA
+    # the pod already mounts instead of disabling TLS verification (review W-9).
+    SERVICE_CA = os.environ.get("SERVICE_CA", "/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt")
     THRESH = int(os.environ.get("TRIGGER_THRESHOLD", "160")); COOLDOWN = int(os.environ.get("TRIGGER_COOLDOWN", "3600"))
     DSP_URL = os.environ.get("DSP_URL", ""); PIPELINE_ID = os.environ.get("TRAINING_PIPELINE_ID", "")
     INCUMBENT = os.environ.get("INCUMBENT", "upstream-act-teacher"); COLLECTOR = os.environ.get("COLLECTOR", INCUMBENT)
@@ -19,7 +22,7 @@ data:
     def token():
         return open("/var/run/secrets/kubernetes.io/serviceaccount/token").read().strip()
     def latest_version_id():
-        ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+        ctx = ssl.create_default_context(cafile=SERVICE_CA)
         req = urllib.request.Request(f"{DSP_URL}/apis/v2beta1/pipelines/{PIPELINE_ID}/versions?sort_by=created_at%20desc&page_size=1",
                                      headers={"Authorization": f"Bearer {token()}"})
         with urllib.request.urlopen(req, context=ctx, timeout=30) as r: return json.load(r)["pipeline_versions"][0]["pipeline_version_id"]
@@ -29,7 +32,7 @@ data:
                 "runtime_config": {"parameters": {"candidate": cand, "incumbent": INCUMBENT, "collector": COLLECTOR, "incumbent_checkpoint": INCUMBENT_CKPT}}}
         req = urllib.request.Request(f"{DSP_URL}/apis/v2beta1/runs", data=json.dumps(body).encode(),
                                      headers={"Authorization": f"Bearer {token()}", "Content-Type": "application/json"}, method="POST")
-        ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+        ctx = ssl.create_default_context(cafile=SERVICE_CA)
         with urllib.request.urlopen(req, context=ctx, timeout=30) as r: print("[consumer] started run:", r.status, cand, flush=True)
     def main():
         c = KafkaConsumer("episode-manifests", bootstrap_servers=BOOT, group_id="manifest-consumer", auto_offset_reset="latest",
@@ -74,7 +77,7 @@ spec:
             # consumer.py is mounted from a ConfigMap and read once at process start (like
             # dashboard.yaml's DASHBOARD_CODE_REV, D097) — bump this alongside code changes so
             # Argo rolls the pod instead of leaving the old code running against a new ConfigMap.
-            - {name: CONSUMER_CODE_REV, value: "2026-09-09-pending-log"}
+            - {name: CONSUMER_CODE_REV, value: "2026-09-09-service-ca"}
             - {name: KAFKA_BOOTSTRAP, value: "edge-kafka.flywheel.svc:9092"}
             - {name: TRIGGER_THRESHOLD, value: "160"}
             - {name: TRIGGER_COOLDOWN, value: "3600"}

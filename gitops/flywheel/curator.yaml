@@ -59,6 +59,11 @@ data:
         # Gate 2: task success — HARD GATE.
         # Only successful task completions become training data. A failed
         # placement is useless (or harmful) as an imitation-learning example.
+        # cubes_placed null = the ground-truth pose source was unavailable when the
+        # episode ended (task_eval could not read the simulator) — a sensor fault,
+        # rejected as such rather than counted as a policy failure.
+        if episode.get("cubes_placed") is None:
+            return 0.0, "sensor-unavailable"
         if not episode.get("task_success", False):
             cubes = episode.get("cubes_placed", 0)
             return 0.0, f"task-failed ({cubes}/3 cubes placed)"
@@ -201,7 +206,8 @@ spec:
     spec:
       containers:
         - name: curator
-          image: docker.io/library/python:3.12-slim
+          # docker.io/library/python:3.12-slim (multi-arch manifest list, pinned by digest — review S-2)
+          image: docker.io/library/python@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
           command: ["python", "/app/curator.py"]
           env:
             - name: PASS_THRESHOLD

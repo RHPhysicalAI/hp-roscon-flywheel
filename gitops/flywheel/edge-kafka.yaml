@@ -46,6 +46,14 @@ spec:
       labels:
         app: edge-kafka
     spec:
+      # Dedicated SA with the privileged SCC (scc-rolebinding.yaml, review W-11) — no other pod in
+      # the namespace inherits it.
+      serviceAccountName: edge-kafka
+      # privileged + root are load-bearing (review W-2): the log directory is a hostPath on the
+      # SNO node with the host's own SELinux label, and only a privileged (spc_t) container may
+      # write there — the same reason gitops/storage/local-path-provisioner.yaml gives for its
+      # helper. Narrowing to hostmount-anyuid would leave the broker unable to create its
+      # log segments; revisit if the data dir moves to a PVC.
       securityContext:
         runAsUser: 0
       containers:

@@ -1435,9 +1435,6 @@ metadata:
   name: dashboard-vllm-reader
   namespace: flywheel
 rules:
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["get", "list"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list"]

@@ -4136,3 +4136,31 @@ lands with the gitops/flywheel roll in the next batch commit.
 `v-202609092137-hardening` (`fc9b8161-925d-4772-bb1c-60aae1291559`) of pipeline `99ec0aab-…`; no run
 started. The manifest-consumer selects the newest version on its next trigger, so the next
 promotion exercises these checks for real.
+
+---
+
+## D128 — Review batch, part 3: the flywheel namespace roll (W-9, W-11, W-2, W-4, S-2, S-1 curator gate)
+
+**Date:** 2026-09-09 (unattended runner; loop confirmed stopped before the push)
+**Decision:**
+- W-9: `manifest-consumer.py` verifies DSP's oauth-proxy cert against the service CA the pod
+  mounts (`/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt`, confirmed present) instead
+  of `CERT_NONE`; `sync_agent.py`'s SSL branch likewise (unverified context removed). `CONSUMER_CODE_REV`
+  bumped so the pod rolls.
+- W-11: SCC grants scoped per workload in `scc-rolebinding.yaml`: new `edge-kafka` ServiceAccount
+  with a namespaced RoleBinding to `privileged`; the `default` SA drops privileged for a namespaced
+  `hostmount-anyuid` binding — the admission controller was already admitting curator and
+  rejected-mirror under `hostmount-anyuid` (verified on the live pods), so nothing loses a capability
+  it used; the dashboard's binding becomes a RoleBinding. The cluster-wide `flywheel-privileged-scc`
+  ClusterRoleBinding is pruned by Argo.
+- W-2: `privileged` + root on the broker are kept and justified in the manifest: the log dir is a
+  hostPath with the host's SELinux label, writable only from a privileged (spc_t) container — the
+  same reason the local-path helper carries.
+- W-4: the dashboard Role loses its unused `services` verb (Role-only change; no pod roll).
+- S-2: `python:3.12-slim` pinned by digest (`sha256:78387bc3…`, the multi-arch manifest list resolved
+  on the host) in curator, sync-agent and rejected-mirror; the dashboard still uses the tag (out of
+  this finding's scope, same fix applies).
+- S-1 (curator half): Gate 2 rejects `cubes_placed: null` as `sensor-unavailable` before the
+  task-success check.
+**Consequences:** one push, one broker restart (new SA), curator and sync-agent re-pulled on the
+pinned digest; verified below in the runner's report.

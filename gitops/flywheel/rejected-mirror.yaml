@@ -74,7 +74,8 @@ spec:
           restartPolicy: Never
           containers:
             - name: rejected-mirror
-              image: docker.io/library/python:3.12-slim
+              # docker.io/library/python:3.12-slim (multi-arch manifest list, pinned by digest — review S-2)
+          image: docker.io/library/python@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
               command: ["sh", "-c", "pip install -q boto3 && python /app/rejected_mirror.py"]
               env:
                 - name: S3_ENDPOINT
