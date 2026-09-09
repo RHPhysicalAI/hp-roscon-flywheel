@@ -3111,3 +3111,109 @@ message text. Full record: `docs/eval-records/negative-trust-tests.md`, commit `
 **Decision:** keep `negtest-notlog-2026-09-09` in quay as the demo's standing negative-test artifact.
 Two rules govern it: never sign it into Rekor, and never move a moving tag onto it — its only value is
 that it fails.
+
+---
+
+## D092 — CatalogItem version names are SemVer-derived from the candidate name (`act-v<N>-<suffix>` → `<N>.0.0-<suffix>`)
+
+**Date:** 2026-09-09
+**Context:** Phase 4.5 E2 (D027). The flightctl 1.3.0 Catalog API (v1alpha1) types `versions[].version`,
+`replaces` and `skips` as `SemVer` with a strict OpenAPI pattern, and the server's own `validateSemver`
+(`api/core/v1alpha1/validation.go:307`) additionally rejects a `v` prefix. The first apply of a version
+named `act-v2-ft160` failed: `400` — `Error at "/spec/versions/0/version": doesn't match schema due to:
+string doesn't match the regular expression "^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(…))?(?:\+(…))?$"`.
+Our candidate names (`act-v2-ft160`, `act-v2-ft160-rhem`) are the Fleet's `MODEL_VERSION` and the
+registry's version name; they cannot be catalog version names verbatim.
+**Decision:** the seam maps `act-v<N>-<suffix>` to the pre-release semver `<N>.0.0-<suffix>` (so
+`2.0.0-ft160`, `2.0.0-ft160-rhem`; pre-release identifiers may contain `-`) and keeps the candidate name
+plus the full digest reference in the version's `readme`. Names outside the convention become
+`0.0.0-<sanitized>`. The mapping lives in one place (inside `append_catalog_version`); the registry and
+the Fleet keep the candidate name unchanged.
+**Alternatives:** encode the fine-tune count as MINOR (`2.160.0`) — loses the `-rhem` suffix and any
+non-numeric lineage; a lookup table in the pipeline — one more thing to edit per candidate.
+**Consequences:** semver precedence between pre-releases is lexical (`ft160` < `ft160-rhem`), which
+happens to match our chain, but the graph is defined by `replaces`, not by precedence. If a candidate
+naming scheme ever changes, change the regex in the seam and the comment block in the CatalogItem file
+together.
+
+---
+
+## D093 — `references.container` accepts the bare digest (`sha256:<hex>`) verbatim; D027's digest-form flag closed
+
+**Date:** 2026-09-09
+**Context:** D027 flagged digest-form references as unverified ("docs show `references: {container:
+"<tag>"}`; digest-form references are unverified").
+**Record:** verified on the live 1.3.0 API: `sha256:<hex>` → `201 Created`, stored verbatim; `@sha256:<hex>`
+also accepted — the server does not validate the reference string at all, only that the key matches an
+artifact type and the value is non-empty (`validateCatalogItemVersion`,
+`api/core/v1alpha1/validation.go:205-217`). The v1alpha1 OpenAPI's own example (`CatalogItemSpec.versions
+.example` / `CatalogItemVersion.references.example`) uses the bare `sha256:` form.
+**Decision:** write the bare form — the same string `open_promotion_pr` already splits off `image_ref`
+and pins in the Fleet — so the Fleet line and the catalog node are the same bytes and can be compared
+with `grep`. D027's "if tag-only" fallback (digest in a description) is not needed; the `readme` still
+carries `<uri>@<digest>` for humans.
+**Flag closed:** D027's digest-form-references flag is resolved — accepted, verbatim, verified live.
+
+---
+
+## D094 — The Catalog object is a bootstrap object; its CatalogItems are synced by a second ResourceSync of type `catalog`
+
+**Date:** 2026-09-09
+**Context:** D032 said a second `type: catalog` sync would be needed; the docs recommend keeping the
+Catalog and its items together in the synced directory. `internal/tasks/resourcesync.go:968-1009` rejects
+an item only when its parent Catalog is owned by a *different* ResourceSync; an unowned (hand-applied)
+Catalog is fine.
+**Decision:** `rhem/bootstrap/catalog.yaml` (Catalog, hand-applied once, unowned) +
+`rhem/bootstrap/resourcesync-catalog.yaml` (`ResourceSync/rhem-catalog`, `type: catalog`,
+`path: gitops/rhem-catalog`) + `gitops/rhem-catalog/catalogitem-soarm-act.yaml` (owned by the sync,
+read-only via API/CLI/UI once synced). Fleets stay in `gitops/rhem/` under `rhem-fleets` — one directory
+per sync type, since `syncCatalogResources` errors on any kind other than Catalog/CatalogItem
+(`resourcesync.go:157`).
+**Record (live objects):** `Catalog/physical-ai-models` (hand-applied, `201 Created`);
+`ResourceSync/rhem-catalog` — `Synced=True`, `Accessible=True`, `ResourceParsed=True`;
+`CatalogItem physical-ai-models/soarm-act` (`type: container`, owner `ResourceSync/rhem-catalog`) carrying
+versions `2.0.0-ft160` → `sha256:bdb513ca…` and `2.0.0-ft160-rhem` → `sha256:18cc4412…` with
+`replaces: 2.0.0-ft160`, both `channels: [stable]`. `flightctl get catalogs` also lists a **pre-existing
+`default` Catalog** from the chart install (age ~17h at observation time) — ours sits beside it, not in
+place of it. UI: a top-level **`/catalog`** page exists in the bundle's route table (plus
+`/devicemanagement/fleets/catalog` and `/devicemanagement/devices/catalog` "add from catalog" flows); not
+screenshotted this session. Commits: `0c2dbbf` (bootstrap objects + CatalogItem + READMEs), `5a93103`
+(eval record).
+**Alternative:** put `catalog.yaml` in `gitops/rhem-catalog/` so the sync owns the Catalog too (the docs'
+recommended layout). Rejected for now, only to keep the bootstrap set symmetric with `argocd/*-app.yaml`;
+switching later is a file move plus `flightctl delete catalog physical-ai-models` before the first sync,
+since the sync cannot adopt an object it did not create if ownership rules tighten.
+
+---
+
+## D095 — The `append_catalog_version` seam ships as designed (D027 realised); E2 exit criterion met
+
+**Date:** 2026-09-09
+**Context:** Phase 4.5 E2 exit line (BUILD-PLAN.md item E): "if E2 lands, the CatalogItem version graph
+matches the Fleet's pin." Cross-references D027 (seam design, digest-form flag) and D038 (the Fleet pins a
+quadlet `.volume` digest, not a `catalogItemRef`, so the Catalog is provenance beside the Fleet, not a
+live reference).
+**Record:** `append_catalog_version` is a nested function inside `open_promotion_pr` (KFP lightweight
+components serialise only the component function, so a module-level helper would not reach the pod) —
+fenced `# ---- Catalog seam (D027) BEGIN … END`, documented for deletion, with a defaulted
+`catalog_item_file` param and a `PyYAML>=6,<7` pin marked "catalog seam only". Two behaviours D027 did not
+specify: (1) **idempotent** — an existing version's reference is refreshed in place (the D087/D088 rerun
+story applies here too); (2) **not load-bearing** — a `404` on the item file skips the seam with a log
+line instead of failing the promotion, per D038 (the Fleet's digest pin is the product path). Removal
+recipe: delete the fenced block, the `catalog_item_file` param (both places), the PyYAML pin, and the
+`body += catalog_note` line; `gitops/rhem-catalog/` and the two bootstrap objects stay as the future
+bridge's target. Proven locally against the committed file (no run — would open PR #5): byte-identical
+rebuild from a one-version file, no-op on rerun, in-place reference update, append with a `replaces` edge,
+no dangling edge when the incumbent is itself, and a name outside the convention falling back to
+`0.0.0-sim-only.v9`. `py_compile` + KFP compile (`kfp 2.17.0`) clean; uploaded as pipeline version
+**`v-202609091125-catalog`** (`119c51a3-6b71-4fdd-8755-9be65034b86f`) on pipeline `99ec0aab-…`; not run.
+Commit: `0141efb` (the seam).
+**Observation:** the DSP upload on the port-forwarded service port went through with an **empty** bearer
+token (`oc create token` failed in the non-interactive ssh); the runbook's route-side calls still need the
+token — noted, not fixed.
+**Decision:** **E2's exit criterion is met** — the CatalogItem version graph matches the Fleet's pin: node
+`2.0.0-ft160` = the Fleet's `sha256:bdb513ca…`; head node `2.0.0-ft160-rhem` = PR #4's unmerged digest,
+exactly what the seam would leave once merged. **Stage sentence:** *v1alpha1; the Fleet pins the digest,
+the Catalog shows the version graph.*
+**Consequences:** Phase 4.5 E (item E) closes for E2 the same way D090 closed it for E1 — a durable,
+verifiable record beside the Fleet, not a live dependency the demo relies on.

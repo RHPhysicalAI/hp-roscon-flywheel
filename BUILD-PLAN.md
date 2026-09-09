@@ -23,7 +23,7 @@ Phase 3 closes it with governance; Phase 3+ makes the improvement autonomous.
 | 3 — Training + close the loop | **Complete** (2026-09-08) — eval harness (D020), self-improvement proof (D021: 73% → 86%, p=0.019), governed pipeline through RHOAI/RHTAS with PR #1 merged and swapped, loop closed on v2; static chart shipped | D015, D020–D022 |
 | 3+ — Bootstrap loop | Not started | `BOOTSTRAP-LOOP.md` |
 | 4 — Demo hardening + Fury prep | **In progress** — item 1 done (2026-09-08): `docs/DEMO_RUNBOOK.md`, Short Cut + Full Live, every screen verified live (D023) | D023 |
-| 4.5 — RHEM device plane | **In progress** — A–D, E1, F-GitOps done; F-Tekton building; E2/G-prep next | D024–D090 |
+| 4.5 — RHEM device plane | **In progress** — A–E done, F-GitOps done; F-Tekton finishing; G-prep (runbook + kit) next | D024–D095 |
 
 ---
 
@@ -429,6 +429,10 @@ E. **Model Registry (E1) + Catalog (E2, stretch)** (D027)
      index 8, PR #4. Closes Phase 4 item 5.
    - E2: `rhem/bootstrap/catalog.yaml` + `gitops/rhem/catalogitem-soarm-act.yaml`; pipeline
      `append_catalog_version(...)` as a removable seam; Fleet pins `catalogItemRef.version`.
+   - **E2 done 2026-09-09 (D092+):** `Catalog/physical-ai-models` (v1alpha1) + `ResourceSync/rhem-catalog`
+     (type catalog, `gitops/rhem-catalog/`) + `CatalogItem soarm-act` with digest-form references (flag
+     closed) and SemVer-mapped versions; `append_catalog_version` seam in the pipeline
+     (`v-202609091125-catalog`), no run. Version graph matches the Fleet's pin.
    - **Exit:** the registry shows the promoted version with digest + metrics for at least one
      candidate; if E2 lands, the CatalogItem version graph matches the Fleet's pin.
 
@@ -463,7 +467,7 @@ G. **Fury port + runbook** (on site, Sept 20–25)
 - ~~podman ≥ 5.5 on RHEL 10.2 (image volumes)~~ **Verified 2026-09-08:** RHEL 10.2 AppStream ships podman 5.8.2 (D035)
 - quadlet `.container` referencing an app-level image volume by name — **documented** in flightctl 1.3.0 `managing-devices.md` (`Volume=my-data:/mnt/models/gpt2`); still to confirm on the VM. **New caution:** the docs describe app-level image volumes as OCI *artifacts* whose layers are copied out as files by `org.opencontainers.image.title`; our modelcar is a container image on a `ubi-micro` base. If artifact semantics mangle it, fall back to a quadlet `.volume` with `Driver=image` (loses `catalogItemRef`, keeps the digest pin) or repackage the modelcar as an artifact
 - ~~Go-template `if` inside inline config content~~ **Verified 2026-09-08 (docs):** `if`/`else`/`else if`/`with` supported, `range` not; placeholders allowed in inline config content/path, inline application content/path, env var values, and application-volume image *tag* only (we pin digests, so no templating there)
-- CatalogItem `references` in digest form — **docs say "tag or digest"** (v1alpha1, `managing-catalogs.md`); confirm on first apply (E2)
+- ~~CatalogItem `references` in digest form — **docs say "tag or digest"** (v1alpha1, `managing-catalogs.md`); confirm on first apply (E2)~~ **Verified 2026-09-09:** digest form accepted verbatim; versions must be SemVer (D092+)
 - `torch==2.9.1+cu130` aarch64 wheels (Phase 4 open question) — unverified
 - ~~RHOAI on SNO ships the `modelregistry` component~~ **Verified 2026-09-08:** RHOAI 2.25.11 DSC lists `modelregistry` (currently `Removed`)
 - **New (B):** label values may not contain `:` (k8s `IsValidLabelValue` in flightctl 1.3.0) → labels are `zenoh_router=10.0.0.48` + `zenoh_port=7447` (D033); `flightctl-agent-1.3.0-1.el10` no longer requires greenboot (only Recommends `flightctl-greenboot`)
