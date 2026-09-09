@@ -97,7 +97,7 @@ annotation is `dev.cosignproject.cosign/signature`; image b's `.sig` has that pl
 ## Case 2 — `cosign verify` with the transparency log (desktop)
 
 This is the check the runbook and the swap agent's replacement use (D026 row 2 — no
-`the tlog bypass flag` anywhere; `grep -r insecure-ignore-tlog` is empty). It fails for the no-tlog
+`the tlog bypass flag` anywhere; a repo-wide grep for the flag name is empty). It fails for the no-tlog
 digest and passes for image b under the identical command:
 
 Through the route, inside the signing container (`sign-negtest-notlog.sh`, 11:12:35 CDT):
