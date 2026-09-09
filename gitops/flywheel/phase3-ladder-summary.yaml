@@ -1,0 +1,40 @@
+# This project was developed with assistance from AI tools.
+#
+# The frozen Phase 3 evaluation ladder the dashboard renders as Beat 4 ("policy improvement"):
+# task success on the fixed seeded scene set vs. how many of the policy's own curated episodes
+# it was fine-tuned on, with the paired comparison against the teacher per rung.
+#
+# Transcribed from the evaluation records in docs/eval-records/phase3-ladder/. Regenerate the
+# numbers with:
+#
+#   python3 src/eval-report/ladder_report.py docs/eval-records/phase3-ladder \
+#     --baseline eval-teacher-v1 \
+#     --rungs eval-ft-20ep:20,eval-ft-40ep:40,eval-ft-80ep:80,eval-ft-160ep:160
+#
+# and update this file if a record changes. Served by the dashboard at /api/ladder.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: phase3-ladder-summary
+  namespace: flywheel
+data:
+  phase3-ladder.json: |
+    {
+      "task": "place cubes on tray (SO-ARM101, Gazebo)",
+      "gate": "promote iff fixed - broken > 0 and paired sign-test p < 0.05",
+      "seeds": "1000-1049, plus 1050-1099 for the N=100 endpoints",
+      "baseline": {
+        "record": "eval-teacher-v1",
+        "label": "teacher (v1)",
+        "n": 100,
+        "successes": 73,
+        "success_rate": 0.73,
+        "mean_cubes": 2.51
+      },
+      "rungs": [
+        {"record": "eval-ft-20ep",  "episodes": 20,  "n": 50,  "successes": 30, "success_rate": 0.60, "mean_cubes": 2.28, "fixed": 7,  "broken": 14, "net": -7,  "sign_p": 0.189},
+        {"record": "eval-ft-40ep",  "episodes": 40,  "n": 50,  "successes": 28, "success_rate": 0.56, "mean_cubes": 2.32, "fixed": 6,  "broken": 15, "net": -9,  "sign_p": 0.078},
+        {"record": "eval-ft-80ep",  "episodes": 80,  "n": 50,  "successes": 38, "success_rate": 0.76, "mean_cubes": 2.64, "fixed": 8,  "broken": 7,  "net": 1,   "sign_p": 1.000},
+        {"record": "eval-ft-160ep", "episodes": 160, "n": 100, "successes": 86, "success_rate": 0.86, "mean_cubes": 2.73, "fixed": 20, "broken": 7,  "net": 13,  "sign_p": 0.019, "label": "v2"}
+      ]
+    }

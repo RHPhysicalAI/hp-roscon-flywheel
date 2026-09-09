@@ -4024,3 +4024,38 @@ with the kit recording and the Fury bring-up on the same sim host, and nothing i
 narrative depends on it — the runbook already claims only one round of self-improvement.
 **Consequences:** the Q&A answer is "one round proven; the next step is a privileged expert,
 designed, with every prerequisite built." First upgrade after the event.
+
+---
+
+## D124 — Dashboard finished for the booth: Beat 4 panel from the frozen Phase 3 ladder, configurable camera host, operator-only Clear, honest empty state, probes
+
+**Date:** 2026-09-09 (operator-approved punch list)
+**Context:** the dashboard's bottom card was the Cosmos-era "Policy comparison" video player,
+waiting on rollout videos that never existed here; the camera bridge address was hardcoded; "Clear
+Data" sat in the header the runbook says must never be pressed; an idle loop looked like a broken
+page (`0 / 160`, `idle`, blank cards); the Deployment had no probes. BUILD-PLAN Phase 4 item 1
+intended Beat 4 to run on the dashboard from frozen records.
+**Decision:**
+1. The comparison card becomes **"Policy improvement — same policy, same 100 scenes, more of its
+   own curated data"**: CSS bars of success rate per rung (teacher 73% dashed baseline; 20 → 60%,
+   40 → 56%, 80 → 76%, 160 → 86%) and a table with N, mean cubes, fixed/broken, net, sign-test p
+   and the gate verdict, plus the headline the runbook narrates. Data is a new ConfigMap
+   `gitops/flywheel/phase3-ladder-summary.yaml` transcribed from `docs/eval-records/phase3-ladder/`
+   (regeneration command in its header), mounted at `/app/ladder` and served at `/api/ladder`.
+   No chart library; the page stays dependency-free. All dream/rollout code, the `/api/rollout`
+   route and the `/var/lib/dreams` hostPath mount are removed.
+2. `CAMERA_HOST` env (default `10.0.0.48`, the Fury host's booth address goes there) is
+   substituted into the page by the Flask app in place of the hardcoded host.
+3. Clear Data leaves the header; it is a footer link shown only with `?ops=1`, still
+   `confirm()`-gated, hitting the unchanged `/api/control/clear`.
+4. Empty state says what is true: header indicator "Loop stopped" (grey) vs "Flywheel running"
+   (green pulse — the old header always said running), progress state "loop stopped", and the
+   rollout/log cards read "Collection loop stopped — episodes appear here once it runs."
+5. Readiness and liveness probes on `/api/status` (readiness 20 s initial delay for the pip
+   install, liveness 60 s / 4 failures).
+6. Card titles lose the Cosmos-era "1 ·" / "2 ·" numbering. `DASHBOARD_CODE_REV` → `2026-09-09-h`.
+7. Runbook: Beat 4's primary screen is the dashboard panel, the static chart
+   `docs/internal/phase3-ladder.html` is the fallback; the "Policy comparison card is empty" known
+   artifact is gone; the kit table's Beat 4 row and the "What's real" line updated.
+**Verification:** YAML parses, `dashboard.py` `ast.parse`, extracted page JS `node --check`,
+ladder JSON parses; live after Argo sync — see the commit's follow-up check.

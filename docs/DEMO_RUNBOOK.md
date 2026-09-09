@@ -115,7 +115,7 @@ on stage.
 | 1 | camera stream | — | 30–60 s clip of the arm placing cubes (v2), overhead + wrist |
 | 2 | dashboard | `docs/internal/data-contract-eval-dashboard.md` (what the stream contains) | 60 s screen recording of the dashboard with pass/reject rows landing; MinIO console screenshot of `episodes-curated/act-v2-ft160/` |
 | 3 | runner log, KFP task list | `docs/demo-kit/run-192f3ec5-task-states.txt`, `docs/demo-kit/run-192f3ec5-host-runner.log` (run 6's files stay as history) | screenshot of the terminal; a live run recording from the kit session |
-| 4 | static chart | `docs/internal/phase3-ladder.html`, `docs/eval-records/phase3-ladder/`, `src/eval-report/ladder_report.py`, published chart https://claude.ai/code/artifact/84a1ec60-403d-4a34-ba3f-a0cbb69e5e71 | PNG export of the chart for slides |
+| 4 | dashboard "Policy improvement" panel | `docs/internal/phase3-ladder.html` (static chart, same numbers), `docs/eval-records/phase3-ladder/`, `src/eval-report/ladder_report.py`, published chart https://claude.ai/code/artifact/84a1ec60-403d-4a34-ba3f-a0cbb69e5e71 | screenshot of the panel; PNG export of the chart for slides |
 | 5 | PR #2, Rekor UI, RHEM Fleet page | `docs/demo-kit/pr2.md`, `docs/demo-kit/rekor-entry-4.json`, `docs/eval-records/promotion-2.md` (the rollout, second by second) | clips **5a–5e** in the kit script: PR *Files changed*, Rekor entry, the merge, the Fleet rollout with the device tab in frame |
 | 6 | device Applications tab, console log, dashboard, registry, Catalog | `docs/eval-records/promotion-2.md` § *Lineage downstream*, `docs/eval-records/model-registry.md`, `docs/eval-records/catalog.md` | clips **6a–6f**: Applications tab, `Published model_version:`, badge + bar reset + first re-stamped rows, registry JSON, Catalog graph |
 | Q&A | rollback, negative trust | `docs/eval-records/promotion-2.md` § D3, `docs/eval-records/negative-trust-tests.md` | clips **R1–R2**, **N1** |
@@ -185,8 +185,6 @@ runtime image (Tekton, multi-arch) `quay.io/jary/soarm-flywheel@sha256:3d67f4246
   seeds. If asked: "the desktop stand-in is CPU; the Fury serves on the GPU with the same Fleet."
 - **`flightctl` says `connection refused 127.0.0.1:3443`** for a few seconds now and then — the
   desktop port-forward loop is re-establishing. Re-run the command.
-- **Dashboard bottom card "Policy comparison v1 vs v2" is empty** (Cosmos-era rollout videos;
-  none exist). Keep it below the fold. Beat 4 is not on this dashboard.
 
 ---
 
@@ -338,12 +336,14 @@ the screen.
 
 ### Beat 4 — "Model improvement: v1 vs v2 side-by-side" (~60 s) — *two screens and a fallback*
 
-**Screen:** tab 4, `docs/internal/phase3-ladder.html` — success rate vs. curated-dataset size, with the
-teacher baseline. This is the **Phase 3 static chart** (BUILD-PLAN Beat 4 fallback) and today it
-is the primary, because the eval dashboard (separate owner, `docs/internal/data-contract-eval-dashboard.md`)
-is not built. When it lands it takes this slot **and must run from the frozen records** in
-`docs/eval-records/phase3-ladder/` — at the booth there is no cluster and no Kafka. Terminal
-alternative (reproduces every number from those files):
+**Screen:** tab 2, the dashboard's bottom card **"Policy improvement — same policy, same 100
+scenes, more of its own curated data"**: the bars are success rate vs. curated-dataset size with
+the teacher baseline as a dashed line; the table beside them is the paired comparison per rung
+(fixed / broken, net, sign-test p, gate verdict). It is served from the **frozen** Phase 3
+records (`gitops/flywheel/phase3-ladder-summary.yaml`, transcribed from
+`docs/eval-records/phase3-ladder/`), so it needs the hub but no live loop. Fallback: the static
+chart `docs/internal/phase3-ladder.html` (same numbers, local file), or the terminal command
+below (reproduces every number from the records):
 ```bash
 python3 src/eval-report/ladder_report.py docs/eval-records/phase3-ladder --baseline eval-teacher-v1 --rungs eval-ft-20ep:20,eval-ft-40ep:40,eval-ft-80ep:80,eval-ft-160ep:160
 ```
@@ -356,8 +356,10 @@ python3 src/eval-report/ladder_report.py docs/eval-records/phase3-ladder --basel
 > a flywheel *without* that gate would have shipped the 40-episode model and made the fleet worse.
 > The gate isn't decoration; it's what keeps a bad retrain off the robot."
 
-**If it breaks:** the chart is a local file; if the browser can't open it, the table above is the
-same evidence, and PR #2's body (Beat 5) carries the headline row.
+**If it breaks:** the dashboard panel reads `/api/ladder` — if it shows "Evaluation records
+unavailable", open the static chart `docs/internal/phase3-ladder.html` (a local file, no cluster
+needed); if the browser can't open that either, the table above is the same evidence, and PR #2's
+body (Beat 5) carries the headline row.
 
 ### Beat 5 — "Promotion: signed, GitOps PR, RHEM Fleet rollout" (~75 s)
 
@@ -655,8 +657,8 @@ signed in-cluster by Tekton for amd64 + arm64.
 run earlier that day (the runner reuses them — ~2 h of compute compressed); the RHEM candidate is
 v2's weights re-released as `act-v2-ft160-rhem` (D067); the desktop's device is a CPU VM (the sim,
 camera bridge and coordinator stay on the host GPU box); the sim is a simulation — no physical arm;
-the dashboard's "Policy comparison" card is an empty Cosmos-era leftover; the Catalog API is
-v1alpha1. Be upfront about all of it.
+the dashboard's "Policy improvement" panel is the frozen Phase 3 evaluation, not a live eval; the
+Catalog API is v1alpha1. Be upfront about all of it.
 
 ## On the Fury — the device is the host
 
