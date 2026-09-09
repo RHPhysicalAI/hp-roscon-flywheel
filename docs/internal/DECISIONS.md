@@ -4222,3 +4222,34 @@ loop at < 100 G or ≥ 330 bags, so a port + prune (`assemble_all.sh` → `prune
 now lineage-aware) is due before the next longer loop (operator). Two finished PipelineRuns
 (`runtime-image-a4`, `runtime-image-plt5s`) each hold a 60 Gi PVC until deleted (after the kit
 recording, per the inbox).
+
+---
+
+## D131 — Review batch, part 4: the device trust policy fails closed (W-10)
+
+**Date:** 2026-09-09 (unattended runner; run last, after the D-re-pin rollout to renderedVersion 8
+and a 15-minute window with no collection loop)
+**Context:** review W-10 — `policy.json`'s `default` was `insecureAcceptAnything`, so signature +
+Rekor enforcement covered only the four enumerated entries and any other reference (renamed repo,
+promotion typo, mirror, docker.io) would pull unsigned without an error; D091's two negative tests
+never exercised the default branch.
+**Decision:** `gitops/rhem/fleet-act-inference.yaml`'s inline `policy.json` now has `"default":
+[{"type": "reject"}]`; the enumerated entries are unchanged (`registry.access.redhat.com`,
+`registry.redhat.io` with the RHEL keys; `quay.io/jary/soarm-act-modelcar`, `quay.io/jary/
+soarm-flywheel` with `cosign.pub` + `rekor.pub` and `signedIdentity: matchRepository`); the file's
+trust-chain header says so. Commit `366ac14`.
+**Record:** ResourceSync → device renderedVersion 9, `UpToDate` / `Healthy` at +105 s; the device's
+own `/etc/containers/policy.json` reads `default: reject`. Same session on the device (verbatim in
+`docs/eval-records/negative-trust-tests.md` Case 4): `docker.io/library/alpine:3.20` → `Source image
+rejected: Running image docker://alpine:3.20 is rejected by policy.` (exit 125); Cases 1 and 2 still
+rejected with their D091 strings; the pinned modelcar digest still pulls and stores its signature
+(exit 0); device Healthy afterwards. The first attempt hit the desktop's flightctl port-forward
+re-establishing (`127.0.0.1:3443 connection refused`, the runbook's known artifact) — retried, not
+a device fault.
+**Residual:** the "right signature, wrong repository" artifact
+(`quay.io/jary/soarm-flywheel-negtest:policy-default-2026-09-09`, the modelcar's bytes copied
+unsigned) was created but quay made the repository private, so its pull fails on authorization
+before policy — an operator action (make the repository public in quay) turns it into the standing
+Case 4b; expected result `rejected by policy`.
+**Consequences:** every registry the device may pull from is now an explicit allow-list entry; adding
+a registry (a mirror on the Fury, for example) is a Fleet edit, reviewed like a promotion.

@@ -186,7 +186,45 @@ exit=0
 Device storage after the run holds exactly the two logged runtime digests (`2ad1fb1c…`, `29955e4e…`)
 and the two logged modelcar digests; nothing from cases 1 or 2 landed.
 
+## Case 4 — outside the enumerated registries, rejected by the default (review W-10, 2026-09-09T22:18:29Z)
+
+Until W-10 the policy's `default` was `insecureAcceptAnything`: enforcement covered only the four
+enumerated entries, and any other reference — a renamed repo, a typo in a promotion edit, a mirror,
+docker.io — would have pulled unsigned with no error. The Fleet now ships `"default": [{"type":
+"reject"}]` (renderedVersion 9, `UpToDate` / `Healthy` 105 s after the ResourceSync picked up
+`366ac14`; `cat /etc/containers/policy.json` on the device confirms the default). A public image
+from a registry the policy does not name is refused before any signature is looked at:
+```
+$ sudo podman pull docker.io/library/alpine:3.20
+Trying to pull docker.io/library/alpine:3.20...
+Error: unable to copy from source docker://alpine:3.20: copying system image from manifest list: Source image rejected: Running image docker://alpine:3.20 is rejected by policy.
+exit=125
+```
+Cases 1 and 2 re-run in the same session with the new policy, verbatim identical (`A signature was
+required, but no signature exists` / `missing dev.sigstore.cosign/bundle annotation`, both exit 125),
+and the positive control still passes — the modelcar the Fleet pins re-verified and stored its
+signature:
+```
+$ sudo podman pull quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b
+Getting image source signatures
+Checking if image destination supports signatures
+Storing signatures
+e974191054163f6a0871793e5714aa4a772283adae4e5e9ea2772e7afed0f706
+exit=0
+```
+Device after the session: renderedVersion 9, `UpToDate`, `Healthy`.
+
+The "right signature, wrong repository" variant — the pinned modelcar copied unmodified to
+`quay.io/jary/soarm-flywheel-negtest:policy-default-2026-09-09` (same digest `bdb513ca…`, never
+signed there) — could not be exercised yet: quay created that repository private, so the pull fails
+on `reading manifest … unauthorized` before the policy is consulted. Once the repository is made
+public in quay it becomes the standing artifact for that case; expected result is the same
+`rejected by policy` line, since `default: reject` applies before `signedIdentity` is ever evaluated.
+
 ## Artifacts left in place
+
+- `quay.io/jary/soarm-flywheel-negtest:policy-default-2026-09-09` (private until the operator flips it;
+  the pinned modelcar's bytes, no signature in that repository) — Case 4's wrong-repository variant.
 
 - `quay.io/jary/soarm-flywheel:negtest-notlog-2026-09-09` (`sha256:d9996e7b…51d2cb`) and its
   `sha256-d9996e7b…51d2cb.sig` attachment stay in quay **on purpose** — they are the demo's
@@ -203,4 +241,5 @@ Phase 4.5 exit line *"Negative test: an unsigned tag fails with a signature erro
 without `--tlog-upload` also fails on the VM (Rekor SET enforced)"* — both halves observed on the
 device under the Fleet's `policy.json`, with the logged image b as the positive control in the same
 session. D026 rows 1 (node trust) and 2 (Rekor at verify) are demonstrated end to end on the device
-path; row 3 (Tekton-built) remains with F.
+path; row 3 (Tekton-built) remains with F. Case 4 (2026-09-09, review W-10) closes the fail-open
+default: a reference outside the enumerated registries is rejected by policy, not accepted unsigned.
