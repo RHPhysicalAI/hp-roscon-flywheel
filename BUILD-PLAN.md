@@ -23,7 +23,7 @@ Phase 3 closes it with governance; Phase 3+ makes the improvement autonomous.
 | 3 — Training + close the loop | **Complete** (2026-09-08) — eval harness (D020), self-improvement proof (D021: 73% → 86%, p=0.019), governed pipeline through RHOAI/RHTAS with PR #1 merged and swapped, loop closed on v2; static chart shipped | D015, D020–D022 |
 | 3+ — Bootstrap loop | Not started | `BOOTSTRAP-LOOP.md` |
 | 4 — Demo hardening + Fury prep | **In progress** — item 1 done (2026-09-08): `docs/DEMO_RUNBOOK.md`, Short Cut + Full Live, every screen verified live (D023) | D023 |
-| 4.5 — RHEM device plane | **In progress** — A–F, G-prep done; kit recording + rehearsal (operator), then Fury on site | D024–D100 |
+| 4.5 — RHEM device plane | **In progress** — A–F, G-prep done; kit recording + rehearsal (operator), then Fury on site | D024–D112 |
 
 ---
 
@@ -456,8 +456,13 @@ F. **Fidelity repairs, pre-Fury** (D026, D028)
      (hand-created Secrets, documented); KFP `platform` list → OCI index + `cosign sign
      --recursive`; `COSIGN_PASSWORD` from the `cosign-signing-key` Secret; operators README (RHEM,
      Model Registry rows, KServe unused) and PROJECT-BRIEF AMQ Streams wording fixed.
-   - **Exit:** `tkn pipelinerun` builds both arches with a Rekor entry; `argocd app list` count
-     equals files in `argocd/`, every app Synced with `prune: true`; no `minioadmin` in git.
+   - **F-Tekton done 2026-09-09 (D101+):** `gitops/tekton/` under Argo app `tekton`; PipelineRun
+     `runtime-image-a4` built both arches (arm64 53 min under qemu, amd64 6 min), manifest list
+     `3d67f424…` signed `--recursive` (Rekor 11/12/13), verified on exit code, Fleet re-pinned
+     (9e982c0), device rv7 Healthy.
+   - **Exit (met 2026-09-09):** `tkn pipelinerun` builds both arches with a Rekor entry;
+     `argocd app list` count equals files in `argocd/`, every app Synced with `prune: true`; no
+     `minioadmin` in git.
 
 G. **Fury port + runbook** (on site, Sept 20–25)
    - `device/provision.sh` on aarch64 + `nvidia-ctk cdi generate`; enroll with Fury labels
@@ -474,7 +479,8 @@ G. **Fury port + runbook** (on site, Sept 20–25)
 - quadlet `.container` referencing an app-level image volume by name — **documented** in flightctl 1.3.0 `managing-devices.md` (`Volume=my-data:/mnt/models/gpt2`); still to confirm on the VM. **New caution:** the docs describe app-level image volumes as OCI *artifacts* whose layers are copied out as files by `org.opencontainers.image.title`; our modelcar is a container image on a `ubi-micro` base. If artifact semantics mangle it, fall back to a quadlet `.volume` with `Driver=image` (loses `catalogItemRef`, keeps the digest pin) or repackage the modelcar as an artifact
 - ~~Go-template `if` inside inline config content~~ **Verified 2026-09-08 (docs):** `if`/`else`/`else if`/`with` supported, `range` not; placeholders allowed in inline config content/path, inline application content/path, env var values, and application-volume image *tag* only (we pin digests, so no templating there)
 - ~~CatalogItem `references` in digest form — **docs say "tag or digest"** (v1alpha1, `managing-catalogs.md`); confirm on first apply (E2)~~ **Verified 2026-09-09:** digest form accepted verbatim; versions must be SemVer (D092+)
-- `torch==2.9.1+cu130` aarch64 wheels (Phase 4 open question) — unverified
+- ~~`torch==2.9.1+cu130` aarch64 wheels (Phase 4 open question) — unverified~~ **Verified
+  2026-09-09:** aarch64 wheels exist; only torch carries `+cu130` on arm64 → per-arch pins (D101+)
 - ~~RHOAI on SNO ships the `modelregistry` component~~ **Verified 2026-09-08:** RHOAI 2.25.11 DSC lists `modelregistry` (currently `Removed`)
 - **New (B):** label values may not contain `:` (k8s `IsValidLabelValue` in flightctl 1.3.0) → labels are `zenoh_router=10.0.0.48` + `zenoh_port=7447` (D033); `flightctl-agent-1.3.0-1.el10` no longer requires greenboot (only Recommends `flightctl-greenboot`)
 - ~~**New (C0b):** `virtiofsd` must be installed from the distro package on the desktop (AppArmor pins the path) — D046; bag recording on the VM is off until then (D044)~~ — no longer needed after the C3 role split
@@ -491,8 +497,8 @@ G. **Fury port + runbook** (on site, Sept 20–25)
 - [x] Negative test: an unsigned tag fails with a signature error; a tag signed *without*
   `--tlog-upload` also fails on the VM (Rekor SET enforced) (2026-09-09, D091, docs/eval-records/negative-trust-tests.md)
 - [x] Rollback: `git revert`, merge → previous version serving, no re-pull (Retain) (2026-09-09, PR #3)
-- [ ] Tekton: runtime image built for both arches, Rekor entry created, `crane manifest` shows both
-  platforms, the Fleet references its digest
+- [x] Tekton: runtime image built for both arches, Rekor entry created, `crane manifest` shows both
+  platforms, the Fleet references its digest (2026-09-09, D101+, docs/eval-records/runtime-image-tekton.md)
 - [x] `grep -r insecure-ignore-tlog` returns nothing; `argocd app list` count equals files in
   `argocd/`; every Argo app Synced with `prune: true` — tlog bypass gone from code/config/procedures
   (D3); Argo app count/prune → F-GitOps (2026-09-09: tlog bypass gone from code/config/procedures —
@@ -540,5 +546,5 @@ Closed 2026-09-09 by the operator: PR #4 closed unmerged; `cosign.password` patc
 | Eval-gate threshold (success-rate delta) for promotion | 3 | Resolved — paired on fixed seeds, N=100: promote iff net fixed−broken > 0 and sign-test p < 0.05 (D022) |
 | Expert grasp planning: MoveIt vs. direct IK for the SO-ARM gripper | 3+ | Open |
 | Curriculum schedule — what signal widens randomization | 3+ | Open |
-| aarch64 build of the cu130 PyTorch inference image | 4 | Open |
+| aarch64 build of the cu130 PyTorch inference image | 4 | Resolved 2026-09-09 (Phase 4.5 F, D101+) |
 | CPU ACT inference latency in the desktop device VM | 4.5 | Open — spike in B gates C (D024); fallbacks: raise `n_action_steps`, lower RTF, VFIO last |

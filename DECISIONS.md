@@ -3331,3 +3331,204 @@ re-verified by this pass — this entry only cross-indexes them for the record.
 surface as untested; the operator's one recording session (kit script pre-conditions) is where the
 Full Live rehearsal actually happens, closing the BUILD-PLAN Phase 4.5 exit criterion together with the
 recording itself.
+
+---
+
+## D101 — torch cu130 aarch64 wheels exist, but only `torch` carries `+cu130` on arm64 → per-arch `TORCH_SPEC` build args
+
+**Date:** 2026-09-09
+**Context:** `https://download.pytorch.org/whl/cu130/` publishes `manylinux_2_28_aarch64` wheels for
+torch 2.9.1 (`+cu130`), torchvision 0.24.1 and torchaudio 2.9.1 — but on aarch64 only `torch`
+carries the `+cu130` local version; torchvision/torchaudio are plain `0.24.1` / `2.9.1`. The x86
+pins (`torchaudio==2.9.1+cu130`, `torchvision==0.24.1+cu130`) therefore fail to resolve on arm64
+(attempt 3, `runtime-image-hl7l8`: "No matching distribution found for torchaudio==2.9.1+cu130").
+Ubuntu 24.04 glibc 2.39 satisfies manylinux_2_28.
+**Decision (commit `aa7392f`):** `ARG TARGETARCH`; `TORCH_INDEX` (default the cu130 index) and
+`TORCH_SPEC` (override) plus `TORCH_SPEC_AMD64`/`TORCH_SPEC_ARM64` defaults; one `pip3 install`
+line picks the arch default. The same Dockerfile builds under `docker` on the host and `buildah`
+in-cluster.
+**Consequences:** the BUILD-PLAN "torch==2.9.1+cu130 aarch64 wheels" flag and the Phase 4 open
+question close as "wheels exist, pins are per-arch" — CUDA on the Fury itself is proven on the
+Fury (item G), not by this build.
+
+---
+
+## D102 — Dockerfile base image fully qualified, and `buildah` builds in docker manifest format (not OCI)
+
+**Date:** 2026-09-09
+**Context:** attempt 1 (`runtime-image-sfgmc`) failed in 9 s: `buildah` on the rhel9 image enforces
+short-name resolution and "cannot prompt without a TTY" for `FROM ros:kilted`. Attempt 2
+(`runtime-image-2fh8n`) then failed on both arches at the colcon step with exit 127: buildah's
+default `--format oci` drops `SHELL` (OCI has no such config field), so `source` ran under
+`/bin/sh`; OCI also has no `HEALTHCHECK`, which the Fleet quadlet relies on.
+**Decision:** qualify the base in the Dockerfile (`docker.io/library/ros:${DISTRO}`) rather than
+loosen `registries.conf` in the Task — the same line builds identically under `docker` on the host
+and `buildah` in-cluster. A `FORMAT` param on the Task defaults to `docker`
+(`buildah bud --format docker`); the pushed manifest list is therefore a Docker manifest list (as
+the D045 interim images were `manifest.v2+json`), not an OCI index — same behaviour as
+`docker buildx` on the host.
+**Consequences:** `buildah bud --platform a,b --jobs 1` builds the platforms sequentially, arm64
+first (attempt 2's log shows arm64 STEP 1–10 before amd64 STEP 1) — a Dockerfile error therefore
+surfaces only after the qemu leg reaches it; attempt 2 lost ~26 min that way.
+
+---
+
+## D103 — cosign v2.6.5 release binary (sha256-verified, arch-derived) on a digest-pinned ubi9-minimal, not the RHTAS client image
+
+**Date:** 2026-09-09
+**Context:** the in-cluster RHTAS operator is 1.4.3; its client image
+`registry.redhat.io/rhtas/cosign-rhel9:1.4.3` ships **cosign v3.0.4** (verified with
+`cosign version` on the desktop). cosign v3 defaults to the new bundle + OCI 1.1 referrers layout
+that containers-image on the device does not read (thor D014/D022). The 1.3.1 image is amd64-only
+with an opaque commit version. Upstream `ghcr.io/sigstore/cosign/cosign:v2.6.5` is distroless (no
+shell), so a script step cannot parse the Rekor index out of it.
+**Decision:** the `cosign-sign` Task runs on `ubi9/ubi-minimal@sha256:34880b64…` and fetches
+`cosign-linux-<arch>` v2.6.5 from the GitHub release, checked against `cosign_checksums.txt`
+(amd64 `c3b4f541…`, arm64 `426193b4…`, embedded as Task param defaults) — the same cosign version
+the KFP promotion and the D045 interim signing use, so one signing behaviour across the repo.
+**Revisit:** when the device's containers-image reads cosign v3 bundles, or RHTAS ships a v2.x
+client image again.
+
+---
+
+## D104 — `--recursive` signing of the manifest list; Tekton Chains stays unused
+
+**Date:** 2026-09-09
+**Decision:** cosign signs the list digest *and* each platform manifest (`--recursive=true`), one
+Rekor entry each. podman's `sigstoreSigned` check runs against the platform manifest it resolves
+to; cosign's `verify` runs against the list digest; both must hold. The Fleet pins the list digest.
+Rekor indexes recorded in the run record (`docs/eval-records/runtime-image-tekton.md`).
+**Consequences:** Tekton Chains is enabled on the cluster (`artifacts.oci.storage: oci`) but has no
+`signing-secrets` configured — it does not sign or push anything for these runs, so the
+`cosign-sign` Task (D103) is the sole signing path.
+
+---
+
+## D105 — qemu binfmt: `docker.io/tonistiigi/binfmt` (qemu v10.2.3) pinned by digest, DaemonSet in `flywheel`
+
+**Date:** 2026-09-09
+**Context:** `quay.io/multiarch/qemu-user-static` does not exist (401 = no such repo);
+`docker.io/multiarch/qemu-user-static` tops out at qemu 7.2.0 (2023).
+**Decision:** use the image `docker buildx` itself installs qemu from,
+`tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873…`, as a privileged init container
+(`--install arm64`) with a ubi-minimal `sleep infinity` holder. Registered `qemu-aarch64` with
+flags `POCF` (F = fix-binary: the interpreter is loaded at registration, build containers need no
+qemu binary). Re-running the init container is idempotent ("installing: arm64 OK" on a pod
+restart). Its own SA (`qemu-binfmt`) carries the privileged SCC binding; nothing else in the
+namespace gains it.
+
+---
+
+## D106 — Privileged SCC for the `pipeline` SA via a namespaced RoleBinding (thor D009)
+
+**Date:** 2026-09-09
+**Decision:** `RoleBinding pipeline-privileged-scc` → `ClusterRole system:openshift:scc:privileged`
+in `flywheel` (what `oc adm policy add-scc-to-user` creates), in git under Argo. The build pod was
+admitted with `openshift.io/scc: privileged` on the first run; no TektonConfig change
+(`scc.default` stays `pipelines-scc`, no `maxAllowed`, no namespace annotation).
+
+---
+
+## D107 — one PVC per run (60 Gi local-path) holds both the checkout and buildah's overlay storage
+
+**Date:** 2026-09-09
+**Context:** Tekton's affinity assistant (`coschedule: workspaces`, the default) allows one
+PVC-backed workspace per TaskRun. The buildah image's `storage.conf` uses fuse-overlayfs.
+**Decision:** the build step writes its own `storage.conf` (native overlay, `graphroot`
+`<workspace>/.buildah`, `runroot` in `/tmp`) via `CONTAINERS_STORAGE_CONF`; `git-clone` checks out
+into `<workspace>/source`. The step empties the storage before exiting; deleting the PipelineRun
+deletes the PVC. Node `/var` had 87 GB free at start (not the ~130 GB in the brief).
+**Consequences:** a cluster-wide Multus stale-token incident (13:45Z, not Tekton-specific) left new
+pods in `flywheel` and the local-path `helper-pod-create-pvc-*` failing sandbox creation with
+`Unauthorized`; attempt 3's PVC stayed Pending until the operator restarted the multus pod (also
+tracked as a BUILD-PLAN carry-over). Residual: the 60 Gi PVC is only released on PipelineRun
+delete.
+
+---
+
+## D108 — Secrets handling for the build/sign Tasks
+
+**Date:** 2026-09-09
+**Decision:**
+- `cosign-signing` (cosign.key, cosign.pub, cosign.password) created by hand from the desktop
+  `~/cosign/` files; the password file is empty by construction (the key has no passphrase — the
+  KFP sets `COSIGN_PASSWORD=""`, D026 row 13). The Task reads the password from the workspace
+  file, never from a param or a printed env.
+- `quay-push` (existing dockerconfigjson) is projected into the run as `config.json` through the
+  workspace `items:` binding — no copy of the credentials in a ConfigMap or a param.
+- The Rekor public key is a ConfigMap in git (public material), byte-identical to the Fleet's
+  `/etc/pki/containers/rekor.pub` and to the live `/api/v1/log/publicKey` (md5 `e34fa270…`).
+
+---
+
+## D109 — PipelineRun template lives in git, excluded from Argo; `tkn` 0.46.0 installed and verified
+
+**Date:** 2026-09-09
+**Decision:** `gitops/tekton/runtime-image-pipelinerun.example.yaml` (`generateName`) started with
+`oc create -f`; `argocd/tekton-app.yaml` sets `directory.exclude: '*.example.yaml'`. `tkn` 0.46.0
+installed on the desktop at `~/.local/bin/tkn` from the GitHub release with `checksums.txt`
+verified (an older 0.31.1 sat unnoticed in `/usr/local/bin`).
+
+---
+
+## D110 — Platform digests are read from the registry API, not from buildah
+
+**Date:** 2026-09-09
+**Context:** attempt 4's `PLATFORM_DIGESTS` result carried the local pre-push instance digests
+(`b3b2ce60…`/`34be6793…`) — buildah compresses layers on push, so the pushed platform manifests
+(`be0004b1…` arm64, `af06b989…` amd64) have different digests, and buildah 1.43.2's
+`manifest inspect` refuses remote references ("unsupported transport docker"). The `--tls-verify`
+flag is also per-subcommand, not global (the remote-inspect call had failed on that first).
+**Decision (commit `9d7013e`):** after `manifest push` the Task reads the pushed index over the
+registry v2 API (python3 in the buildah image, token auth from the same `config.json`) and only
+falls back to the local list with an explicit `LOCAL-PRE-PUSH` marker. The pushed index is an OCI
+index wrapping two Docker v2s2 manifests (`--format docker` keeps `HEALTHCHECK`); podman and
+cosign handle that combination — the device pull and `cosign verify` are the proof.
+
+---
+
+## D111 — ubi-minimal has no `xargs`; `SIGN=false` verify-only mode; verify asserts on exit code only
+
+**Date:** 2026-09-09
+**Context:** attempt 4's sign step signed all three digests (Rekor 11/12/13) then died on
+`xargs: command not found` before verify.
+**Decision (commit `7bf70fb`):** bash-native join replaces `xargs`; a `SIGN` param lets the verify
+half re-run on an already-signed digest without adding Rekor entries (`TaskRun
+cosign-verify-3d67f424`). Verify asserts on the exit code only, using `SIGSTORE_REKOR_PUBLIC_KEY`
+from the ConfigMap (D108) — the coordinator's negative-test finding is that the error text differs
+between the plain-HTTP Service and the TLS route, so the exit code is the only reliable signal.
+
+---
+
+## D112 — F-Tekton (Phase 4.5 item F) exit criteria met; D028 executed
+
+**Date:** 2026-09-09
+**Context:** D028 (2026-09-08) decided that OpenShift Pipelines would build and sign the runtime
+images multi-arch, in-cluster, replacing the unsigned amd64-only `docker buildx` build on the
+host. D101–D111 record the build-up across four PipelineRun attempts; this entry closes the arc.
+**Record:** PipelineRun `runtime-image-a4` built tag `act-inference-aa7392f` for both arches and
+pushed manifest list `sha256:3d67f4246fd0915278b419bf4a3c67c3c9e0f8a07c553305a7445f65fc2cb4af`
+(Rekor 11), with platform manifests amd64 `sha256:af06b989…` (Rekor 13) and arm64
+`sha256:be0004b1…` (Rekor 12) — all three signed `--recursive` (D104) and verified on exit code
+(D111).
+Durations: build-and-push 69.3 min total = arm64 53.0 min (qemu-emulated, built first — D102) +
+amd64 6.3 min + push 8.0 min; sign 12 s; verify 11 s.
+Four attempts:
+
+| Run | Failure | Fixed by |
+|---|---|---|
+| `runtime-image-sfgmc` | short-name base image, no TTY | D102 (qualified base) |
+| `runtime-image-2fh8n` | `--format oci` drops `SHELL`/`HEALTHCHECK` | D102 (`--format docker`) |
+| `runtime-image-hl7l8` | torchaudio/torchvision `+cu130` pins don't resolve on arm64 | D101 (per-arch `TORCH_SPEC`) |
+| `runtime-image-a4` | `xargs` missing after signing all three digests | D111 (bash-native join, `SIGN=false`) |
+
+Commits across the pass: `12cbc83`, `2f9e174`, `aa7392f` (D101), `7bf70fb` (D111), `9d7013e`
+(D110), `9e982c0` (Fleet re-pinned to the new manifest-list digest), `b2c38df`.
+Device rollout on the re-pin: rv 6 → 7, container +1:58, Healthy +4:09, `model_version` unchanged
+(same candidate, new signed multi-arch image).
+Full record: `docs/eval-records/runtime-image-tekton.md`.
+**Decision:** the F-Tekton exit criteria are met — `tkn pipelinerun` builds both arches with a
+Rekor entry; `argocd app list` count equals the files in `argocd/`, every app Synced with
+`prune: true`; no `minioadmin` in git — and D028 is executed.
+**Loose ends:** the 60 Gi PipelineRun PVC (D107) is released only on PipelineRun delete; a single
+clean end-to-end run (no retries) is still to be exercised.
