@@ -2171,3 +2171,186 @@ coordinator without an image change).
 in the lineage sense only; D024's part-3 criterion moves to whichever of (a)/(b)/(c) lands; the
 `eval-*` discard (D020) and `RECORD=false` (D044) kept the corpus clean throughout — the five
 invalid episodes never reached the emitter.
+
+---
+
+## D057 — RHEM delivers model serving only; the sim harness runs with the simulator (role split of the ACT runtime)
+
+**Date:** 2026-09-08 (orchestrator decision, recorded from the C3 run)
+**Context:** D056: the Fleet-managed container on the desktop VM ran coordinator + recorder + policy,
+and the coordinator's cube reset (`sim_reset.py` → `gz service …/set_pose`) and cube judge
+(`task_eval` → `gz topic -e`) use Gazebo transport, which is host-local — from the VM every reset was
+a silent no-op and every verdict meaningless; bags on the VM needed a virtiofs share blocked on host
+sudo (D046). On the Fury the device *is* the sim host, so the same code must also run as one box.
+**Decision:** `docker/inference-entrypoint.sh` takes `ROLE=policy|coordinator|all` (default `all`,
+today's behaviour):
+- `policy` — rosetta client + policy server + a latched `/flywheel/model_version` publisher
+  (`src/inference-coordinator/model_version_pub.py`, same TRANSIENT_LOCAL/KEEP_LAST QoS the
+  coordinator used) carrying `$MODEL_VERSION`. This is what RHEM delivers: runtime image + ModelCar
+  volume + lineage label + health. No bags, no `/data`.
+- `coordinator` — coordinator + episode recorder + sim reset, no policy server. `coordinator.py`
+  subscribes to `/flywheel/model_version` instead of publishing it and logs
+  `Observed model_version: <v>` (warns if it differs from its own `MODEL_VERSION`); the eval JSON
+  records it as `served_model_version`. Runs next to the simulator:
+  `tools/host/run-coordinator.sh` (docker on the desktop, podman on the Fury; `MODE=loop|eval`).
+- `all` — both, one container (host GPU path, Fury single box).
+The emitter (in the sim container) and `healthcheck.sh` are unchanged: both only see the latched topic.
+Fleet `act-inference` ships `ROLE=policy`, `MODEL_VERSION`, `POLICY_PATH`, `ACTIONS_PER_CHUNK`,
+`CHUNK_SIZE_THRESHOLD`; the coordinator/sim env (`RECORD`, `RESET_ARM`, `EPISODE_LEN`,
+`RANDOMIZE_*`, `REST_POSE`) and the `/data` volume are gone from the device.
+Live result: ResourceSync observed `210e79e` at 23:44Z; device renderedVersion 4, `UpToDate`,
+`applicationsSummary: Healthy`, podman `(healthy)` 43 s after the container start (23:45Z). The host
+coordinator (started 23:54:11Z with the old `act-inference` container's env and mounts mirrored
+exactly — `MODEL_VERSION=act-v2-ft160`, `~/flywheel-data:/data`, `~/flywheel-data/bags:/data/bags`,
+host network, no GPU) logged `Observed model_version: act-v2-ft160`, found `/run_policy` and the
+recorder, and at every observed episode start the tray held 0/3 cubes (`task_eval` snapshots at
+starts #1–#4, including after a 3/3 success) — the reset works from the host. Every episode carried
+`Dataset ref: 'bags/<sec>_<nsec>'`; 62 bags were kept (3/3 episodes) and the rest pruned by the
+coordinator's own verdict; the emitter counted 20 SUCCESS / 47 FAIL between 23:54Z and 00:45Z (the coordinator's own peak-cube verdict kept 62 — the two judges differ at the margin) —
+both verdicts, real scenes.
+Caveat on the mirrored env: the old host container carried **no** randomisation env (D040's "copied
+from the host `docker run`" set was never what the host ran — the coordinator defaults applied:
+`EPISODE_LEN=25`, nominal cubes, `RESET_ARM=true`). Runner to decide whether the loop should adopt
+the D040 set (`EXTRA_ARGS` on the script); this run kept the mirror.
+**Alternatives:** (b) gz-transport bridging into the VM (`GZ_IP`/`GZ_PARTITION`, a route for the
+publisher back to the guest) — rejected: untested, touches `so-arm-sim`, and does not describe the
+Fury where sim and device are one box; (c) ROS-service wrappers for reset + cube poses on the host
+called from a device coordinator — deferred: cleaner contract, but bags would still be on the device
+and it needs a new package; (d) virtiofs bags share (D043/D046/D047) — superseded on the desktop: the
+bags share is no longer needed because the recorder runs where the bags live.
+**Consequences:** supersedes the *placement* half of D040 (coordinator settings are not Fleet
+`envVars`; the env file's per-device values stay) and D041's `/data:z` volume; D043, D044, D046, D047
+and the D050 `Volume=` interim are **superseded on the desktop — the bags share is no longer needed**
+(on the Fury the coordinator role runs on the host disk with the same script). D051's `HealthCmd=`
+workaround is retired (the image carries the fixed `healthcheck.sh`). D056's criterion-3 "fix owner"
+is resolved by option (a). Runbook Beat-6 grep changes: the *device* log shows
+`Published model_version:` (node `model_version_publisher`), the *host* coordinator shows
+`Observed model_version:`. Two coordinators must never be alive at once (both send `/run_policy`
+goals): `run-coordinator.sh` replaces any container of the same name, and the D020 eval is
+`MODE=eval` on the same script with the loop stopped first.
+
+---
+
+## D058 — rosetta client chunking is a params-file setting from env: `actions_per_chunk=100`, `chunk_size_threshold=0.5`, `policy_device` likewise
+
+**Date:** 2026-09-08
+**Context:** D053/D055: the upstream `params/rosetta_client.yaml` ships `actions_per_chunk: 30`,
+`chunk_size_threshold: 0.95`, `policy_device: cuda`; `rosetta_client_launch.py` only declares
+`params_file`, `contract_path`, `pretrained_name_or_path`, `server_address`, `launch_local_server`,
+`use_sim_time`, `log_level`, `configure`, `activate`, so the entrypoint's `policy_device:=` (and
+`policy_type:=`) were silently ignored. With 30/0.95 the client re-requests a chunk almost
+continuously; on CPU (170–250 ms per forward) the queue ran dry at every boundary (6.2 % of
+intervals > 40 ms, max 335 ms).
+**Decision:** the entrypoint loads the package params file, sets `policy_device=$POLICY_DEVICE`,
+`actions_per_chunk=$ACTIONS_PER_CHUNK` (default **100** = the checkpoint's `chunk_size`),
+`chunk_size_threshold=$CHUNK_SIZE_THRESHOLD` (default **0.5**), writes
+`/tmp/rosetta_client_params.yaml` and passes it as `params_file:=`. Verified live on the device
+(`ros2 param get /rosetta_client …`, 23:52Z): `actions_per_chunk` Integer 100, `chunk_size_threshold`
+Double 0.5, `policy_device` String cpu; the node no longer logs the CUDA-unavailable fallback. The
+Fleet carries the two chunk values as `envVars` (same on both boxes, D059).
+**Alternatives:** `--ros-args -p` overrides on the launch line (the launch file does not forward
+extra ros-args to the node); `sed` on the package file (what the Dockerfile used to do — fragile,
+and baked at build time rather than set per device).
+**Consequences:** part 2 was re-measured with the new values inside the device container
+(23:54:49–00:01:49Z, 25 s windows); the probe log sits on the paused VM (`~/spike/cadence-c3-235449.log`)
+and is read once the VM resumes. `POLICY_DEVICE=cpu` on a GPU host now really runs on CPU (D055's
+"correct by accident" is closed).
+
+---
+
+## D059 — One chunking code path: 100/0.5 on the GPU path too; the 17/20 GPU baseline was measured at 30/0.95
+
+**Date:** 2026-09-08
+**Context:** the entrypoint defaults apply to `ROLE=all` on the host GPU and to the Fury
+(`policy_device=cuda`) as much as to the CPU stand-in. Keeping 30/0.95 on GPU would mean a
+per-`gpu`-label branch in the Fleet and two behaviours to explain.
+**Decision:** same defaults everywhere (`ACTIONS_PER_CHUNK=100`, `CHUNK_SIZE_THRESHOLD=0.5`); the
+Fleet sets them once, not per label. Caveat recorded: every GPU eval in `docs/eval-records/` before
+this date (teacher 86 %, ft-160 17/20) ran at 30/0.95, i.e. the client re-planned from a fresh
+observation nearly every tick; at 100/0.5 it re-plans about once per second. Part 3 compares
+CPU@100/0.5 against that GPU@30/0.95 baseline (pass ≥ 15/20); if a future GPU re-baseline at 100/0.5
+moves the number, the ladder JSONs must state the chunk params (the eval JSON does not carry them —
+the coordinator role cannot see the node's params without a `ros2 param get`; open item, not a
+speculative field).
+**Alternatives:** Fleet branch `{{ if gpu == "nvidia" }}ACTIONS_PER_CHUNK=30…` (rejected — two code
+paths for one demo); keep 30/0.95 everywhere and pin vCPUs instead (rejected — D053 shows that only
+buys ~2×).
+**Consequences:** `~/eval_policy.sh` on the host (GPU, `act-inference:latest`) is unaffected until that
+image is rebuilt from this Dockerfile; when it is, it inherits 100/0.5.
+
+---
+
+## D060 — The D020 seeded eval of a device-served policy is the coordinator role in eval mode on the sim host
+
+**Date:** 2026-09-08
+**Context:** D056 rejected "two coordinators alive" for the eval; with the split the device has no
+coordinator, so the host can run `EVAL_MODE=true` against the VM's `/run_policy` with reset + judge
+local to Gazebo. `MODEL_VERSION` in eval mode is the eval label (results file name; `eval-*` is
+discarded by the curator, and the eval never signals the emitter), while the device keeps
+publishing `act-v2-ft160` — recorded as `served_model_version` in the results JSON.
+**Decision:** `tools/host/run-coordinator.sh` `MODE=eval <N> <seed_base>` (foreground, `--rm`,
+`--no-healthcheck`, the same pinned D020 config as `~/eval_policy.sh`: `EPISODE_LEN=60`,
+`RESET_ARM=true`, `RANDOMIZE_ONLY=cube_medium`, `RANDOM_RADIUS=0.03`, `RANDOM_YAW_DEG=180`,
+`RECORD=false`). The loop container must be stopped first (`docker stop act-coordinator`) and
+restarted after. Part 3 did **not** run in C3 (see the next entry).
+**Consequences:** `~/eval_policy.sh` stays the GPU/host-policy path; the VM path is the script above.
+The `steps` metric in eval JSONs becomes comparable again (the coordinator counts `/joint_states` on
+the host, not on the torch-saturated VM — D056's second artefact).
+
+---
+
+## D061 — The host coordinator filled the desktop disk in 50 minutes; both VMs paused on I/O error (blocker, operator decision)
+
+**Date:** 2026-09-09
+**Context:** with recording back on the host, every 3/3 episode keeps a ~1.3 GB MCAP bag
+(`EPISODE_LEN=25`, two 480×480 cameras). 62 bags (79 GB) were kept between 23:54Z and 00:44Z on
+top of 400 pre-existing bags (637 GB); the root filesystem (`/dev/nvme1n1p2`, 1.8 TB) hit 100 %
+(605 MB free), and qemu paused **both** `sno-flywheel` and `act-device` (`virsh domstate --reason`:
+`paused (I/O error)`; their qcow2 disks live on the same filesystem). Last good episode 00:44:45Z;
+from then on the coordinator logged `Goal rejected — retrying next cycle` (2188×), the emitter
+`POST to curator failed: No route to host`, and every episode failed 0/3 and was pruned (no further
+growth). The coordinator container was stopped at 10:28:05Z. The ~84 GB "free after prune" figure in
+`.plans/rhem-runner.md` was the whole budget; the C2 `RECORD=false` interim had hidden the rate.
+**Decision (proposed):** none taken by the agent — freeing space means deleting or moving bags,
+which the C3 brief forbids, and nothing else on the disk is both large and the agent's to remove
+(docker reclaim < 100 MB; `~/.cache` 13 GB is user data; VM images cannot shrink). Options for the
+operator, cheapest first: (1) delete or move the 62 unported C3 bags
+(`~/flywheel-data/bags/1788911682_712266789` … `1788914576_041373221`, 79 GB; re-recordable, none
+ported, none referenced by an assembled dataset) — enough to resume both VMs and finish C3; (2) run
+the port-as-you-go flow once MinIO is back (assemble → `prune_bags.py --yes`) — needs the SNO
+resumed first, so it cannot be the first step; (3) point `DATA_DIR` at a second disk before the loop
+restarts. In all cases the loop needs a disk guard before it runs unattended again (the old
+`bag_watchdog.sh` was killed at cut-over and never replaced): a minimum-free-space check in
+`run-coordinator.sh` or `RECORD=false` until the assembler runs on a schedule.
+**Consequences:** `virsh -c qemu:///system resume sno-flywheel act-device` after space is freed (an
+I/O-error pause resumes cleanly once writes succeed); then re-check RHEM (`flightctl get device …`),
+the device container (podman restarts it if the health probe lapsed), and MinIO reachability. C3
+exit criteria not yet met: part 2 numbers are on the paused VM, part 3 has not run, the
+curated/rejected MinIO recount could not be taken. D019's "raw bags stay on the host" now has a
+hard number attached: ~1.3 GB per kept episode, ~100 GB per hour of successes.
+
+---
+
+## D062 — Recovery from the 2026-09-09 disk outage: proof bags archived to the media disk; a disk guard is mandatory before the host coordinator runs
+
+**Date:** 2026-09-09
+**Context:** D061's root-disk fill: the host disk hit 100 % (992 MB free) ~00:44Z after 62 bags
+(79 GB) were recorded on the host in 50 minutes with no guard — the old `bag_watchdog.sh` was killed
+at cut-over and never replaced, and it also had a silent-park bug; both VMs paused on I/O error.
+**Decision:** operator authorized (2026-09-09): `docker image prune -a` (reclaimed 0 B — shared
+layers) and moving the 172 proof bags (timestamp < 1788560700, 288 GB) to
+`/media/jary/videos/flywheel-bags-archive/` via a root container with copy → size-list compare →
+`cmp metadata.yaml` → rename → remove source (logged to `~/bag-archive-2026-09-09.log`); declined
+deleting the night's 62 bags and mounting `sdb1` (4.5 TB ext4, unmounted — inbox todo). Free space:
+991 MB → 198 GB by 11:01Z. VMs resumed 10:58Z; SNO Ready, COs clean, MinIO 200, Argo Synced; device
+Online/UpToDate/Healthy without restart; guest clocks stayed at ~00:46Z (paused guests don't
+advance) — `virsh domtime --sync` fixed SNO, `act-device` needs `domtime --now` or
+`chronyc makestep`. `tools/host/disk-guard.sh` (poll 60 s, `MIN_FREE_GB=100`, `CAP=450`,
+unconditional PARKED line) is armed on the host and `tools/host/run-coordinator.sh` refuses loop
+mode without it or under the floor; the loop coordinator stays stopped after the C3 eval until the
+operator starts it.
+**Alternatives:** delete the night's bags (declined); rely on port-as-you-go alone (needs the hub up
+and hours of assembly — not a guard).
+**Consequences:** lesson recorded in brim: never retire a limiter without arming its replacement in
+the same step. `sdb1` (4.5 TB ext4, unmounted) remains an inbox todo for a durable second-disk
+solution.

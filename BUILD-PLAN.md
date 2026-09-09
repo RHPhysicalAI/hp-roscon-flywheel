@@ -392,6 +392,9 @@ C. **Fleet-delivered application** (D024, D026)
      `/var/lib/act-inference`.
    - Desktop only: bags land on the host over virtiofs (D043) so `assemble_all.sh`/`prune_bags.py`
      keep working; port-as-you-go prune after each assembly.
+   - **Superseded (C3, D057+):** the device runs the policy role only; coordinator + recorder + sim
+     reset run beside the sim on the host (`tools/host/run-coordinator.sh`), bags stay on the host
+     disk, and `tools/host/disk-guard.sh` must be armed before the loop runs.
    - **Exit (2026-09-08, partial):** `applicationsSummary: Healthy` met (device `act-device`, Fleet
      renderedVersion 3); curator receives `act-v2-ft160` episodes from the VM (lineage met; task
      outcomes invalid until the C3 role split lands — gz-transport reset/judge is host-local);
@@ -446,7 +449,7 @@ G. **Fury port + runbook** (on site, Sept 20–25)
 - `torch==2.9.1+cu130` aarch64 wheels (Phase 4 open question) — unverified
 - ~~RHOAI on SNO ships the `modelregistry` component~~ **Verified 2026-09-08:** RHOAI 2.25.11 DSC lists `modelregistry` (currently `Removed`)
 - **New (B):** label values may not contain `:` (k8s `IsValidLabelValue` in flightctl 1.3.0) → labels are `zenoh_router=10.0.0.48` + `zenoh_port=7447` (D033); `flightctl-agent-1.3.0-1.el10` no longer requires greenboot (only Recommends `flightctl-greenboot`)
-- **New (C0b):** `virtiofsd` must be installed from the distro package on the desktop (AppArmor pins the path) — D046; bag recording on the VM is off until then (D044)
+- ~~**New (C0b):** `virtiofsd` must be installed from the distro package on the desktop (AppArmor pins the path) — D046; bag recording on the VM is off until then (D044)~~ — no longer needed after the C3 role split
 
 ### Exit criteria
 - [x] `flightctl get devices` shows the desktop VM Online, labels correct, `applicationsSummary: Healthy` (2026-09-08 22:52Z, device s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg)
