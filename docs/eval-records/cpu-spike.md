@@ -367,6 +367,32 @@ contract for the Fury, where the sim is also on a different box than the device)
 the desktop stand-in's episodes should be read as lineage proof only, and the runbook's Beat 6
 should not quote their success rate.
 
+## C3 — role split in place (2026-09-08 23:44Z → 2026-09-09), parts 2–3 re-run status
+
+Setting: Fleet `210e79e` rolled to renderedVersion 4 (`UpToDate`, `Healthy`, podman `(healthy)`);
+device container runs `ROLE=policy` from `quay.io/jary/soarm-flywheel@sha256:2ad1fb1c…` with
+`ros2 param get /rosetta_client` → `actions_per_chunk 100`, `chunk_size_threshold 0.5`,
+`policy_device cpu` (no CUDA-fallback line). Host coordinator `act-coordinator` (same image,
+`ROLE=coordinator`, env/mounts of the old `act-inference` mirrored) started 23:54:11Z: it observed
+`act-v2-ft160` from the device, reset cubes over host-local Gazebo transport (0/3 on the tray at
+every sampled episode start, including after a 3/3 success), drove `/run_policy` on the VM, and
+published `Dataset ref: 'bags/<sec>_<nsec>'` for every episode — so `dataset_path` is non-null
+again. Emitter verdicts 23:54Z–00:45Z: 20 SUCCESS / 47 FAIL (real scenes, both classes); 62 bags
+kept by the coordinator's own 3/3 verdict.
+
+**Part 2 (re-measure at 100/0.5):** probe run inside the device container 23:54:49–00:01:49Z
+(`cadence_probe.py 420 24.5`, 25 s windows — the mirrored loop uses `EPISODE_LEN=25`). The log
+(`~/spike/cadence-c3-235449.log` on the VM) is **not yet read**: at 00:44:45Z the desktop root
+filesystem filled (62 new bags, 79 GB, on 84 GB free) and qemu paused both VMs with an I/O error.
+Table and verdict follow once the VM resumes.
+
+**Part 3 (20-seed D020 eval, coordinator on the host, policy on the VM):** **not run** — same
+outage; the procedure is `IMAGE=<digest> MODE=eval MODEL_VERSION=eval-cpu-v2-ft160
+tools/host/run-coordinator.sh 20 1000` with the loop stopped. Pass ≥ 15/20 vs GPU 17/20.
+
+Coordinator stopped 10:28:05Z (2188 `Goal rejected` cycles against the paused VM, all pruned).
+Blocker and options: C3 decisions (disk).
+
 ## Files
 
 - `device/spike/bench_cpu_forward.py` — the part-1 benchmark (re-run on the VM to get in-guest numbers)
