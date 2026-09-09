@@ -98,10 +98,13 @@ def eval_gate(eval_report_uri: str, s3_endpoint: str) -> str:
 
 @dsl.component(base_image=PY_IMG, packages_to_install=["boto3==1.35.36"])
 def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, platform: List[str],
-                     s3_endpoint: str, crane_version: str, modelcar_base: str) -> str:
+                     s3_endpoint: str, crane_version: str, modelcar_base: str,
+                     crane_sha256_amd64: str, crane_sha256_arm64: str) -> str:
     """crane append per platform: flat ACT checkpoint dir -> /models/act on ubi-micro, then one OCI index
-    at the candidate tag (the model layer is shared; only the ubi-micro base differs). Returns index@digest."""
-    import os, platform as _plat, subprocess, tarfile, io, boto3, urllib.request
+    at the candidate tag (the model layer is shared; only the ubi-micro base differs). Returns index@digest.
+    The crane release tarball is SHA-256-checked against the pinned digest before it runs (same
+    discipline as gitops/tekton/cosign-sign-task.yaml); a mismatch aborts the run."""
+    import os, platform as _plat, subprocess, tarfile, io, boto3, urllib.request, hashlib
     s3 = boto3.client("s3", endpoint_url=s3_endpoint, aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
                       aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"])
     b, k = checkpoint_uri[5:].split("/", 1)
@@ -114,7 +117,12 @@ def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, pl
     with tarfile.open("/tmp/layer.tar", "w") as t: t.add("/tmp/layer/models", arcname="models")
     arch = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "arm64", "arm64": "arm64"}[_plat.machine()]
     url = f"https://github.com/google/go-containerregistry/releases/download/{crane_version}/go-containerregistry_Linux_{arch}.tar.gz"
-    urllib.request.urlretrieve(url, "/tmp/crane.tgz"); subprocess.run(["tar", "-xzf", "/tmp/crane.tgz", "-C", "/tmp", "crane"], check=True)
+    urllib.request.urlretrieve(url, "/tmp/crane.tgz")
+    want = {"x86_64": crane_sha256_amd64, "arm64": crane_sha256_arm64}[arch]
+    got = hashlib.sha256(open("/tmp/crane.tgz", "rb").read()).hexdigest()
+    if got != want:
+        print(f"crane {crane_version} {arch}: sha256 {got} != pinned {want}; refusing to run it"); raise SystemExit(1)
+    subprocess.run(["tar", "-xzf", "/tmp/crane.tgz", "-C", "/tmp", "crane"], check=True)
     # quay-push is a kubernetes.io/dockerconfigjson Secret: the mounted file is .dockerconfigjson,
     # while crane/cosign look for $DOCKER_CONFIG/config.json.
     import json as _j; os.makedirs("/tmp/docker", exist_ok=True)
@@ -138,17 +146,26 @@ def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, pl
 
 
 @dsl.component(base_image=PY_IMG)
-def sign_modelcar(image_ref: str, rekor_url: str, cosign_version: str) -> NamedTuple("SignOutputs", [("image_ref", str), ("rekor_index", int)]):
+def sign_modelcar(image_ref: str, rekor_url: str, cosign_version: str, cosign_sha256_amd64: str,
+                  cosign_sha256_arm64: str) -> NamedTuple("SignOutputs", [("image_ref", str), ("rekor_index", int)]):
     """cosign v2.x sign by digest, --recursive so every per-arch manifest of the index carries its own
     signature (containers/image verifies the instance it selects); Rekor when rekor_url is set (RHTAS).
     COSIGN_PASSWORD comes from the cosign-signing-key Secret's `cosign.password` key, read from the
     Secret's volume mount (the DSP launcher does not honour an optional secretKeyRef env; a Secret
     without the key means an unencrypted signing key).
-    rekor_index = the index's own tlog entry (the first `tlog entry created` line; -1 without Rekor)."""
-    import os, platform as _plat, re, subprocess, urllib.request
+    Hardening (review W-7/W-8): the cosign binary is SHA-256-checked against the pinned digest; a sign
+    that reports no Rekor entry fails the run; and the signature is verified back with cosign verify
+    against cosign.pub + the in-cluster Rekor public key (mounted from ConfigMap rekor-public-key)
+    before anything downstream records or promotes it — the same check the device performs at pull.
+    rekor_index = the logIndex from the verified bundle on the index itself."""
+    import os, platform as _plat, re, subprocess, urllib.request, hashlib, json
     from collections import namedtuple
     arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[_plat.machine()]
     urllib.request.urlretrieve(f"https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-{arch}", "/tmp/cosign")
+    want = {"amd64": cosign_sha256_amd64, "arm64": cosign_sha256_arm64}[arch]
+    got = hashlib.sha256(open("/tmp/cosign", "rb").read()).hexdigest()
+    if got != want:
+        print(f"cosign {cosign_version} {arch}: sha256 {got} != pinned {want}; refusing to run it"); raise SystemExit(1)
     os.chmod("/tmp/cosign", 0o755)
     if os.path.exists("/etc/cosign/cosign.password"):
         os.environ["COSIGN_PASSWORD"] = open("/etc/cosign/cosign.password").read().strip()
@@ -164,7 +181,30 @@ def sign_modelcar(image_ref: str, rekor_url: str, cosign_version: str) -> NamedT
     if r.returncode != 0: raise SystemExit(1)
     idx = [int(m) for m in re.findall(r"tlog entry created with index: (\d+)", r.stdout + r.stderr)]
     print("signed", image_ref, "rekor indexes", idx)
-    return namedtuple("SignOutputs", ["image_ref", "rekor_index"])(image_ref, idx[0] if idx else -1)
+    if rekor_url and not idx:
+        print("cosign sign reported no Rekor entry; refusing to promote an unlogged signature"); raise SystemExit(1)
+    # Verify what was just signed the way the device will: key + Rekor SET. Pass/fail is the exit code.
+    # (Without a Rekor URL there is no transparency log to check against and no bypass flag is used.)
+    log_index = None
+    if not rekor_url:
+        print("no rekor_url: signature not logged, verify step skipped")
+        return namedtuple("SignOutputs", ["image_ref", "rekor_index"])(image_ref, -1)
+    env = dict(os.environ, SIGSTORE_REKOR_PUBLIC_KEY="/etc/rekor/rekor.pub")
+    vcmd = ["/tmp/cosign", "verify", "--key", "/etc/cosign/cosign.pub", "--rekor-url", rekor_url, "--output", "json", image_ref]
+    v = subprocess.run(vcmd, capture_output=True, text=True, env=env); print(v.stderr[-1500:])
+    if v.returncode != 0:
+        print(f"cosign verify failed with exit code {v.returncode}"); raise SystemExit(1)
+    for line in v.stdout.splitlines():
+        if line.strip().startswith("["):
+            for entry in json.loads(line):
+                bundle = entry.get("optional", {}).get("Bundle") or {}
+                li = (bundle.get("Payload") or {}).get("logIndex")
+                if li is not None: log_index = int(li); break
+            break
+    if rekor_url and log_index is None:
+        print("verified payload carries no Rekor logIndex"); raise SystemExit(1)
+    print("verified", image_ref, "logIndex", log_index)
+    return namedtuple("SignOutputs", ["image_ref", "rekor_index"])(image_ref, log_index if log_index is not None else (idx[0] if idx else -1))
 
 
 @dsl.component(base_image=PY_IMG, packages_to_install=[MODEL_REGISTRY_CLIENT])
@@ -335,6 +375,11 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
                           kafka_bootstrap: str = "edge-kafka.flywheel.svc:9092", s3_endpoint: str = "http://minio.minio.svc:9000",
                           registry_repo: str = "quay.io/jary/soarm-act-modelcar", platform: List[str] = ["linux/amd64", "linux/arm64"],
                           rekor_url: str = "http://rekor-server.trusted-artifact-signer.svc", crane_version: str = "v0.20.3", cosign_version: str = "v2.6.5",
+                          # Release-asset digests (review W-7): go-containerregistry v0.20.3 checksums.txt; cosign v2.6.5 per cosign-sign-task.yaml
+                          crane_sha256_amd64: str = "36c67a932f489b3f2724b64af90b599a8ef2aa7b004872597373c0ad694dc059",
+                          crane_sha256_arm64: str = "d2235f7779cd39c6e40f43701d2512c997409f629fb53e621ede0d57d3f995e2",
+                          cosign_sha256_amd64: str = "c3b4f5410e608af03a5eb0aaac84a4313d8da131248e08ff1759ac70c79d1644",
+                          cosign_sha256_arm64: str = "426193b4c5da4d4d643e822f48fe0cc8a476ca1782a272704831f5a0cef716d7",
                           github_repo: str = "RHPhysicalAI/hp-roscon-flywheel", gitops_branch: str = "desktop-gpu-split",
                           fleet_file: str = "gitops/rhem/fleet-act-inference.yaml", consumer_file: str = "gitops/flywheel/manifest-consumer.yaml",
                           fleet_ui_url: str = "https://ui.flightctl.apps.sno-flywheel.local/devicemanagement/fleets/act-inference",
@@ -350,13 +395,16 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
     g = eval_gate(eval_report_uri=t.outputs["eval_report"], s3_endpoint=s3_endpoint); g.set_caching_options(False)
     k8s.use_secret_as_env(g, secret_name="hub-credentials", secret_key_to_env={"s3-access-key": "AWS_ACCESS_KEY_ID", "s3-secret-key": "AWS_SECRET_ACCESS_KEY"})
     pk = package_modelcar(checkpoint_uri=t.outputs["checkpoint"], candidate=candidate, registry_repo=registry_repo,
-                          platform=platform, s3_endpoint=s3_endpoint, crane_version=crane_version, modelcar_base=modelcar_base).after(g)
+                          platform=platform, s3_endpoint=s3_endpoint, crane_version=crane_version, modelcar_base=modelcar_base,
+                          crane_sha256_amd64=crane_sha256_amd64, crane_sha256_arm64=crane_sha256_arm64).after(g)
     pk.set_caching_options(False)
     k8s.use_secret_as_env(pk, secret_name="hub-credentials", secret_key_to_env={"s3-access-key": "AWS_ACCESS_KEY_ID", "s3-secret-key": "AWS_SECRET_ACCESS_KEY"})
     k8s.use_secret_as_volume(pk, secret_name="quay-push", mount_path="/etc/quay")
-    sg = sign_modelcar(image_ref=pk.output, rekor_url=rekor_url, cosign_version=cosign_version); sg.set_caching_options(False)
+    sg = sign_modelcar(image_ref=pk.output, rekor_url=rekor_url, cosign_version=cosign_version,
+                       cosign_sha256_amd64=cosign_sha256_amd64, cosign_sha256_arm64=cosign_sha256_arm64); sg.set_caching_options(False)
     k8s.use_secret_as_volume(sg, secret_name="quay-push", mount_path="/etc/quay")
-    k8s.use_secret_as_volume(sg, secret_name="cosign-signing-key", mount_path="/etc/cosign")  # cosign.key (+ cosign.password if set)
+    k8s.use_secret_as_volume(sg, secret_name="cosign-signing-key", mount_path="/etc/cosign")  # cosign.key, cosign.pub (+ cosign.password if set)
+    k8s.use_config_map_as_volume(sg, config_map_name="rekor-public-key", mount_path="/etc/rekor")  # rekor.pub for the verify step
     reg = register_model(model_name=MODEL_NAME, image_ref=sg.outputs["image_ref"], candidate=candidate,
                          checkpoint_uri=t.outputs["checkpoint"], dataset_uri=t.outputs["dataset_uri"],
                          eval_report_uri=t.outputs["eval_report"], report_json=g.output, rekor_index=sg.outputs["rekor_index"],

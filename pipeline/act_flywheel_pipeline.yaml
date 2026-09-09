@@ -6,7 +6,11 @@
 #    catalog_item_file: str [Default: 'gitops/rhem-catalog/catalogitem-soarm-act.yaml']
 #    collector: str [Default: 'upstream-act-teacher']
 #    consumer_file: str [Default: 'gitops/flywheel/manifest-consumer.yaml']
+#    cosign_sha256_amd64: str [Default: 'c3b4f5410e608af03a5eb0aaac84a4313d8da131248e08ff1759ac70c79d1644']
+#    cosign_sha256_arm64: str [Default: '426193b4c5da4d4d643e822f48fe0cc8a476ca1782a272704831f5a0cef716d7']
 #    cosign_version: str [Default: 'v2.6.5']
+#    crane_sha256_amd64: str [Default: '36c67a932f489b3f2724b64af90b599a8ef2aa7b004872597373c0ad694dc059']
+#    crane_sha256_arm64: str [Default: 'd2235f7779cd39c6e40f43701d2512c997409f629fb53e621ede0d57d3f995e2']
 #    crane_version: str [Default: 'v0.20.3']
 #    eval_n: int [Default: 100.0]
 #    eval_seed_base: int [Default: 1000.0]
@@ -79,6 +83,10 @@ components:
           parameterType: STRING
         checkpoint_uri:
           parameterType: STRING
+        crane_sha256_amd64:
+          parameterType: STRING
+        crane_sha256_arm64:
+          parameterType: STRING
         crane_version:
           parameterType: STRING
         modelcar_base:
@@ -143,6 +151,10 @@ components:
     executorLabel: exec-sign-modelcar
     inputDefinitions:
       parameters:
+        cosign_sha256_amd64:
+          parameterType: STRING
+        cosign_sha256_arm64:
+          parameterType: STRING
         cosign_version:
           parameterType: STRING
         image_ref:
@@ -404,32 +416,40 @@ deploymentSpec:
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef package_modelcar(checkpoint_uri: str, candidate: str, registry_repo:\
           \ str, platform: List[str],\n                     s3_endpoint: str, crane_version:\
-          \ str, modelcar_base: str) -> str:\n    \"\"\"crane append per platform:\
+          \ str, modelcar_base: str,\n                     crane_sha256_amd64: str,\
+          \ crane_sha256_arm64: str) -> str:\n    \"\"\"crane append per platform:\
           \ flat ACT checkpoint dir -> /models/act on ubi-micro, then one OCI index\n\
           \    at the candidate tag (the model layer is shared; only the ubi-micro\
-          \ base differs). Returns index@digest.\"\"\"\n    import os, platform as\
-          \ _plat, subprocess, tarfile, io, boto3, urllib.request\n    s3 = boto3.client(\"\
-          s3\", endpoint_url=s3_endpoint, aws_access_key_id=os.environ[\"AWS_ACCESS_KEY_ID\"\
-          ],\n                      aws_secret_access_key=os.environ[\"AWS_SECRET_ACCESS_KEY\"\
-          ])\n    b, k = checkpoint_uri[5:].split(\"/\", 1)\n    buf = io.BytesIO(s3.get_object(Bucket=b,\
-          \ Key=k)[\"Body\"].read())\n    os.makedirs(\"/tmp/layer/models/act\", exist_ok=True)\n\
-          \    with tarfile.open(fileobj=buf, mode=\"r:gz\") as t:\n        for m\
-          \ in t:\n            if m.isfile():\n                m.name = \"models/act/\"\
-          \ + os.path.basename(m.name); t.extract(m, \"/tmp/layer\")\n    with tarfile.open(\"\
-          /tmp/layer.tar\", \"w\") as t: t.add(\"/tmp/layer/models\", arcname=\"models\"\
-          )\n    arch = {\"x86_64\": \"x86_64\", \"amd64\": \"x86_64\", \"aarch64\"\
-          : \"arm64\", \"arm64\": \"arm64\"}[_plat.machine()]\n    url = f\"https://github.com/google/go-containerregistry/releases/download/{crane_version}/go-containerregistry_Linux_{arch}.tar.gz\"\
-          \n    urllib.request.urlretrieve(url, \"/tmp/crane.tgz\"); subprocess.run([\"\
-          tar\", \"-xzf\", \"/tmp/crane.tgz\", \"-C\", \"/tmp\", \"crane\"], check=True)\n\
-          \    # quay-push is a kubernetes.io/dockerconfigjson Secret: the mounted\
-          \ file is .dockerconfigjson,\n    # while crane/cosign look for $DOCKER_CONFIG/config.json.\n\
-          \    import json as _j; os.makedirs(\"/tmp/docker\", exist_ok=True)\n  \
-          \  cfg = _j.load(open(\"/etc/quay/.dockerconfigjson\"))\n    _j.dump({\"\
-          auths\": cfg.get(\"auths\", {})}, open(\"/tmp/docker/config.json\", \"w\"\
-          ))  # drop credsStore/credHelpers\n    os.environ[\"DOCKER_CONFIG\"] = \"\
-          /tmp/docker\"\n    per_arch = []\n    for p in platform:\n        tag =\
-          \ f\"{registry_repo}:{candidate}-{p.split('/', 1)[1].replace('/', '-')}\"\
-          \n        r = subprocess.run([\"/tmp/crane\", \"append\", \"--platform\"\
+          \ base differs). Returns index@digest.\n    The crane release tarball is\
+          \ SHA-256-checked against the pinned digest before it runs (same\n    discipline\
+          \ as gitops/tekton/cosign-sign-task.yaml); a mismatch aborts the run.\"\"\
+          \"\n    import os, platform as _plat, subprocess, tarfile, io, boto3, urllib.request,\
+          \ hashlib\n    s3 = boto3.client(\"s3\", endpoint_url=s3_endpoint, aws_access_key_id=os.environ[\"\
+          AWS_ACCESS_KEY_ID\"],\n                      aws_secret_access_key=os.environ[\"\
+          AWS_SECRET_ACCESS_KEY\"])\n    b, k = checkpoint_uri[5:].split(\"/\", 1)\n\
+          \    buf = io.BytesIO(s3.get_object(Bucket=b, Key=k)[\"Body\"].read())\n\
+          \    os.makedirs(\"/tmp/layer/models/act\", exist_ok=True)\n    with tarfile.open(fileobj=buf,\
+          \ mode=\"r:gz\") as t:\n        for m in t:\n            if m.isfile():\n\
+          \                m.name = \"models/act/\" + os.path.basename(m.name); t.extract(m,\
+          \ \"/tmp/layer\")\n    with tarfile.open(\"/tmp/layer.tar\", \"w\") as t:\
+          \ t.add(\"/tmp/layer/models\", arcname=\"models\")\n    arch = {\"x86_64\"\
+          : \"x86_64\", \"amd64\": \"x86_64\", \"aarch64\": \"arm64\", \"arm64\":\
+          \ \"arm64\"}[_plat.machine()]\n    url = f\"https://github.com/google/go-containerregistry/releases/download/{crane_version}/go-containerregistry_Linux_{arch}.tar.gz\"\
+          \n    urllib.request.urlretrieve(url, \"/tmp/crane.tgz\")\n    want = {\"\
+          x86_64\": crane_sha256_amd64, \"arm64\": crane_sha256_arm64}[arch]\n   \
+          \ got = hashlib.sha256(open(\"/tmp/crane.tgz\", \"rb\").read()).hexdigest()\n\
+          \    if got != want:\n        print(f\"crane {crane_version} {arch}: sha256\
+          \ {got} != pinned {want}; refusing to run it\"); raise SystemExit(1)\n \
+          \   subprocess.run([\"tar\", \"-xzf\", \"/tmp/crane.tgz\", \"-C\", \"/tmp\"\
+          , \"crane\"], check=True)\n    # quay-push is a kubernetes.io/dockerconfigjson\
+          \ Secret: the mounted file is .dockerconfigjson,\n    # while crane/cosign\
+          \ look for $DOCKER_CONFIG/config.json.\n    import json as _j; os.makedirs(\"\
+          /tmp/docker\", exist_ok=True)\n    cfg = _j.load(open(\"/etc/quay/.dockerconfigjson\"\
+          ))\n    _j.dump({\"auths\": cfg.get(\"auths\", {})}, open(\"/tmp/docker/config.json\"\
+          , \"w\"))  # drop credsStore/credHelpers\n    os.environ[\"DOCKER_CONFIG\"\
+          ] = \"/tmp/docker\"\n    per_arch = []\n    for p in platform:\n       \
+          \ tag = f\"{registry_repo}:{candidate}-{p.split('/', 1)[1].replace('/',\
+          \ '-')}\"\n        r = subprocess.run([\"/tmp/crane\", \"append\", \"--platform\"\
           , p, \"-b\", modelcar_base,\n                            \"-f\", \"/tmp/layer.tar\"\
           , \"-t\", tag], capture_output=True, text=True)\n        if r.returncode\
           \ != 0:\n            print(f\"crane append {p} failed:\", r.stderr[-1500:]);\
@@ -584,6 +604,7 @@ deploymentSpec:
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef sign_modelcar(image_ref: str, rekor_url: str, cosign_version:\
+          \ str, cosign_sha256_amd64: str,\n                  cosign_sha256_arm64:\
           \ str) -> NamedTuple(\"SignOutputs\", [(\"image_ref\", str), (\"rekor_index\"\
           , int)]):\n    \"\"\"cosign v2.x sign by digest, --recursive so every per-arch\
           \ manifest of the index carries its own\n    signature (containers/image\
@@ -591,19 +612,28 @@ deploymentSpec:
           \    COSIGN_PASSWORD comes from the cosign-signing-key Secret's `cosign.password`\
           \ key, read from the\n    Secret's volume mount (the DSP launcher does not\
           \ honour an optional secretKeyRef env; a Secret\n    without the key means\
-          \ an unencrypted signing key).\n    rekor_index = the index's own tlog entry\
-          \ (the first `tlog entry created` line; -1 without Rekor).\"\"\"\n    import\
-          \ os, platform as _plat, re, subprocess, urllib.request\n    from collections\
-          \ import namedtuple\n    arch = {\"x86_64\": \"amd64\", \"amd64\": \"amd64\"\
-          , \"aarch64\": \"arm64\", \"arm64\": \"arm64\"}[_plat.machine()]\n    urllib.request.urlretrieve(f\"\
-          https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-{arch}\"\
-          , \"/tmp/cosign\")\n    os.chmod(\"/tmp/cosign\", 0o755)\n    if os.path.exists(\"\
-          /etc/cosign/cosign.password\"):\n        os.environ[\"COSIGN_PASSWORD\"\
-          ] = open(\"/etc/cosign/cosign.password\").read().strip()\n    else:\n  \
-          \      print(\"cosign-signing-key has no `cosign.password` key; assuming\
-          \ an unencrypted signing key\"); os.environ[\"COSIGN_PASSWORD\"] = \"\"\n\
-          \    import json as _j; os.makedirs(\"/tmp/docker\", exist_ok=True)\n  \
-          \  cfg = _j.load(open(\"/etc/quay/.dockerconfigjson\"))\n    _j.dump({\"\
+          \ an unencrypted signing key).\n    Hardening (review W-7/W-8): the cosign\
+          \ binary is SHA-256-checked against the pinned digest; a sign\n    that\
+          \ reports no Rekor entry fails the run; and the signature is verified back\
+          \ with cosign verify\n    against cosign.pub + the in-cluster Rekor public\
+          \ key (mounted from ConfigMap rekor-public-key)\n    before anything downstream\
+          \ records or promotes it \u2014 the same check the device performs at pull.\n\
+          \    rekor_index = the logIndex from the verified bundle on the index itself.\"\
+          \"\"\n    import os, platform as _plat, re, subprocess, urllib.request,\
+          \ hashlib, json\n    from collections import namedtuple\n    arch = {\"\
+          x86_64\": \"amd64\", \"amd64\": \"amd64\", \"aarch64\": \"arm64\", \"arm64\"\
+          : \"arm64\"}[_plat.machine()]\n    urllib.request.urlretrieve(f\"https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-{arch}\"\
+          , \"/tmp/cosign\")\n    want = {\"amd64\": cosign_sha256_amd64, \"arm64\"\
+          : cosign_sha256_arm64}[arch]\n    got = hashlib.sha256(open(\"/tmp/cosign\"\
+          , \"rb\").read()).hexdigest()\n    if got != want:\n        print(f\"cosign\
+          \ {cosign_version} {arch}: sha256 {got} != pinned {want}; refusing to run\
+          \ it\"); raise SystemExit(1)\n    os.chmod(\"/tmp/cosign\", 0o755)\n   \
+          \ if os.path.exists(\"/etc/cosign/cosign.password\"):\n        os.environ[\"\
+          COSIGN_PASSWORD\"] = open(\"/etc/cosign/cosign.password\").read().strip()\n\
+          \    else:\n        print(\"cosign-signing-key has no `cosign.password`\
+          \ key; assuming an unencrypted signing key\"); os.environ[\"COSIGN_PASSWORD\"\
+          ] = \"\"\n    import json as _j; os.makedirs(\"/tmp/docker\", exist_ok=True)\n\
+          \    cfg = _j.load(open(\"/etc/quay/.dockerconfigjson\"))\n    _j.dump({\"\
           auths\": cfg.get(\"auths\", {})}, open(\"/tmp/docker/config.json\", \"w\"\
           ))  # drop credsStore/credHelpers\n    os.environ[\"DOCKER_CONFIG\"] = \"\
           /tmp/docker\"\n    cmd = [\"/tmp/cosign\", \"sign\", \"--key\", \"/etc/cosign/cosign.key\"\
@@ -613,8 +643,29 @@ deploymentSpec:
           \ print(r.stderr)\n    if r.returncode != 0: raise SystemExit(1)\n    idx\
           \ = [int(m) for m in re.findall(r\"tlog entry created with index: (\\d+)\"\
           , r.stdout + r.stderr)]\n    print(\"signed\", image_ref, \"rekor indexes\"\
-          , idx)\n    return namedtuple(\"SignOutputs\", [\"image_ref\", \"rekor_index\"\
-          ])(image_ref, idx[0] if idx else -1)\n\n"
+          , idx)\n    if rekor_url and not idx:\n        print(\"cosign sign reported\
+          \ no Rekor entry; refusing to promote an unlogged signature\"); raise SystemExit(1)\n\
+          \    # Verify what was just signed the way the device will: key + Rekor\
+          \ SET. Pass/fail is the exit code.\n    # (Without a Rekor URL there is\
+          \ no transparency log to check against and no bypass flag is used.)\n  \
+          \  log_index = None\n    if not rekor_url:\n        print(\"no rekor_url:\
+          \ signature not logged, verify step skipped\")\n        return namedtuple(\"\
+          SignOutputs\", [\"image_ref\", \"rekor_index\"])(image_ref, -1)\n    env\
+          \ = dict(os.environ, SIGSTORE_REKOR_PUBLIC_KEY=\"/etc/rekor/rekor.pub\"\
+          )\n    vcmd = [\"/tmp/cosign\", \"verify\", \"--key\", \"/etc/cosign/cosign.pub\"\
+          , \"--rekor-url\", rekor_url, \"--output\", \"json\", image_ref]\n    v\
+          \ = subprocess.run(vcmd, capture_output=True, text=True, env=env); print(v.stderr[-1500:])\n\
+          \    if v.returncode != 0:\n        print(f\"cosign verify failed with exit\
+          \ code {v.returncode}\"); raise SystemExit(1)\n    for line in v.stdout.splitlines():\n\
+          \        if line.strip().startswith(\"[\"):\n            for entry in json.loads(line):\n\
+          \                bundle = entry.get(\"optional\", {}).get(\"Bundle\") or\
+          \ {}\n                li = (bundle.get(\"Payload\") or {}).get(\"logIndex\"\
+          )\n                if li is not None: log_index = int(li); break\n     \
+          \       break\n    if rekor_url and log_index is None:\n        print(\"\
+          verified payload carries no Rekor logIndex\"); raise SystemExit(1)\n   \
+          \ print(\"verified\", image_ref, \"logIndex\", log_index)\n    return namedtuple(\"\
+          SignOutputs\", [\"image_ref\", \"rekor_index\"])(image_ref, log_index if\
+          \ log_index is not None else (idx[0] if idx else -1))\n\n"
         image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
     exec-trigger-and-wait:
       container:
@@ -755,6 +806,10 @@ root:
               taskOutputParameter:
                 outputParameterKey: checkpoint
                 producerTask: trigger-and-wait
+            crane_sha256_amd64:
+              componentInputParameter: crane_sha256_amd64
+            crane_sha256_arm64:
+              componentInputParameter: crane_sha256_arm64
             crane_version:
               componentInputParameter: crane_version
             modelcar_base:
@@ -844,6 +899,10 @@ root:
         - package-modelcar
         inputs:
           parameters:
+            cosign_sha256_amd64:
+              componentInputParameter: cosign_sha256_amd64
+            cosign_sha256_arm64:
+              componentInputParameter: cosign_sha256_arm64
             cosign_version:
               componentInputParameter: cosign_version
             image_ref:
@@ -899,8 +958,24 @@ root:
         defaultValue: gitops/flywheel/manifest-consumer.yaml
         isOptional: true
         parameterType: STRING
+      cosign_sha256_amd64:
+        defaultValue: c3b4f5410e608af03a5eb0aaac84a4313d8da131248e08ff1759ac70c79d1644
+        isOptional: true
+        parameterType: STRING
+      cosign_sha256_arm64:
+        defaultValue: 426193b4c5da4d4d643e822f48fe0cc8a476ca1782a272704831f5a0cef716d7
+        isOptional: true
+        parameterType: STRING
       cosign_version:
         defaultValue: v2.6.5
+        isOptional: true
+        parameterType: STRING
+      crane_sha256_amd64:
+        defaultValue: 36c67a932f489b3f2724b64af90b599a8ef2aa7b004872597373c0ad694dc059
+        isOptional: true
+        parameterType: STRING
+      crane_sha256_arm64:
+        defaultValue: d2235f7779cd39c6e40f43701d2512c997409f629fb53e621ede0d57d3f995e2
         isOptional: true
         parameterType: STRING
       crane_version:
@@ -1028,6 +1103,13 @@ platforms:
               runtimeValue:
                 constant: quay-push
         exec-sign-modelcar:
+          configMapAsVolume:
+          - configMapName: rekor-public-key
+            configMapNameParameter:
+              runtimeValue:
+                constant: rekor-public-key
+            mountPath: /etc/rekor
+            optional: false
           secretAsVolume:
           - mountPath: /etc/quay
             optional: false

@@ -4115,3 +4115,24 @@ Beats 1, 2 and 6 only. The paired-video design is the next Beat 4 conversation.
 **Not live:** W-12, W-17 and S-1 are baked into the runtime and sim images — they ride the next
 Tekton build and the next host `docker/Dockerfile` build. The curator's `sensor-unavailable` gate
 lands with the gitops/flywheel roll in the next batch commit.
+
+---
+
+## D127 — Review batch, part 2: the KFP signing path gets the Tekton path's checks (W-7, W-8)
+
+**Date:** 2026-09-09 (unattended runner)
+**Decision:** `pipeline/act_flywheel_pipeline.py`:
+- W-7: the crane tarball and the cosign binary are SHA-256-checked against pinned release digests
+  (`crane_sha256_{amd64,arm64}` from go-containerregistry v0.20.3's `checksums.txt`,
+  `cosign_sha256_{amd64,arm64}` = the values `gitops/tekton/cosign-sign-task.yaml` already pins) before
+  either runs; a mismatch aborts the component. Both are pipeline parameters beside the versions.
+- W-8: `sign_modelcar` fails when `cosign sign` reports no Rekor entry (no more `-1`), then runs
+  `cosign verify --key cosign.pub --rekor-url <rekor> --output json` with `SIGSTORE_REKOR_PUBLIC_KEY`
+  pointed at the `rekor-public-key` ConfigMap (newly mounted at `/etc/rekor`) — pass/fail on exit
+  code, and the returned `rekor_index` is the verified bundle's `logIndex` on the index itself, the
+  same thing the Tekton task records. Without a Rekor URL the verify step is skipped and no bypass
+  flag exists anywhere in the file (the D3 grep still returns nothing).
+**Record:** compiled with kfp 2.17.0 and uploaded as DSP pipeline version
+`v-202609092137-hardening` (`fc9b8161-925d-4772-bb1c-60aae1291559`) of pipeline `99ec0aab-…`; no run
+started. The manifest-consumer selects the newest version on its next trigger, so the next
+promotion exercises these checks for real.
