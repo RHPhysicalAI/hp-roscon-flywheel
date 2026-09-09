@@ -14,7 +14,8 @@ waits for the artifacts in MinIO. `mode="cluster"` runs them in-pod (GB10/GB300 
 Every artifact contract (checkpoint tar, eval_report.json, image digest) is identical in both.
 
 `register_model` (D027) writes the durable promotion record to the RHOAI Model Registry: registered
-model `soarm-act`, one version per candidate, the model artifact = the signed modelcar digest, custom
+model `soarm-act`, one version per candidate (a rerun for the same candidate refreshes that version
+instead of failing), the model artifact = the signed modelcar digest, custom
 properties = dataset URI, incumbent, success rates, fixed/broken/net, p, Rekor index, PR URL. The PR
 URL is only known after the PR exists, so `record_pr_url` fills it in afterwards (D027 keeps the
 record before the PR; a version with an empty pr_url means "signed, PR not opened").
@@ -180,13 +181,24 @@ def register_model(model_name: str, image_ref: str, candidate: str, checkpoint_u
                 fixed=int(rep["fixed"]), broken=int(rep["broken"]), net=int(rep["net"]), sign_test_p=float(rep["sign_test_p"]),
                 gate_rule=rep["rule"], verdict=rep["verdict"], rekor_index=rekor_index, rekor_url=rekor_url,
                 pr_url="", dsp_run_id=run_id)
-    rm = mr.register_model(model_name, image_ref, model_format_name="lerobot-act", model_format_version="1",
-                           version=candidate, description="SO-ARM ACT pick-and-place policy (flywheel promotions)",
-                           version_description=f"{rep['incumbent']} {rep['incumbent_success_rate']:.2f} -> {candidate} "
-                                               f"{rep['candidate_success_rate']:.2f}, net {rep['net']:+d}, p={rep['sign_test_p']}",
-                           metadata=meta)
-    mv = mr.get_model_version(model_name, candidate)
-    print(json.dumps({"registered_model_id": rm.id, "model_version_id": mv.id, "custom_properties": mv.custom_properties}, indent=1))
+    version_description = (f"{rep['incumbent']} {rep['incumbent_success_rate']:.2f} -> {candidate} "
+                           f"{rep['candidate_success_rate']:.2f}, net {rep['net']:+d}, p={rep['sign_test_p']}")
+    mv = mr.get_model_version(model_name, candidate) if mr.get_registered_model(model_name) else None
+    if mv is None:
+        regm = mr.register_model(model_name, image_ref, model_format_name="lerobot-act", model_format_version="1",
+                                 version=candidate, description="SO-ARM ACT pick-and-place policy (flywheel promotions)",
+                                 version_description=version_description, metadata=meta)
+        mv = mr.get_model_version(model_name, candidate); action = "registered"
+    else:
+        # One version record per candidate (D027): a rerun refreshes the record instead of tripping the
+        # client's "Version already exists" StoreError. pr_url resets to "" until record_pr_url runs.
+        prev = (mv.custom_properties or {}).get("dsp_run_id", "")
+        mv.custom_properties = meta; mv.description = version_description; mv = mr.update(mv)
+        art = mr.get_model_artifact(model_name, candidate)
+        if art is not None and art.uri != image_ref:
+            art.uri = image_ref; art.model_format_name = "lerobot-act"; art.model_format_version = "1"; mr.update(art)
+        regm = mr.get_registered_model(model_name); action = f"updated (previous dsp_run_id={prev})"
+    print(json.dumps({"action": action, "registered_model_id": regm.id, "model_version_id": mv.id, "custom_properties": mv.custom_properties}, indent=1))
     return mv.id
 
 
@@ -207,12 +219,13 @@ def record_pr_url(model_name: str, candidate: str, pr_url: str, model_registry_u
 
 @dsl.component(base_image=PY_IMG, packages_to_install=["PyGithub==2.4.0"])
 def open_promotion_pr(image_ref: str, candidate: str, checkpoint_uri: str, report_json: str, github_repo: str,
-                      gitops_branch: str, fleet_file: str, consumer_file: str, fleet_ui_url: str) -> str:
+                      gitops_branch: str, fleet_file: str, consumer_file: str, fleet_ui_url: str, run_id: str) -> str:
     """ONE commit (thor-testing 5e3e87a: a partial flip is an outage) editing the RHEM Fleet - modelcar
     digest + MODEL_VERSION - and the trigger's lineage in manifest-consumer, then a PR whose body carries
     the eval report, the Fleet URL and the rollback (D025). Human merge is the last gate."""
     import json, re
-    from github import Github, InputGitTreeElement
+    from datetime import datetime, timezone
+    from github import Github, GithubException, InputGitTreeElement
     tok = open("/etc/github/token").read().strip()
     repo = Github(tok).get_repo(github_repo)
     base_ref = repo.get_git_ref(f"heads/{gitops_branch}"); base = repo.get_git_commit(base_ref.object.sha)
@@ -238,7 +251,13 @@ def open_promotion_pr(image_ref: str, candidate: str, checkpoint_uri: str, repor
     msg = (f"Promote {candidate}: Fleet act-inference <- {digest[:19]}..., MODEL_VERSION {old_mv} -> {candidate}; manifest-consumer lineage -> {candidate}\n\n"
            f"Eval gate: {rep['incumbent']} {rep['incumbent_success_rate']:.2f} -> {candidate} {rep['candidate_success_rate']:.2f}, fixed {rep['fixed']} broken {rep['broken']} net {rep['net']:+d} p={rep['sign_test_p']}")
     commit = repo.create_git_commit(msg, tree, [base])
-    head = f"promote/{candidate}"; repo.create_git_ref(f"refs/heads/{head}", commit.sha)
+    # Branch unique per run: a merged PR's head branch outlives it on GitHub, so a fixed name 422s on the rerun.
+    head = f"promote/{candidate}-" + (run_id[:8] if run_id else datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"))
+    try:
+        repo.create_git_ref(f"refs/heads/{head}", commit.sha)
+    except GithubException as e:
+        if e.status != 422: raise
+        repo.get_git_ref(f"heads/{head}").edit(commit.sha, force=True); print("ref existed, moved:", head)
     body = (f"## Promotion: `{candidate}` replaces `{rep['incumbent']}`\n\n"
             f"| | success | mean cubes |\n|---|---|---|\n| incumbent `{rep['incumbent']}` | {rep['incumbent_success_rate']:.0%} | {rep['incumbent_mean_cubes']:.2f} |\n"
             f"| candidate `{candidate}` | {rep['candidate_success_rate']:.0%} | {rep['candidate_mean_cubes']:.2f} |\n\n"
@@ -251,7 +270,9 @@ def open_promotion_pr(image_ref: str, candidate: str, checkpoint_uri: str, repor
             f"Fleet: {fleet_ui_url}\n\n"
             f"Rollback: `git revert <sha>` - revert the merge commit of this PR and merge the revert. The previous modelcar is still in device storage "
             f"(image volume `reclaimPolicy: Retain`), so rolling back does not re-pull.")
-    pr = repo.create_pull(title=f"Promote {candidate} ({rep['incumbent_success_rate']:.0%} -> {rep['candidate_success_rate']:.0%})", body=body, base=gitops_branch, head=head)
+    title = f"Promote {candidate} ({rep['incumbent_success_rate']:.0%} -> {rep['candidate_success_rate']:.0%})"
+    existing = list(repo.get_pulls(state="open", base=gitops_branch, head=f"{repo.owner.login}:{head}"))
+    pr = existing[0] if existing else repo.create_pull(title=title, body=body, base=gitops_branch, head=head)
     print(pr.html_url); return pr.html_url
 
 
@@ -290,7 +311,7 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
     reg.set_caching_options(False)
     pr = open_promotion_pr(image_ref=sg.outputs["image_ref"], candidate=candidate, checkpoint_uri=t.outputs["checkpoint"], report_json=g.output,
                            github_repo=github_repo, gitops_branch=gitops_branch, fleet_file=fleet_file, consumer_file=consumer_file,
-                           fleet_ui_url=fleet_ui_url).after(reg)
+                           fleet_ui_url=fleet_ui_url, run_id=run_id).after(reg)
     pr.set_caching_options(False)
     k8s.use_secret_as_volume(pr, secret_name="github-token", mount_path="/etc/github")
     rp = record_pr_url(model_name=MODEL_NAME, candidate=candidate, pr_url=pr.output, model_registry_url=model_registry_url)

@@ -60,6 +60,8 @@ components:
           parameterType: STRING
         report_json:
           parameterType: STRING
+        run_id:
+          parameterType: STRING
     outputDefinitions:
       parameters:
         Output:
@@ -254,12 +256,13 @@ deploymentSpec:
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef open_promotion_pr(image_ref: str, candidate: str, checkpoint_uri:\
           \ str, report_json: str, github_repo: str,\n                      gitops_branch:\
-          \ str, fleet_file: str, consumer_file: str, fleet_ui_url: str) -> str:\n\
-          \    \"\"\"ONE commit (thor-testing 5e3e87a: a partial flip is an outage)\
-          \ editing the RHEM Fleet - modelcar\n    digest + MODEL_VERSION - and the\
-          \ trigger's lineage in manifest-consumer, then a PR whose body carries\n\
-          \    the eval report, the Fleet URL and the rollback (D025). Human merge\
-          \ is the last gate.\"\"\"\n    import json, re\n    from github import Github,\
+          \ str, fleet_file: str, consumer_file: str, fleet_ui_url: str, run_id: str)\
+          \ -> str:\n    \"\"\"ONE commit (thor-testing 5e3e87a: a partial flip is\
+          \ an outage) editing the RHEM Fleet - modelcar\n    digest + MODEL_VERSION\
+          \ - and the trigger's lineage in manifest-consumer, then a PR whose body\
+          \ carries\n    the eval report, the Fleet URL and the rollback (D025). Human\
+          \ merge is the last gate.\"\"\"\n    import json, re\n    from datetime\
+          \ import datetime, timezone\n    from github import Github, GithubException,\
           \ InputGitTreeElement\n    tok = open(\"/etc/github/token\").read().strip()\n\
           \    repo = Github(tok).get_repo(github_repo)\n    base_ref = repo.get_git_ref(f\"\
           heads/{gitops_branch}\"); base = repo.get_git_commit(base_ref.object.sha)\n\
@@ -286,31 +289,39 @@ deploymentSpec:
           \ lineage -> {candidate}\\n\\n\"\n           f\"Eval gate: {rep['incumbent']}\
           \ {rep['incumbent_success_rate']:.2f} -> {candidate} {rep['candidate_success_rate']:.2f},\
           \ fixed {rep['fixed']} broken {rep['broken']} net {rep['net']:+d} p={rep['sign_test_p']}\"\
-          )\n    commit = repo.create_git_commit(msg, tree, [base])\n    head = f\"\
-          promote/{candidate}\"; repo.create_git_ref(f\"refs/heads/{head}\", commit.sha)\n\
-          \    body = (f\"## Promotion: `{candidate}` replaces `{rep['incumbent']}`\\\
-          n\\n\"\n            f\"| | success | mean cubes |\\n|---|---|---|\\n| incumbent\
-          \ `{rep['incumbent']}` | {rep['incumbent_success_rate']:.0%} | {rep['incumbent_mean_cubes']:.2f}\
-          \ |\\n\"\n            f\"| candidate `{candidate}` | {rep['candidate_success_rate']:.0%}\
-          \ | {rep['candidate_mean_cubes']:.2f} |\\n\\n\"\n            f\"Paired on\
-          \ {rep['n_paired']} identical seeded scenes: **{rep['fixed']} fixed / {rep['broken']}\
-          \ broken, net {rep['net']:+d}, sign-test p = {rep['sign_test_p']}** - gate\
-          \ rule: {rep['rule']} -> **{rep['verdict']}**.\\n\\n\"\n            f\"\
-          Signed modelcar: `{image_ref}`\\n\\n\"\n            f\"Merging edits Fleet\
-          \ `act-inference` in one commit (`{fleet_file}`: modelcar digest + `MODEL_VERSION`\
-          \ `{old_mv}` -> `{candidate}`) \"\n            f\"and points the trigger\
-          \ at the new lineage (`{consumer_file}`: COLLECTOR/INCUMBENT/INCUMBENT_CHECKPOINT).\
-          \ \"\n            f\"ResourceSync renders the Fleet; RHEM rolls it out batch\
-          \ by batch; each device pulls the modelcar under its policy.json \"\n  \
-          \          f\"(cosign key + Rekor SET) and restarts the container, which\
-          \ publishes the new `model_version`.\\n\\n\"\n            f\"Fleet: {fleet_ui_url}\\\
-          n\\n\"\n            f\"Rollback: `git revert <sha>` - revert the merge commit\
-          \ of this PR and merge the revert. The previous modelcar is still in device\
-          \ storage \"\n            f\"(image volume `reclaimPolicy: Retain`), so\
-          \ rolling back does not re-pull.\")\n    pr = repo.create_pull(title=f\"\
-          Promote {candidate} ({rep['incumbent_success_rate']:.0%} -> {rep['candidate_success_rate']:.0%})\"\
-          , body=body, base=gitops_branch, head=head)\n    print(pr.html_url); return\
-          \ pr.html_url\n\n"
+          )\n    commit = repo.create_git_commit(msg, tree, [base])\n    # Branch\
+          \ unique per run: a merged PR's head branch outlives it on GitHub, so a\
+          \ fixed name 422s on the rerun.\n    head = f\"promote/{candidate}-\" +\
+          \ (run_id[:8] if run_id else datetime.now(timezone.utc).strftime(\"%Y%m%d%H%M%S\"\
+          ))\n    try:\n        repo.create_git_ref(f\"refs/heads/{head}\", commit.sha)\n\
+          \    except GithubException as e:\n        if e.status != 422: raise\n \
+          \       repo.get_git_ref(f\"heads/{head}\").edit(commit.sha, force=True);\
+          \ print(\"ref existed, moved:\", head)\n    body = (f\"## Promotion: `{candidate}`\
+          \ replaces `{rep['incumbent']}`\\n\\n\"\n            f\"| | success | mean\
+          \ cubes |\\n|---|---|---|\\n| incumbent `{rep['incumbent']}` | {rep['incumbent_success_rate']:.0%}\
+          \ | {rep['incumbent_mean_cubes']:.2f} |\\n\"\n            f\"| candidate\
+          \ `{candidate}` | {rep['candidate_success_rate']:.0%} | {rep['candidate_mean_cubes']:.2f}\
+          \ |\\n\\n\"\n            f\"Paired on {rep['n_paired']} identical seeded\
+          \ scenes: **{rep['fixed']} fixed / {rep['broken']} broken, net {rep['net']:+d},\
+          \ sign-test p = {rep['sign_test_p']}** - gate rule: {rep['rule']} -> **{rep['verdict']}**.\\\
+          n\\n\"\n            f\"Signed modelcar: `{image_ref}`\\n\\n\"\n        \
+          \    f\"Merging edits Fleet `act-inference` in one commit (`{fleet_file}`:\
+          \ modelcar digest + `MODEL_VERSION` `{old_mv}` -> `{candidate}`) \"\n  \
+          \          f\"and points the trigger at the new lineage (`{consumer_file}`:\
+          \ COLLECTOR/INCUMBENT/INCUMBENT_CHECKPOINT). \"\n            f\"ResourceSync\
+          \ renders the Fleet; RHEM rolls it out batch by batch; each device pulls\
+          \ the modelcar under its policy.json \"\n            f\"(cosign key + Rekor\
+          \ SET) and restarts the container, which publishes the new `model_version`.\\\
+          n\\n\"\n            f\"Fleet: {fleet_ui_url}\\n\\n\"\n            f\"Rollback:\
+          \ `git revert <sha>` - revert the merge commit of this PR and merge the\
+          \ revert. The previous modelcar is still in device storage \"\n        \
+          \    f\"(image volume `reclaimPolicy: Retain`), so rolling back does not\
+          \ re-pull.\")\n    title = f\"Promote {candidate} ({rep['incumbent_success_rate']:.0%}\
+          \ -> {rep['candidate_success_rate']:.0%})\"\n    existing = list(repo.get_pulls(state=\"\
+          open\", base=gitops_branch, head=f\"{repo.owner.login}:{head}\"))\n    pr\
+          \ = existing[0] if existing else repo.create_pull(title=title, body=body,\
+          \ base=gitops_branch, head=head)\n    print(pr.html_url); return pr.html_url\n\
+          \n"
         image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
     exec-package-modelcar:
       container:
@@ -470,15 +481,27 @@ deploymentSpec:
           \       fixed=int(rep[\"fixed\"]), broken=int(rep[\"broken\"]), net=int(rep[\"\
           net\"]), sign_test_p=float(rep[\"sign_test_p\"]),\n                gate_rule=rep[\"\
           rule\"], verdict=rep[\"verdict\"], rekor_index=rekor_index, rekor_url=rekor_url,\n\
-          \                pr_url=\"\", dsp_run_id=run_id)\n    rm = mr.register_model(model_name,\
-          \ image_ref, model_format_name=\"lerobot-act\", model_format_version=\"\
-          1\",\n                           version=candidate, description=\"SO-ARM\
-          \ ACT pick-and-place policy (flywheel promotions)\",\n                 \
-          \          version_description=f\"{rep['incumbent']} {rep['incumbent_success_rate']:.2f}\
-          \ -> {candidate} \"\n                                               f\"\
-          {rep['candidate_success_rate']:.2f}, net {rep['net']:+d}, p={rep['sign_test_p']}\"\
-          ,\n                           metadata=meta)\n    mv = mr.get_model_version(model_name,\
-          \ candidate)\n    print(json.dumps({\"registered_model_id\": rm.id, \"model_version_id\"\
+          \                pr_url=\"\", dsp_run_id=run_id)\n    version_description\
+          \ = (f\"{rep['incumbent']} {rep['incumbent_success_rate']:.2f} -> {candidate}\
+          \ \"\n                           f\"{rep['candidate_success_rate']:.2f},\
+          \ net {rep['net']:+d}, p={rep['sign_test_p']}\")\n    mv = mr.get_model_version(model_name,\
+          \ candidate) if mr.get_registered_model(model_name) else None\n    if mv\
+          \ is None:\n        regm = mr.register_model(model_name, image_ref, model_format_name=\"\
+          lerobot-act\", model_format_version=\"1\",\n                           \
+          \      version=candidate, description=\"SO-ARM ACT pick-and-place policy\
+          \ (flywheel promotions)\",\n                                 version_description=version_description,\
+          \ metadata=meta)\n        mv = mr.get_model_version(model_name, candidate);\
+          \ action = \"registered\"\n    else:\n        # One version record per candidate\
+          \ (D027): a rerun refreshes the record instead of tripping the\n       \
+          \ # client's \"Version already exists\" StoreError. pr_url resets to \"\"\
+          \ until record_pr_url runs.\n        prev = (mv.custom_properties or {}).get(\"\
+          dsp_run_id\", \"\")\n        mv.custom_properties = meta; mv.description\
+          \ = version_description; mv = mr.update(mv)\n        art = mr.get_model_artifact(model_name,\
+          \ candidate)\n        if art is not None and art.uri != image_ref:\n   \
+          \         art.uri = image_ref; art.model_format_name = \"lerobot-act\";\
+          \ art.model_format_version = \"1\"; mr.update(art)\n        regm = mr.get_registered_model(model_name);\
+          \ action = f\"updated (previous dsp_run_id={prev})\"\n    print(json.dumps({\"\
+          action\": action, \"registered_model_id\": regm.id, \"model_version_id\"\
           : mv.id, \"custom_properties\": mv.custom_properties}, indent=1))\n    return\
           \ mv.id\n\n"
         image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
@@ -658,6 +681,9 @@ root:
               taskOutputParameter:
                 outputParameterKey: Output
                 producerTask: eval-gate
+            run_id:
+              runtimeValue:
+                constant: '{{$.pipeline_job_uuid}}'
         taskInfo:
           name: open-promotion-pr
       package-modelcar:
