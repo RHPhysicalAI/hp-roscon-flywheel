@@ -56,6 +56,7 @@ and keys only — the MinIO values live in `~/.minio-env` on the desktop, the re
 | `cosign-signing-key` | `flywheel` | `cosign.key`, `cosign.pub`, `cosign.password` | KFP `sign_modelcar` (`COSIGN_PASSWORD` ← `cosign.password`) | same key material as `cosign-signing` |
 | `github-token` | `flywheel` | `token` | KFP `open_promotion_pr` | GitHub fine-grained token (contents + pull requests) |
 | `cosign-signing` | `flywheel` | `cosign.key`, `cosign.pub`, `cosign.password` | `tekton` app — `cosign-sign` Task (workspace `cosign-key`) | `oc create secret generic cosign-signing -n flywheel --from-file=cosign.key=$HOME/cosign/cosign.key --from-file=cosign.pub=$HOME/cosign/cosign.pub --from-literal=cosign.password="$COSIGN_PASSWORD"` on the desktop (same key as the KFP `cosign-signing-key` Secret and the Fleet's `cosign.pub`) |
+| `model-registry-db` | `rhoai-model-registries` | `database-password` | `model-registry.yaml` — MariaDB `MYSQL_PASSWORD` and the `ModelRegistry` CR's `mysql.passwordSecret` (E1) | `tools/hub/create-model-registry-db-secret.sh` (generates the value locally; never echoed) |
 | `quay-push` | `flywheel` | `.dockerconfigjson` | KFP `package_modelcar`/`sign_modelcar`; `tekton` app projects it as `config.json` (PipelineRun workspace `items:`) | quay.io robot dockerconfigjson |
 
 The MinIO pair, from the desktop, without echoing values:

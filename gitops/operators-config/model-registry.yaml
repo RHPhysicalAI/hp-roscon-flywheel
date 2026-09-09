@@ -1,0 +1,137 @@
+# This project was developed with assistance from AI tools.
+# Phase 4.5 E1 (D027): RHOAI Model Registry - the durable promotion record. One MariaDB + one
+# ModelRegistry CR in the DSC's registriesNamespace; the KFP `register_model` step writes each
+# promoted candidate (digest, dataset, eval numbers, Rekor index, PR URL) here.
+# Sync wave 2: after the DSC (wave 1) has turned the modelregistry component on, which creates the
+# namespace and the CRD. The DB password Secret `model-registry-db` is hand-created
+# (tools/hub/create-model-registry-db-secret.sh) - see argocd/README.md.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-registry-db
+  namespace: rhoai-model-registries
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-registry-db
+  namespace: rhoai-model-registries
+  labels:
+    app: model-registry-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one RWO volume
+  selector:
+    matchLabels:
+      app: model-registry-db
+  template:
+    metadata:
+      labels:
+        app: model-registry-db
+    spec:
+      containers:
+        - name: mariadb
+          # rhel9/mariadb-1011 9.8 stream, pinned (D022: no :latest); multi-arch manifest list
+          image: registry.redhat.io/rhel9/mariadb-1011:9.8-1788409987
+          ports:
+            - containerPort: 3306
+              name: mysql
+          env:
+            - name: MYSQL_USER
+              value: mlmduser
+            - name: MYSQL_DATABASE
+              value: model_registry
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: model-registry-db
+                  key: database-password
+          readinessProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: model-registry-db
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-registry-db
+  namespace: rhoai-model-registries
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  selector:
+    app: model-registry-db
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: 3306
+---
+# The registry. The operator adds an OpenShift OAuth proxy sidecar (8443, serving cert) and a Route
+# for it (`oauthProxy.serviceRoute: enabled`); the plain REST port stays cluster-internal. Every call
+# - the pipeline's included - carries a Bearer token and must pass `get services/<name>` in this ns.
+apiVersion: modelregistry.opendatahub.io/v1beta1
+kind: ModelRegistry
+metadata:
+  name: flywheel
+  namespace: rhoai-model-registries
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  grpc: {}
+  rest: {}
+  oauthProxy:
+    serviceRoute: enabled
+  mysql:
+    host: model-registry-db.rhoai-model-registries.svc
+    port: 3306
+    database: model_registry
+    username: mlmduser
+    passwordSecret:
+      name: model-registry-db
+      key: database-password
+---
+# The DSP runner SA (KFP component pods in `flywheel`) may call the registry: the operator creates
+# Role `registry-user-flywheel` (get services/flywheel) for the OAuth proxy's SAR; this binds it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: registry-user-flywheel-pipeline
+  namespace: rhoai-model-registries
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: registry-user-flywheel
+subjects:
+  - kind: ServiceAccount
+    name: pipeline-runner-dspa
+    namespace: flywheel
