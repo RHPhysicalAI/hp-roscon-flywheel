@@ -4164,6 +4164,17 @@ promotion exercises these checks for real.
   task-success check.
 **Consequences:** one push, one broker restart (new SA), curator and sync-agent re-pulled on the
 pinned digest; verified below in the runner's report.
+**Verified live:** Argo `flywheel` Synced/Healthy on `98933ab` in ~75 s; curator, sync-agent, edge-kafka
+and manifest-consumer rolled, all Ready with 0 restarts; SCC annotations curator/sync-agent
+`hostmount-anyuid`, edge-kafka `privileged` (SA `edge-kafka`), manifest-consumer `restricted-v2`; the
+`flywheel-privileged-scc` ClusterRoleBinding pruned; Kafka's GroupCoordinator stabilised the
+`manifest-consumer` group on the restarted consumer (generation 17). One more grant turned up that git
+never knew about: a hand-created RoleBinding `system:openshift:scc:privileged` (8 days old, the
+`oc adm policy add-scc-to-user` form, no Argo tracking) still bound the `default` SA to privileged —
+deleted live, since every default-SA pod was already admitted under `hostmount-anyuid`; `oc auth can-i
+use scc/privileged --as=system:serviceaccount:flywheel:default` is now **no**, `edge-kafka` **yes**. Its
+sibling `system:openshift:scc:hostmount-anyuid` (default + dashboard) duplicates the git-tracked bindings
+and was left in place.
 
 ---
 
