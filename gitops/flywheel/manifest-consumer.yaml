@@ -74,9 +74,9 @@ spec:
             - {name: TRIGGER_THRESHOLD, value: "160"}
             - {name: TRIGGER_COOLDOWN, value: "3600"}
             # Round B (after PR #1): v2 collects; the next candidate is fine-tuned FROM v2 and gated against it.
-            - {name: INCUMBENT, value: "act-v2-ft160-rhem"}
-            - {name: COLLECTOR, value: "act-v2-ft160-rhem"}
-            - {name: INCUMBENT_CHECKPOINT, value: "s3://episodes-data/checkpoints/act-v2-ft160-rhem/pretrained_model.tar.gz"}
+            - {name: INCUMBENT, value: "act-v2-ft160"}
+            - {name: COLLECTOR, value: "act-v2-ft160"}
+            - {name: INCUMBENT_CHECKPOINT, value: "s3://episodes-data/checkpoints/act-v2-ft160/pretrained_model.tar.gz"}
             - {name: DSP_URL, value: "https://ds-pipeline-dspa.flywheel.svc:8443"}
             - {name: TRAINING_PIPELINE_ID, value: "99ec0aab-51fb-412e-bd2f-47bc6a0d3e3d"}
           volumeMounts:
