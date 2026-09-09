@@ -2526,3 +2526,104 @@ under its enforcing `policy.json` ("Storing signatures"). Full record:
 `platform` as a list for a multi-arch modelcar (F); the three `-rhem` staging artefacts on the host
 (`train/act-v2-ft160-rhem` symlink, `eval/eval-act-v2-ft160-rhem.json`, MinIO
 `checkpoints/act-v2-ft160-rhem/`) go away with the first real round-B candidate.
+
+---
+
+## D069 — RHEM rollout timing for a promotion is ~2.5 min merge-to-Healthy; the ResourceSync poll is the only wait
+
+**Date:** 2026-09-09
+**Context:** the demo (Beat 5/6) needs "how long after the merge does the device switch". First
+measured on PR #2 (merged 12:04:27Z, merge commit `4ce6a8a5`).
+**Record:** ResourceSync `rhem-fleets` detected the merge commit at 12:06:01Z (+1:34 — the RS had
+polled 26 s *before* the merge, at 12:04:01Z, so this is one full RS poll interval of ~2 min, the
+worst case). Everything downstream is seconds: Fleet `spec.template` updated, TemplateVersion v5
+created and `FleetRolloutStarted` in the same second (12:06:01Z); batch dispatched + device spec
+updated 12:06:10Z (+9 s); agent `New spec version received: 4 -> 5` 12:06:10.129Z; container
+died/removed, image volume removed + re-created, container created/started 12:06:20.4–20.98Z
+(+10 s); `DeviceContentUpToDate` 12:06:20.99Z; `Published model_version: act-v2-ft160-rhem`
+12:06:37.8Z (+17 s, ROS launch + policy server); `FleetRolloutCompleted` 12:06:40Z;
+`DeviceApplicationHealthy` 12:07:09Z (+49 s from start; the 240 s `HealthStartPeriod` is a ceiling,
+not the actual). **Merge -> device serving the new version: 2 min 10 s; merge -> Healthy: 2 min 42 s.**
+**Consequence for the runbook:** narrate "about two minutes"; the visible waits are the RS poll and
+the health start period. If a tighter demo is wanted, the RS poll interval is the lever (flightctl
+`ResourceSync` reconciles on a fixed ~2 min cadence in 1.3.0; not changed here).
+
+---
+
+## D070 — Fleet rollout success is counted on `UpToDate`, not on application health; watch the device's `applicationsSummary`, not the Fleet condition, for "serving"
+
+**Date:** 2026-09-09
+**Context:** `FleetRolloutBatchCompleted … 100% success` and `FleetRolloutCompleted` fired at
+12:06:40Z, 29 s *before* `DeviceApplicationHealthy` (12:07:09Z), while the device still reported
+`applicationsSummary: Degraded` (`Not started: act-inference`, then `Preparing 0/1`). The Fleet's
+`successThreshold: 100%` is evaluated on the device's `updated.status` reaching `UpToDate` (spec
+applied), not on the application's health. `fleet-controller/batchNumber` stayed at `3` across the
+whole v5 rollout (it is the *sequence position*, not a monotonic counter) and
+`deployingTemplateVersion` appeared alongside `templateVersion: v5`.
+**Decision:** the demo and runbook treat `flightctl get device … applicationsSummary: Healthy` (or the
+`DeviceApplicationHealthy` event) as the "serving" signal, and the Fleet's `RolloutInProgress:
+Inactive` only as "spec delivered". For a multi-device batch sequence this means a batch could
+advance to the next site with an unhealthy app in the previous one; on the Fury port, consider
+whether `HealthStartPeriod` should be part of `defaultUpdateTimeout` reasoning, and revisit if
+flightctl gains an application-health gate on `successThreshold`.
+
+---
+
+## D071 — Retain works as documented: the promotion rollout pulled nothing, and both digests stay in device storage for the rollback
+
+**Date:** 2026-09-09
+**Record:** during the v4 -> v5 rollout the device emitted no `image pull` event for the modelcar and
+the agent journal has no `Copying blob`/`pulling` lines. The only pull event is the runtime image's
+local resolve (`soarm-flywheel@sha256:2ad1fb1c…`, 12:06:20.868Z, 17 ms before `container create`) —
+podman emits `image pull` on a local hit too, so "no pull event" is the wrong test; the test is *no
+modelcar pull event and no `Copying blob`*. The agent removed and re-created the quadlet `.volume`
+(`volume remove` / `volume create systemd-act-inference-128875-models`, 200 ms apart) rather than
+editing it in place; the container keeps its name (`act-inference-128875-act-inference`) and gets a
+new id — the watch list's "new container name" expectation was wrong. `podman images --digests`
+after the rollout lists both `bdb513ca…` and `1375d0bc…` (230 MB each).
+**Consequence:** the rollback rehearsal is recorded in commit `e165837` (D2 observation, rollback PR
+opened) and staged as **PR #3**, https://github.com/RHPhysicalAI/hp-roscon-flywheel/pull/3 (commit
+`ff39942`, reverting merge commit `4ce6a8a5`), which states the Retain evidence verbatim and expects
+the same no-pull rollout for `bdb513ca…`. Device disk: each retained modelcar is 230 MB; a prune
+policy for retired digests is a Fury-window question, not a demo blocker.
+
+---
+
+## D072 — Argo `flywheel` auto-syncs the promotion within its 3-minute poll; no refresh needed; the consumer restart is the lineage cut
+
+**Date:** 2026-09-09
+**Record:** Argo `flywheel` (automated, `prune: false`, `selfHeal: true`) started its sync on
+`4ce6a8a5` at 12:07:38Z — 3 min 11 s after the merge, one default repo-poll interval after its
+previous reconcile (12:03:13Z). No `argocd.argoproj.io/refresh` annotation was needed. The
+`manifest-consumer` Deployment rolled a new ReplicaSet (`77fc96cbfb`, pod started 12:07:40Z, 0
+restarts) with `INCUMBENT=COLLECTOR=act-v2-ft160-rhem` and
+`INCUMBENT_CHECKPOINT=s3://episodes-data/checkpoints/act-v2-ft160-rhem/…`, logging
+`[consumer] threshold=160 cooldown=3600s pipeline=set`. The device switched 1 min 18 s before the
+consumer did; any curated episode in that window would be stamped `-rhem` and land on the topic
+while the old consumer still filtered for `act-v2-ft160` (the loop was stopped here, so none did).
+**Decision:** acceptable for the demo — the consumer's `pending` count is in-memory and restarts at
+0 on every pod restart anyway (D022 shape). Note for the runbook: the consumer prints nothing per
+manifest; "count advances" is evidenced by the consumer group offset (lag 0 on all three partitions
+after the first `-rhem` manifest at p0@481, 12:11:53Z), not by a log line. A per-manifest
+`[consumer] pending=<n> collector=<c>` log line would make Beat 6 narratable — one-line change to
+`consumer.py`, do it with the `python-312:latest` pin in F.
+
+---
+
+## D073 — Loop lineage re-stamp after promotion: ~1 min to the first rejected manifest, ~2.5 min to the first curated one; the dashboard's `model_version` field is not the lineage
+
+**Date:** 2026-09-09
+**Record:** loop coordinator started 12:09:17Z with `MODEL_VERSION=act-v2-ft160-rhem` (the script's
+default is still `act-v2-ft160`; the value must be passed explicitly after a promotion — it must equal
+the device's `MODEL_VERSION`, D057). `Observed model_version: act-v2-ft160-rhem` on the first
+episode; first `episodes-rejected/act-v2-ft160-rhem/` object 12:10:04Z (a `rollout-error(truncated)`
+reject from the first cold-start episode), first `episodes-curated/act-v2-ft160-rhem/` object
+12:11:53Z (`verdict: pass`, 3/3 cubes, `dataset_path: bags/1788955880_371180261`). In the 12-minute
+window: curated 0 -> 1, rejected 0 -> 13, `act-v2-ft160` prefixes unchanged (214 / 104). The
+dashboard `/api/status` `model_version` field reads `soarm-act-v2` (a static label from the Phase 3
+UI), `counts.curated` reads 0, and `trigger.triggered: true` is stale from the 160-trigger of PR #1 —
+none of these reflect the new lineage; the per-episode `log[]` entries carry `model_version: null`.
+**Decision:** `run-coordinator.sh` default `MODEL_VERSION` should follow the Fleet (read
+`gitops/rhem/fleet-act-inference.yaml` at start, or make the variable required like `IMAGE`); the
+dashboard `model_version`/`counts` wiring is a Phase 4 G runbook item (the demo screen for lineage is
+MinIO prefixes + `flightctl console`, not the dashboard) — inbox, not a blocker.

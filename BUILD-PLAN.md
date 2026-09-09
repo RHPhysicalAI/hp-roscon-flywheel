@@ -404,6 +404,10 @@ D. **Promotion path rewrite** (D025)
    - **D1 done 2026-09-09:** `open_promotion_pr` rewritten (D066+), pipeline `v-202609090650-rhem`,
      PR #2 open with the two-file diff, modelcar signed (Rekor index 4) and pulled on the device
      under `policy.json`; merge is the operator's (Gate 3).
+   - **D2 done 2026-09-09:** merge of PR #2 → ResourceSync (+1:34) → device rv5 →
+     `Published model_version: act-v2-ft160-rhem` (+2:10) → Healthy (+2:42) → Argo auto-synced the
+     consumer (+3:11) → first re-stamped curated episode (+7:26); no modelcar re-pull (Retain);
+     rollback PR #3 open for the operator (D069–D073).
    - Retire `gitops/act-serving/`, `argocd/act-serving-app.yaml`, `src/swap-agent/` after the first
      RHEM promotion. Demo screens: RHEM UI rollout + device Applications tab; `flightctl get
      fleet/device`; `flightctl console` tailing `podman logs` for `Published model_version:`.
@@ -455,10 +459,10 @@ G. **Fury port + runbook** (on site, Sept 20–25)
 - [x] `flightctl get devices` shows the desktop VM Online, labels correct, `applicationsSummary: Healthy` (2026-09-08 22:52Z, device s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg)
 - [x] Sim loop running against the VM: curator stamps episodes with the Fleet's `MODEL_VERSION`,
   `episodes-curated/<mv>/` fills, `manifest-consumer` count advances (2026-09-09: curator stamps `act-v2-ft160`, `episodes-curated/act-v2-ft160/` 194→214; manifest-consumer count to be confirmed in D)
-- [ ] A DSP run on a pre-trained candidate (D023 path) opens a PR editing the Fleet (+ CatalogItem
+- [x] A DSP run on a pre-trained candidate (D023 path) opens a PR editing the Fleet (+ CatalogItem
   if E2); Model Registry shows the version with digest + metrics; merge → ResourceSync Synced →
   RHEM rollout completes → VM container restarts with the new `Published model_version:` → episodes
-  re-stamp
+  re-stamp (2026-09-09: PR #2, Rekor index 4; Model Registry part → E1)
 - [ ] Negative test: an unsigned tag fails with a signature error; a tag signed *without*
   `--tlog-upload` also fails on the VM (Rekor SET enforced)
 - [ ] Rollback: `git revert`, merge → previous version serving, no re-pull (Retain)
