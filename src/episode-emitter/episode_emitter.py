@@ -30,7 +30,6 @@ RAW_DIR = Path(os.environ.get("RAW_DIR", "/data/episodes/raw"))
 # When running on the host (not in SNO), POST episodes to the curator receiver
 CURATOR_URL = os.environ.get("CURATOR_URL", "")  # e.g. http://10.0.0.49:30802/episode
 MODEL_VERSION = os.environ.get("MODEL_VERSION", "soarm-act-v1")
-FAILURE_RATE = float(os.environ.get("FAILURE_RATE", "0.1"))  # fraction of episodes to inject as failures
 SCENE = os.environ.get("SCENE", "place_cubes_on_tray")
 # Episode boundary: if no new joint commands for this many seconds, episode ends
 EPISODE_TIMEOUT_S = float(os.environ.get("EPISODE_TIMEOUT_S", "5.0"))
@@ -124,7 +123,7 @@ class EpisodeEmitter(Node):
 
         self.get_logger().info(
             f"Episode emitter started — model={MODEL_VERSION} "
-            f"scene={SCENE} failure_rate={FAILURE_RATE} "
+            f"scene={SCENE} "
             f"(signal-driven via /flywheel/episode_control)"
         )
 
@@ -268,9 +267,11 @@ class EpisodeEmitter(Node):
         cubes_placed = max(self._peak_cubes, snapshot_cubes)
         task_success = (cubes_placed == 3)
 
-        # Failure injection for demo
-        import random
-        has_failure = random.random() < FAILURE_RATE
+        # has_failure is always False: this project scores on ground truth only
+        # (D115) — curator.yaml's Gate 0 and the observability dashboard's
+        # "curator-rejected" panel both still read this field, so it stays in
+        # the schema rather than being removed, just never set true.
+        has_failure = False
 
         rollout_status = "ok" if self._steps >= MIN_STEPS else "truncated"
 
@@ -285,8 +286,8 @@ class EpisodeEmitter(Node):
                 "steps": self._steps,
                 "duration_s": round(duration, 2),
             },
-            "task_success": task_success and not has_failure,
-            "cubes_placed": cubes_placed if not has_failure else 0,
+            "task_success": task_success,
+            "cubes_placed": cubes_placed,
             "avg_smoothness": round(avg_smoothness, 6),
             # Repo-relative pointer to the recorded LeRobot-bound MCAP bag for
             # this rollout (D018). Populated by the coordinator via

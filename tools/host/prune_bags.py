@@ -69,7 +69,7 @@ for d in sorted(glob.glob(os.path.join(BAGS_ROOT, "*/"))):
 for k, v in cls.items():
     print(f"{k:<9} {len(v):>4} bags  {sum(size(d) for d in v)/1e9:8.1f} GB")
 if "--yes" in sys.argv:
-    if not mf: print("refusing: no manifest"); sys.exit(1)
+    if not manifests_seen: print("refusing: no dataset-manifests scanned"); sys.exit(1)
     n = 0
     for d in cls["ported"]:
         print(f"deleting {os.path.basename(d.rstrip('/'))}  {size(d)/1e9:.2f} GB")

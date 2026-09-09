@@ -3626,3 +3626,59 @@ revisit; that would be an RHOAI product change, out of this repo's scope to hack
 port-forward … svc/ds-pipeline-dspa 8888:8888` (Beat 3, Full Live Part 3) is unaffected — it was
 always run from the same cluster-admin kubeconfig this finding shows is the only principal who can
 reach it anyway.
+
+---
+
+## D115 — First full-project multi-agent review (6 personas); FAILURE_RATE ground-truth override removed; host_runner.py `sys` import fixed
+
+**Date:** 2026-09-09
+**Context:** the orchestrator ran a full-project (not diff) review against `PROJECT-BRIEF.md`'s
+stated intent, using the `review` skill's multi-agent pipeline with six personas tailored to this
+project's actual audience (security, demo reliability, ROS/robotics domain credibility, Red Hat
+platform/GitOps correctness, code quality, stakeholder & audience alignment). 42 findings after
+de-duplication (14 Critical). Full reports: `.changes/reviews/code-review-*.md`; consolidated
+triage table: `.changes/reviews/code-review-consolidated.md`. Note for future reviews on this repo:
+the `consolidate-reviews` skill's automated script silently dropped two of six reports (a bullet
+format mismatch — `` **`file:line`** `` vs. the required `**[file:line]**`) and part of a third;
+the consolidated table was rebuilt by hand. Reviewer prompts should be told the exact bracket
+format is load-bearing, not stylistic.
+**Record — two findings independently verified by the orchestrator, not just reviewer-asserted:**
+- The domain reviewer found `episode_emitter.py`'s `FAILURE_RATE` (default `0.1`, pinned `"0.1"` in
+  `so-arm-sim.yaml`) rolling a coin flip that overwrites real ground-truth `task_success`/
+  `cubes_placed` before the curator sees it — contradicting the runbook's Beat 2 "scored on ground
+  truth, not a heuristic" claim. The orchestrator checked the live host `so-arm-sim` container
+  directly (`docker inspect ... | grep FAILURE_RATE`): `FAILURE_RATE=0` today, so production data
+  was not actively being corrupted — but the code default and the tracked in-cluster manifest
+  (itself vestigial, D097: 0 replicas) were both live landmines.
+- The security reviewer's RCE claim (`host_runner.handle()` f-strings a Kafka-sourced `candidate`
+  into a `docker run ... bash -lc` string, over a PLAINTEXT NodePort with no SASL/ACL) was confirmed
+  real by reading the code directly — and `host_runner.py`'s own docstring documents "Kafka,
+  PLAINTEXT NodePort 30903" as the *intended* contract (the desktop's GPU is outside the cluster,
+  D013), so this is an authentication gap on a load-bearing wire, not dead/incidental exposure.
+  Left for a dedicated fork (tracked separately, not this decision) because a fix has to preserve
+  that legitimate contract, not just remove the port.
+**Decision (this entry covers only what the orchestrator fixed directly; the rest of the 42
+findings are tracked in the consolidated review, dispositioned per D116+):**
+1. `episode_emitter.py`: deleted the `FAILURE_RATE` env var, the coin-flip block, and the
+   conditional overwrite of `task_success`/`cubes_placed`. `has_failure` stays in the emitted
+   schema, hard-set `False` — `curator.yaml`'s Gate 0 comment ("injected failures... for demo") and
+   the observability dashboard's `episode.has_failure=true` panel both still read the field; leaving
+   it in place at a permanent `False` is a smaller, safer diff than removing it from the schema and
+   touching every consumer. Not live yet — this file is baked into `docker/Dockerfile` (the
+   *sim* image, `quay.io/jary/soarm-flywheel:sim-only` on the host, distinct from the
+   Tekton-built RHEM policy image `docker/Dockerfile.gpu-inference`) — needs a host-side
+   `docker build` + `so-arm-sim` restart, tracked as a follow-up alongside C10's camera-health fix
+   (same image).
+2. `host_runner.py`: added the missing `import sys`. Live-verified the host's resident copy
+   (`~/host_runner.py`, not containerized) actually predates this bug entirely — no guard clause,
+   just a hardcoded `minioadmin`/`minioadmin` fallback if the env vars are unset. Synced the repo's
+   current version (the `sys.exit` guard plus the `import sys` fix) to the host file, matching the
+   runbook's already-documented practice of sourcing `~/.minio-env` before starting the runner.
+   File updated; the already-resident process was not restarted (no need to interrupt it — the
+   guard only matters on next start).
+**Consequences:** three forks dispatched for the remaining Critical findings (security hardening
+C1/C2; GitOps hardening C6-C8; reliability/domain code fixes C10/C12), each to record its own
+decision entry on completion. C9 (MinIO creds in git history) and C13 (stakeholder sign-off)
+explicitly waived by the operator — not tracked as open work. C14 (contingency kit) deferred to
+its own already-scheduled session. Warnings and Suggestions dispositioned per the consolidated
+table's own "Suggested Disposition" column, accepted as-is by the operator.
