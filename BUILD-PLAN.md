@@ -23,7 +23,7 @@ Phase 3 closes it with governance; Phase 3+ makes the improvement autonomous.
 | 3 — Training + close the loop | **Complete** (2026-09-08) — eval harness (D020), self-improvement proof (D021: 73% → 86%, p=0.019), governed pipeline through RHOAI/RHTAS with PR #1 merged and swapped, loop closed on v2; static chart shipped | D015, D020–D022 |
 | 3+ — Bootstrap loop | Not started | `BOOTSTRAP-LOOP.md` |
 | 4 — Demo hardening + Fury prep | **In progress** — item 1 done (2026-09-08): `docs/DEMO_RUNBOOK.md`, Short Cut + Full Live, every screen verified live (D023) | D023 |
-| 4.5 — RHEM device plane | **In progress** — A, B, C done (device serves the policy role on RHEM, CPU stand-in validated 18/20); D next | D024–D065 |
+| 4.5 — RHEM device plane | **In progress** — A–D done (promotion + rollback proven on RHEM, act-serving retired); F running, E1 next | D024–D076 |
 
 ---
 
@@ -408,11 +408,16 @@ D. **Promotion path rewrite** (D025)
      `Published model_version: act-v2-ft160-rhem` (+2:10) → Healthy (+2:42) → Argo auto-synced the
      consumer (+3:11) → first re-stamped curated episode (+7:26); no modelcar re-pull (Retain);
      rollback PR #3 open for the operator (D069–D073).
+   - **D3 done 2026-09-09:** PR #3 (revert) merged → device back on `act-v2-ft160` at +1:28, Healthy
+     +1:59, no re-pull; `gitops/act-serving/`, `argocd/act-serving-app.yaml`, `src/swap-agent/` and
+     the Argo app retired (D025 executed); runbook procedures no longer bypass the transparency log
+     (D074+).
    - Retire `gitops/act-serving/`, `argocd/act-serving-app.yaml`, `src/swap-agent/` after the first
      RHEM promotion. Demo screens: RHEM UI rollout + device Applications tab; `flightctl get
      fleet/device`; `flightctl console` tailing `podman logs` for `Published model_version:`.
-   - **Exit:** PR #2 merged → VM serving the new version with no human on the device; rollback
-     (`git revert`, no re-pull) rehearsed once.
+   - **Exit (met 2026-09-09):** PR #2 merged → VM serving the new version with no human on the device
+     (+2:10); rollback (`git revert -m 1`, PR #3) rehearsed: previous version serving at +1:28, no
+     re-pull (Retain).
 
 E. **Model Registry (E1) + Catalog (E2, stretch)** (D027)
    - E1: `modelregistry` Managed in `gitops/operators-config/dsc.yaml`; `ModelRegistry` CR + MariaDB
@@ -465,11 +470,12 @@ G. **Fury port + runbook** (on site, Sept 20–25)
   re-stamp (2026-09-09: PR #2, Rekor index 4; Model Registry part → E1)
 - [ ] Negative test: an unsigned tag fails with a signature error; a tag signed *without*
   `--tlog-upload` also fails on the VM (Rekor SET enforced)
-- [ ] Rollback: `git revert`, merge → previous version serving, no re-pull (Retain)
+- [x] Rollback: `git revert`, merge → previous version serving, no re-pull (Retain) (2026-09-09, PR #3)
 - [ ] Tekton: runtime image built for both arches, Rekor entry created, `crane manifest` shows both
   platforms, the Fleet references its digest
 - [ ] `grep -r insecure-ignore-tlog` returns nothing; `argocd app list` count equals files in
-  `argocd/`; every Argo app Synced with `prune: true`
+  `argocd/`; every Argo app Synced with `prune: true` — tlog bypass gone from code/config/procedures
+  (D3); Argo app count/prune → F-GitOps
 - [ ] Contingency kit recorded on the RHEM path (Phase 4 item 2); one full rehearsal of the Full Live cut on RHEM
 
 ---

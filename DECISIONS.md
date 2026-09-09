@@ -2627,3 +2627,85 @@ none of these reflect the new lineage; the per-episode `log[]` entries carry `mo
 `gitops/rhem/fleet-act-inference.yaml` at start, or make the variable required like `IMAGE`); the
 dashboard `model_version`/`counts` wiring is a Phase 4 G runbook item (the demo screen for lineage is
 MinIO prefixes + `flightctl console`, not the dashboard) — inbox, not a blocker.
+
+---
+
+## D074 — Rollback via `git revert` + merge is symmetric with promotion: 1:28 to serving, 1:59 to Healthy, no pull
+
+**Date:** 2026-09-09
+**Context:** Phase 4.5 D3 — the rollback rehearsal staged as PR #3 (D071) actually run.
+**Record:** PR #3 (revert of merge `4ce6a8a5`) merged 12:35:10Z (merge commit `1eab0824`).
+ResourceSync detected it at +0:51 (the merge landed 51 s before a poll — best case, vs D069's 26 s
+after one, worst case), Fleet v5 -> v6 and device rv 5 -> 6 at +1:00, container recreated at +1:10,
+`Published model_version: act-v2-ft160` at +1:28 (12:36:37.9Z), `DeviceApplicationHealthy` at +1:59,
+Argo `flywheel` synced the consumer back at +2:16 (pod on the pre-PR #2 ReplicaSet `6bb589887b` —
+identical pod template, so Argo/k8s reused it rather than creating a new one). Every hop after
+`ResourceSyncCommitDetected` matched D069's promotion run to the second; the spread between the two
+runs is entirely the poll phase. Agent journal: 0 `Copying blob`/`pulling` lines; `podman events`:
+only the runtime image's local-resolve pull event; both modelcar digests still in storage — D069/D071
+hold for rollback in the reverse direction. D070 held again: `FleetRolloutCompleted` (+1:30) preceded
+`Healthy` (+1:59).
+**Decision:** the runbook's rollback/reset procedure is `git revert -m 1 <merge>` + push, then watch
+`flightctl get device` — no hand step, no refresh. Timing to quote: "under two minutes, worst case
+~3 with the poll."
+
+---
+
+## D075 — Deleting the `act-serving` Application did not cascade; the retirement deleted its resources explicitly (D025 executed)
+
+**Date:** 2026-09-09
+**Context:** with the RHEM promotion/rollback path proven (D068–D074), the desktop's original
+swap-agent-based serving path (`act-serving`) is retired — this is D025 ("retire the pre-RHEM serving
+path once RHEM promotion is proven") executed.
+**Record:** the `act-serving` Argo Application was bootstrapped without
+`resources-finalizer.argocd.argoproj.io` (and `prune: false`), so `oc delete applications.argoproj.io
+act-serving` orphaned rather than cascaded: `Service/act-policy`, `Deployment/act-policy` and
+`Deployment/act-policy-green` in ns `flywheel` were left behind (verified via `status.resources`
+before the delete) and had to be deleted by name. Nothing else in `flywheel` changed (13 Deployments
+/ 12 Services before and after, minus exactly those three). Git: `gitops/act-serving/`,
+`src/swap-agent/`, `argocd/act-serving-app.yaml` removed in commit `9190e2a`. Host: `docker rm
+act-inference`; `~/swap_agent.py`, `~/bag_watchdog.sh` moved to `~/retired-2026-09-09/` rather than
+deleted.
+**Decision:** D025 is now executed — the pre-RHEM serving path is retired. The other bootstrap apps
+(`argocd/*-app.yaml`) should be checked for the same missing finalizer before any of them is ever
+deleted (F ride-along); an Argo app without `resources-finalizer.argocd.argoproj.io` is not a
+delete-to-clean-up object, and this project has now hit that gap once in practice.
+
+---
+
+## D076 — Retirement side effects: dashboard badge regression, stopped `pre-` containers, tlog-bypass narrative cleanup, and the runbook edits that no longer bypass the transparency log
+
+**Date:** 2026-09-09
+**Context:** fallout from D075's retirement, plus the runbook edits made to reflect D074's rollback
+and D071/D069's no-pull evidence.
+**Record:**
+- **Dashboard badge regression:** `gitops/flywheel/dashboard.yaml` `get_model_version()` read the
+  deleted `act-policy` Service selector and now always falls back to `soarm-act-v1` on the 404 (the
+  RBAC comment at line 18 is stale too). D073 already established the field is not the lineage; not
+  edited here (live Argo-synced ConfigMap, not on the D3 file list) — the runbook's *Known screen
+  artifacts* and *Failure recovery* rows now say so instead, and the real lineage screen is
+  `flightctl get device/<name> -o json | jq .status.applications` or MinIO prefixes.
+- **Stopped `pre-` containers:** 15 stopped `act-inference-pre-act-v2-ft160-<ts>` containers remain on
+  the desktop (the swap agent's per-pass backups, all `Exited (137)`, image `act-inference:latest`).
+  Left as a prune candidate, not cleaned up here.
+- **`--insecure-ignore-tlog` grep:** clean of code, config, and procedure. Two prose lines remain in
+  `docs/eval-records/interim-runtime-image.md` (67, 98) that record the flag's *absence* ("no
+  `--insecure-ignore-tlog`", "is *not* the fix") — historical evidence, left as-is; not on the D3 file
+  list.
+- **Runbook edits:** `docs/DEMO_RUNBOOK.md` now runs `cosign verify` against the transparency log —
+  `SIGSTORE_REKOR_PUBLIC_KEY=~/rekor-live.pub ~/bin/cosign verify --key ~/cosign/cosign.pub
+  --rekor-url http://localhost:8090 <image@digest>` (no `--insecure-ignore-tlog`) — and the Beat 6
+  device-status commands are the `flightctl get device/<id> -o json | jq …` forms (`.status.
+  applicationsSummary`, `.status.config.renderedVersion`, `.status.updated.status`). The rollback
+  procedure is `git revert -m 1 --no-edit <merge commit of the promotion PR>` + push, watch
+  `flightctl get device` — no hand step, no refresh (D074).
+- **Runbook narrative not yet updated:** item G still owns the places that describe the retired path
+  by name — § *Desktop vs. target* (swap agent, `gitops/act-serving/`), the *On GB10 / GB300 Fury*
+  table rows for the `act-policy` Deployment and swap agent, and the Beat 5/6 *Say* text; D3 replaced
+  only the procedures that could no longer run (state check, verify line, Beat 6 commands,
+  reset-to-start, Part 5, Q&A line, two failure-recovery rows). `gitops/flywheel/dashboard.yaml` and
+  `docs/demo-kit/*` (historical evidence) still mention `act-policy`/`swap_agent` by name on purpose —
+  those are frozen records, not live procedure.
+**Decision:** none of these are demo blockers. Dashboard badge fix (read the Fleet's `MODEL_VERSION`
+via the flightctl API, or drop the badge) and the remaining narrative rewrite are item G's call;
+container prune and the two historical prose lines are inbox items, not scheduled here.
