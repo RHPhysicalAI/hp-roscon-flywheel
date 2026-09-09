@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 # SO-ARM101 Flywheel Producer
 #
 # Based on upstream ros-physical-ai/demos Dockerfile.

@@ -1,6 +1,0 @@
-{
-  mode: "client",
-  connect: {
-    endpoints: ["tcp/ZENOH_ROUTER_ADDR"]
-  }
-}

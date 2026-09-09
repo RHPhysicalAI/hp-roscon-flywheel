@@ -53,6 +53,7 @@ sim and no network — and every live element is a bonus layered on top, never a
 |---|---|
 | v1 = the upstream ACT teacher as shipped; v2 = the same weights fine-tuned on 160 of its own curated successes (D021) | `docs/eval-records/phase3-ladder/`, HF `jeremyary/soarm-act-v2-ft160` |
 | **73% → 86%** on 100 identical seeded scenes; paired **20 fixed / 7 broken**, net +13, sign-test **p = 0.019**; mean cubes 2.51 → 2.73 | `python3 src/eval-report/ladder_report.py …` (§ Reference) |
+| Those headline numbers were measured with the rosetta client at chunking **30 / 0.95**; the deployed configuration is **100 / 0.5** (D058/D059). A re-measure at the deployed setting is pending — say so if asked, don't imply the numbers were taken on today's config | D059; `docs/eval-records/phase3-ladder/` |
 | Fine-tuning on **20 or 40** successes made the policy **worse** (60%, 56%); 80 broke even (76%) — the eval gate exists because of this | same table |
 | The governed pipeline ran end to end unattended on the RHEM path: trigger → gate PASS → `crane append` → `cosign sign` (**Rekor index 4**) → **PR #2** (two files, five lines) → merged by a human → RHEM rolled it to the device with no one on the device: **serving at +2:10, Healthy at +2:42** (D068–D070) | run `192f3ec5…` in DSP, `docs/demo-kit/run-192f3ec5-*`, `docs/demo-kit/pr2.md`, `docs/eval-records/promotion-2.md` |
 | Rollback is `git revert` + merge, symmetric: **serving at +1:28, Healthy at +1:59, nothing re-pulled** (image volume `reclaimPolicy: Retain`) — PR #3 (D071, D074) | `docs/eval-records/promotion-2.md` § D3 |
@@ -168,7 +169,9 @@ runtime image (Tekton, multi-arch) `quay.io/jary/soarm-flywheel@sha256:3d67f4246
 
 - **The Fleet banner goes green ~30 s before the app is Healthy** (D070: rollout success is counted
   on `UpToDate`, not on application health). Show the device's **Applications tab** (or
-  `applicationsSummary` in the terminal) for "serving", not the Fleet banner.
+  `applicationsSummary` in the terminal) for "serving", not the Fleet banner. The tab's *Healthy*
+  is `healthcheck.sh`'s verdict, which cannot see a wedged action server (D113): a green tab with
+  an arm that isn't moving means read the coordinator log, not the tab.
 - **The dashboard badge follows the hub, not the device.** It reads the `manifest-consumer`'s
   `COLLECTOR`, which Argo syncs ~1–3 min after the device is already serving the new version
   (D072). The device's own answer is the console log (`Published model_version:`). If the badge

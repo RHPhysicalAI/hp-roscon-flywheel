@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 """Camera bridge — high-performance MJPEG streaming from ROS 2 camera topics.
 
 Subscribes to /wrist_camera/image_raw and /static_camera/image_raw,

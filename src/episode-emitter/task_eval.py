@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 """Task success evaluation — reads actual Gazebo cube positions.
 
 Ground-truth task success (not a heuristic): read each cube's world pose and
@@ -43,15 +44,20 @@ _NAME_RE = re.compile(r'\s*name:\s*"([^"]+)"')
 _COORD_RE = re.compile(r"\s*([xyz]):\s*([-\d.eE+]+)")
 
 
-def read_cube_poses() -> dict[str, tuple[float, float, float]]:
-    """Parse one pose-info message into {cube_name: (x, y, z)}."""
+def read_cube_poses() -> dict[str, tuple[float, float, float]] | None:
+    """Parse one pose-info message into {cube_name: (x, y, z)}.
+
+    Returns None when the pose source is unavailable (the gz query failed or
+    returned no cube at all) so callers can tell "sensor down" from "no cube on
+    the tray" — the world always carries the three cubes.
+    """
     try:
         result = subprocess.run(
             ["gz", "topic", "-e", "-t", POSE_TOPIC, "-n", "1"],
             capture_output=True, timeout=8, text=True,
         )
     except Exception:
-        return {}
+        return None
 
     poses: dict[str, tuple[float, float, float]] = {}
     current: str | None = None
@@ -83,12 +89,12 @@ def read_cube_poses() -> dict[str, tuple[float, float, float]]:
                     current = None
             elif "}" in line:
                 in_position = False
-    return poses
+    return poses or None
 
 
 def get_cube_pose(name: str) -> tuple[float, float, float] | None:
     """World pose (x, y, z) of a single cube, or None if unavailable."""
-    return read_cube_poses().get(name)
+    return (read_cube_poses() or {}).get(name)
 
 
 def is_on_tray(pose: tuple[float, float, float]) -> bool:
@@ -101,19 +107,25 @@ def is_on_tray(pose: tuple[float, float, float]) -> bool:
     )
 
 
-def evaluate_task() -> tuple[bool, int]:
+def evaluate_task() -> tuple[bool, int | None]:
     """Check all cubes. Returns (task_success, cubes_placed).
 
     task_success is True only if all 3 cubes are on the tray.
-    cubes_placed is the count on the tray (0-3).
+    cubes_placed is the count on the tray (0-3), or None when the pose source
+    was unavailable — a sensor fault, not a placement result.
     """
     poses = read_cube_poses()
+    if poses is None:
+        return (False, None)
     placed = sum(1 for name in CUBES if poses.get(name) and is_on_tray(poses[name]))
     return (placed == len(CUBES), placed)
 
 
 if __name__ == "__main__":
     poses = read_cube_poses()
+    if poses is None:
+        print(f"task_success=False cubes_placed=unavailable/{len(CUBES)}")
+        raise SystemExit(0)
     placed = sum(1 for name in CUBES if poses.get(name) and is_on_tray(poses[name]))
     print(f"task_success={placed == len(CUBES)} cubes_placed={placed}/{len(CUBES)}")
     for name in CUBES:

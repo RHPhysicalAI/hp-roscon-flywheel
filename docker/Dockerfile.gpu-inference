@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 # ACT Policy Inference — GPU container for the desktop host.
 #
 # Runs on the desktop (not in the SNO VM) with --gpus all to access the

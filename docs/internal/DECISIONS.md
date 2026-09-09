@@ -4083,3 +4083,35 @@ The runbook's Beat 4 section, kit-table row and "What's real" line revert to the
 the "Policy comparison card is empty" known-artifact bullet stays removed.
 **Consequences:** Beat 4 is the eval dashboard's (Olga's) or the static chart; the ops dashboard is
 Beats 1, 2 and 6 only. The paired-video design is the next Beat 4 conversation.
+
+---
+
+## D126 — Review batch, part 1: source hardening and documentation items (W-1, W-3, W-5, W-12, W-14, W-15, W-17, S-1, S-6)
+
+**Date:** 2026-09-09 (unattended runner, operator-approved batch)
+**Decision:**
+- W-12: `coordinator.py` counts consecutive `/run_policy` goal rejections; at `REJECT_ESCALATE_N`
+  (default 5) it logs at error level and cancels every goal on the server through
+  `/run_policy/_action/cancel_goal` with an all-zero goal_info (D063's cheapest unwedge), then resets.
+- W-17: the coordinator publishes its peak cube count on `/flywheel/episode_cubes` alongside the
+  dataset ref before `end`; the emitter prefers it over its own poll, so the curator record and the
+  bag keep/prune decision use one ground truth.
+- S-1: `task_eval.read_cube_poses()` returns `None` when the gz query fails or yields no cube;
+  `evaluate_task()` then returns `(False, None)`. The emitter records `cubes_placed: null` +
+  `score_reason: sensor-unavailable` only when no ground-truth read succeeded all episode and the
+  coordinator sent nothing; the curator rejects that as `sensor-unavailable` (Gate 2, new first check)
+  rather than `task-failed`. The eval harness logs and treats an unavailable end snapshot as 0.
+- W-1: a second DaemonSet `qemu-binfmt-arm64-host` (nodeSelector arm64, `--install amd64`) so the
+  Fury's aarch64 SNO registers the amd64 handler; the original stays amd64→arm64. One schedules per
+  cluster, the other stays pending with no pods. Server dry-run clean on the desktop.
+- S-6: CatalogItem `2.0.0-ft160-rhem` moves to channel `rolled-back` with its readme stating PR #2/
+  PR #3 (D074); the newest `stable` version is `2.0.0-ft160` = the Fleet's pin. Header invariant
+  reworded to "newest stable version".
+- W-3: `docker/zenoh-connect.json5` deleted (no live reference; entrypoints generate the session
+  config inline). W-5: AI-assistance marker added to the 12 unmarked files; `tools/ci/check-ai-marker.sh`
+  greps every tracked `*.py|*.sh|Dockerfile*` and exits non-zero on a miss (27/27 marked).
+- W-14/W-15: runbook — the Applications tab's Healthy inherits `healthcheck.sh`'s blind spot; the
+  headline eval numbers were measured at chunking 30/0.95 vs the deployed 100/0.5, re-measure pending.
+**Not live:** W-12, W-17 and S-1 are baked into the runtime and sim images — they ride the next
+Tekton build and the next host `docker/Dockerfile` build. The curator's `sensor-unavailable` gate
+lands with the gitops/flywheel roll in the next batch commit.

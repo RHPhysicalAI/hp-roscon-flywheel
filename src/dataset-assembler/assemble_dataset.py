@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 """Dataset assembler — build a LeRobot dataset from curated flywheel episodes.
 
 Phase 2.5 step 4 (D018). This is the seam between the data plane and training:

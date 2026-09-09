@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 """Inference coordinator — drives the episode lifecycle with clean phasing.
 
 Sequence per episode (no overlap between reset and policy):
@@ -23,6 +24,7 @@ import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
+from action_msgs.srv import CancelGoal
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray, MultiArrayDimension, String
 
@@ -91,6 +93,10 @@ RECOVER_ON_FAIL = os.environ.get("RECOVER_ON_FAIL", "true").lower() == "true"
 RECOVER_PUBLISH_S = float(os.environ.get("RECOVER_PUBLISH_S", "5.0"))
 RECOVER_RATE = float(os.environ.get("RECOVER_RATE", "20"))
 RECOVER_TOL = float(os.environ.get("RECOVER_TOL", "0.15"))  # rad; arm joints only
+# A wedged action server refuses every goal while staying registered on the graph (D063: 2188
+# silent rejections during the disk-outage recovery). After this many consecutive rejections the
+# loop cancels every goal on the server (the cheapest unwedge) and logs at error level.
+REJECT_ESCALATE_N = int(os.environ.get("REJECT_ESCALATE_N", "5"))
 # Joint order the forward_position_controller expects. /joint_states publishes joints
 # in a DIFFERENT (alphabetical) order, so commands are built by name, never by index.
 CTRL_JOINTS = [j.strip() for j in os.environ.get(
@@ -126,6 +132,11 @@ class Coordinator(Node):
         # to finalize, so it can stamp dataset_path into the curator JSON (D018,
         # Phase 2.5 step 3). Published after the policy window, before 'end'.
         self._dataset_pub = self.create_publisher(String, "/flywheel/episode_dataset", 10)
+        # The episode's peak cube count, published before 'end' so the emitter stamps the same
+        # ground truth the keep/prune decision used instead of re-deriving it from its own poll.
+        self._cubes_pub = self.create_publisher(String, "/flywheel/episode_cubes", 10)
+        self._consecutive_rejections = 0
+        self._cancel_all_client = self.create_client(CancelGoal, "/run_policy/_action/cancel_goal")
         # Latched publisher so a late-joining emitter still gets the label.
         latched = QoSProfile(
             depth=1,
@@ -230,7 +241,7 @@ class Coordinator(Node):
                 time.sleep(2.5)
                 try:
                     _, n = task_eval.evaluate_task()
-                    if n > self._peak_cubes:
+                    if n is not None and n > self._peak_cubes:
                         self._peak_cubes = n
                 except Exception:
                     pass
@@ -304,6 +315,30 @@ class Coordinator(Node):
             m.data = ""
         self._dataset_pub.publish(m)
         self.get_logger().info(f"Dataset ref: '{m.data}'")
+        self._publish_peak_cubes()
+
+    def _publish_peak_cubes(self):
+        """Publish this episode's peak cube count for the emitter (before 'end')."""
+        m = String()
+        m.data = str(self._peak_cubes)
+        self._cubes_pub.publish(m)
+
+    def _cancel_all_goals(self):
+        """Cancel every goal on the policy action server (an all-zero goal_info cancels
+        all) — the unwedge for a server that keeps refusing new goals."""
+        self.get_logger().error(
+            f"{REJECT_ESCALATE_N} consecutive goal rejections — cancelling all goals on /run_policy")
+        if not self._cancel_all_client.wait_for_service(timeout_sec=5.0):
+            self.get_logger().error("cancel_goal service not available; will keep retrying")
+            return
+        fut = self._cancel_all_client.call_async(CancelGoal.Request())
+        rclpy.spin_until_future_complete(self, fut, timeout_sec=10)
+        res = fut.result()
+        if res is None:
+            self.get_logger().error("cancel_goal call timed out")
+        else:
+            self.get_logger().warn(
+                f"cancel_goal return_code={res.return_code} goals_canceling={len(res.goals_canceling)}")
 
     def _load_rest_pose(self):
         """Load a previously learned rest pose from REST_POSE_FILE, or None."""
@@ -479,15 +514,24 @@ class Coordinator(Node):
             rclpy.spin_until_future_complete(self, send_future, timeout_sec=10)
             handle = send_future.result()
             if not handle or not handle.accepted:
-                self.get_logger().warn("Goal rejected — retrying next cycle")
+                self._consecutive_rejections += 1
+                self.get_logger().warn(
+                    f"Goal rejected — retrying next cycle "
+                    f"({self._consecutive_rejections} consecutive)")
                 self._stop_recording()
                 self._publish_dataset()
                 self._stop_peak_poll()
                 self._signal("end")
                 self._prune_bag_if_rejected()
                 self._last_failed = True
-                time.sleep(2)
+                if self._consecutive_rejections >= REJECT_ESCALATE_N:
+                    self._cancel_all_goals()
+                    self._consecutive_rejections = 0
+                    time.sleep(5)
+                else:
+                    time.sleep(2)
                 continue
+            self._consecutive_rejections = 0
 
             # 4. Policy attempt window — ends early once the task is complete
             #    and the arm has settled, so good runs don't wait out the clock.
@@ -650,6 +694,9 @@ class Coordinator(Node):
             try:
                 import task_eval
                 _, snapshot = task_eval.evaluate_task()
+                if snapshot is None:
+                    self.get_logger().warn("[eval] cube pose source unavailable at episode end")
+                    snapshot = 0
             except Exception as e:
                 self.get_logger().warn(f"[eval] task eval failed: {e}")
                 snapshot = 0
