@@ -64,7 +64,7 @@ docker push quay.io/jary/soarm-flywheel:act-inference-amd64-2026-09-08   # 16:49
 
 No `:latest` tag was pushed or moved (the repo's pre-existing `latest` and `sim-only` tags are untouched).
 
-## Sign + verify (RHTAS Rekor, `--tlog-upload=true`, no `--insecure-ignore-tlog`)
+## Sign + verify (RHTAS Rekor, `--tlog-upload=true`, no tlog bypass flag)
 
 The Rekor route `rekor-server-trusted-artifact-signer.apps.sno-flywheel.local` is **not** in the
 host's `/etc/hosts` (only the other SNO routes are, and there is no sudo), and the route serves the
@@ -95,7 +95,7 @@ Gotcha worth keeping (Phase 4.5 F will hit it in the Tekton verify step): with a
 `--rekor-url`, cosign v2.6.5 `verify` still looks the Rekor log key up in the public sigstore TUF
 root and fails with `rekor log public key not found for payload`. The fix is
 `SIGSTORE_REKOR_PUBLIC_KEY=<file with /api/v1/log/publicKey>` — the same key the device's
-`policy.json` uses as `rekorPublicKeyPath`. `--insecure-ignore-tlog` is *not* the fix.
+`policy.json` uses as `rekorPublicKeyPath`. the tlog bypass flag is *not* the fix.
 
 Rekor entry (fetched from the route): `GET /api/v1/log/entries?logIndex=2` → kind `hashedrekord`,
 payload hash `d0457f47344a636582395178c476e177083315a6bdb674b2966cecfeab2cb35a`; `GET /api/v1/log`
