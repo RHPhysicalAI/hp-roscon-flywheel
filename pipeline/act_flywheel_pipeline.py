@@ -1,7 +1,8 @@
 # This project was developed with assistance from AI tools.
 """ACT flywheel promotion pipeline (KFP v2, RHOAI Data Science Pipelines) - D022, D025.
 
-  trigger+wait -> gate -> package -> sign -> open_promotion_pr        (human merge = last gate)
+  trigger+wait -> gate -> package -> sign -> register_model -> open_promotion_pr -> record_pr_url
+                                                                    (human merge = last gate)
 
 The promotion PR edits the RHEM Fleet (modelcar digest + MODEL_VERSION) and the trigger's lineage
 (manifest-consumer COLLECTOR/INCUMBENT/INCUMBENT_CHECKPOINT) in ONE commit; ResourceSync renders the
@@ -12,11 +13,17 @@ delegated to the host runner over Kafka (training-triggers / training-results) a
 waits for the artifacts in MinIO. `mode="cluster"` runs them in-pod (GB10/GB300 - Phase 4).
 Every artifact contract (checkpoint tar, eval_report.json, image digest) is identical in both.
 
+`register_model` (D027) writes the durable promotion record to the RHOAI Model Registry: registered
+model `soarm-act`, one version per candidate, the model artifact = the signed modelcar digest, custom
+properties = dataset URI, incumbent, success rates, fixed/broken/net, p, Rekor index, PR URL. The PR
+URL is only known after the PR exists, so `record_pr_url` fills it in afterwards (D027 keeps the
+record before the PR; a version with an empty pr_url means "signed, PR not opened").
+
 Compile:  python pipeline/act_flywheel_pipeline.py  -> pipeline/act_flywheel_pipeline.yaml
 Secrets expected in the DSP project namespace: hub-credentials (S3), quay-push (dockerconfigjson),
 cosign-signing-key (cosign.key, cosign.pub, cosign.password -> COSIGN_PASSWORD), github-token (token).
 """
-from typing import List
+from typing import List, NamedTuple
 
 from kfp import dsl, compiler
 from kfp import kubernetes as k8s
@@ -24,14 +31,17 @@ from kfp import kubernetes as k8s
 # Pinned tags (D022: no runtime :latest); bump deliberately. crane ls registry.access.redhat.com/ubi9/<name>
 PY_IMG = "registry.access.redhat.com/ubi9/python-312:9.8-1788919789"
 UBI_MICRO = "registry.access.redhat.com/ubi9/ubi-micro:9.8-1787778798"
+MODEL_REGISTRY_CLIENT = "model-registry==0.3.11"  # last client on the v1alpha3 REST path this server (RHOAI 2.25) serves; >=0.3.12 targets /v1
+MODEL_NAME = "soarm-act"
 
 
 @dsl.component(base_image=PY_IMG, packages_to_install=["kafka-python>=2.2,<4", "boto3==1.35.36"])
 def trigger_and_wait(run_id: str, candidate: str, incumbent: str, collector: str,
                      incumbent_checkpoint: str, steps_per_frame: float, eval_n: int,
                      eval_seed_base: int, kafka_bootstrap: str, timeout_min: int,
-                     eval_report: dsl.OutputPath(str), checkpoint: dsl.OutputPath(str)):
-    """[desktop shim] publish a training trigger and wait for the host runner's result."""
+                     eval_report: dsl.OutputPath(str), checkpoint: dsl.OutputPath(str), dataset_uri: dsl.OutputPath(str)):
+    """[desktop shim] publish a training trigger and wait for the host runner's result.
+    dataset_uri is the runner's assembled LeRobot dataset ("reused" on the D023 pre-trained path)."""
     import json, sys, time
     from kafka import KafkaConsumer, KafkaProducer
     msg = dict(run_id=run_id, candidate=candidate, incumbent=incumbent, collector=collector,
@@ -54,6 +64,7 @@ def trigger_and_wait(run_id: str, candidate: str, incumbent: str, collector: str
                     print("host runner failed:", res.get("message")); sys.exit(1)
                 with open(eval_report, "w") as f: f.write(res["eval_report_uri"])
                 with open(checkpoint, "w") as f: f.write(res["checkpoint_uri"])
+                with open(dataset_uri, "w") as f: f.write(str(res.get("dataset_uri", "")))
                 return
         print("waiting for training-results...", flush=True)
     print("timed out waiting for the host runner"); sys.exit(1)
@@ -119,11 +130,13 @@ def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, pl
 
 
 @dsl.component(base_image=PY_IMG)
-def sign_modelcar(image_ref: str, rekor_url: str, cosign_version: str) -> str:
+def sign_modelcar(image_ref: str, rekor_url: str, cosign_version: str) -> NamedTuple("SignOutputs", [("image_ref", str), ("rekor_index", int)]):
     """cosign v2.x sign by digest, --recursive so every per-arch manifest of the index carries its own
     signature (containers/image verifies the instance it selects); Rekor when rekor_url is set (RHTAS).
-    COSIGN_PASSWORD arrives from the cosign-signing-key Secret's `cosign.password` key."""
-    import os, platform as _plat, subprocess, urllib.request
+    COSIGN_PASSWORD arrives from the cosign-signing-key Secret's `cosign.password` key.
+    rekor_index = the index's own tlog entry (the first `tlog entry created` line; -1 without Rekor)."""
+    import os, platform as _plat, re, subprocess, urllib.request
+    from collections import namedtuple
     arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[_plat.machine()]
     urllib.request.urlretrieve(f"https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-{arch}", "/tmp/cosign")
     os.chmod("/tmp/cosign", 0o755)
@@ -135,7 +148,57 @@ def sign_modelcar(image_ref: str, rekor_url: str, cosign_version: str) -> str:
     os.environ["DOCKER_CONFIG"] = "/tmp/docker"
     cmd = ["/tmp/cosign", "sign", "--key", "/etc/cosign/cosign.key", "-y", "--recursive", image_ref]
     cmd += ["--rekor-url", rekor_url, "--tlog-upload=true"] if rekor_url else ["--tlog-upload=false"]
-    subprocess.run(cmd, check=True); print("signed", image_ref); return image_ref
+    r = subprocess.run(cmd, capture_output=True, text=True); print(r.stdout); print(r.stderr)
+    if r.returncode != 0: raise SystemExit(1)
+    idx = [int(m) for m in re.findall(r"tlog entry created with index: (\d+)", r.stdout + r.stderr)]
+    print("signed", image_ref, "rekor indexes", idx)
+    return namedtuple("SignOutputs", ["image_ref", "rekor_index"])(image_ref, idx[0] if idx else -1)
+
+
+@dsl.component(base_image=PY_IMG, packages_to_install=[MODEL_REGISTRY_CLIENT])
+def register_model(model_name: str, image_ref: str, candidate: str, checkpoint_uri: str, dataset_uri: str,
+                   eval_report_uri: str, report_json: str, rekor_index: int, rekor_url: str, run_id: str,
+                   model_registry_url: str) -> str:
+    """D027: the durable promotion record. Registered model <model_name>, version <candidate>, artifact
+    uri = the signed modelcar digest, custom properties = the five-way join (dataset, eval, Rekor, PR).
+    Auth: the pod's own SA token through the registry's OAuth proxy (RoleBinding in
+    gitops/operators-config/model-registry.yaml); TLS via OpenShift's service CA. Returns the version id."""
+    import json
+    from urllib.parse import urlsplit
+    from model_registry import ModelRegistry
+    rep = json.loads(report_json); u = urlsplit(model_registry_url)
+    tok = open("/var/run/secrets/kubernetes.io/serviceaccount/token").read().strip()
+    mr = ModelRegistry(f"{u.scheme}://{u.hostname}", u.port, author="act-flywheel-pipeline", user_token=tok,
+                       custom_ca="/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt" if u.scheme == "https" else None)
+    meta = dict(dataset_uri=dataset_uri, checkpoint_uri=checkpoint_uri, eval_report_uri=eval_report_uri,
+                incumbent=rep["incumbent"], incumbent_success_rate=float(rep["incumbent_success_rate"]),
+                candidate_success_rate=float(rep["candidate_success_rate"]), n_paired=int(rep["n_paired"]),
+                fixed=int(rep["fixed"]), broken=int(rep["broken"]), net=int(rep["net"]), sign_test_p=float(rep["sign_test_p"]),
+                gate_rule=rep["rule"], verdict=rep["verdict"], rekor_index=rekor_index, rekor_url=rekor_url,
+                pr_url="", dsp_run_id=run_id)
+    rm = mr.register_model(model_name, image_ref, model_format_name="lerobot-act", model_format_version="1",
+                           version=candidate, description="SO-ARM ACT pick-and-place policy (flywheel promotions)",
+                           version_description=f"{rep['incumbent']} {rep['incumbent_success_rate']:.2f} -> {candidate} "
+                                               f"{rep['candidate_success_rate']:.2f}, net {rep['net']:+d}, p={rep['sign_test_p']}",
+                           metadata=meta)
+    mv = mr.get_model_version(model_name, candidate)
+    print(json.dumps({"registered_model_id": rm.id, "model_version_id": mv.id, "custom_properties": mv.custom_properties}, indent=1))
+    return mv.id
+
+
+@dsl.component(base_image=PY_IMG, packages_to_install=[MODEL_REGISTRY_CLIENT])
+def record_pr_url(model_name: str, candidate: str, pr_url: str, model_registry_url: str) -> str:
+    """Second half of register_model: the PR URL exists only after open_promotion_pr, so it is written
+    onto the version's custom properties here."""
+    from urllib.parse import urlsplit
+    from model_registry import ModelRegistry
+    u = urlsplit(model_registry_url)
+    tok = open("/var/run/secrets/kubernetes.io/serviceaccount/token").read().strip()
+    mr = ModelRegistry(f"{u.scheme}://{u.hostname}", u.port, author="act-flywheel-pipeline", user_token=tok,
+                       custom_ca="/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt" if u.scheme == "https" else None)
+    mv = mr.get_model_version(model_name, candidate)
+    props = dict(mv.custom_properties or {}); props["pr_url"] = pr_url; mv.custom_properties = props
+    mv = mr.update(mv); print("pr_url recorded on", model_name, candidate, mv.id, "->", pr_url); return pr_url
 
 
 @dsl.component(base_image=PY_IMG, packages_to_install=["PyGithub==2.4.0"])
@@ -198,7 +261,8 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
                           github_repo: str = "RHPhysicalAI/hp-roscon-flywheel", gitops_branch: str = "desktop-gpu-split",
                           fleet_file: str = "gitops/rhem/fleet-act-inference.yaml", consumer_file: str = "gitops/flywheel/manifest-consumer.yaml",
                           fleet_ui_url: str = "https://ui.flightctl.apps.sno-flywheel.local/devicemanagement/fleets/act-inference",
-                          modelcar_base: str = UBI_MICRO, timeout_min: int = 600):
+                          modelcar_base: str = UBI_MICRO, timeout_min: int = 600,
+                          model_registry_url: str = "https://flywheel.rhoai-model-registries.svc:8443"):
     run_id = dsl.PIPELINE_JOB_ID_PLACEHOLDER
     # mode == "cluster": in-pod train/eval components (Phase 4, GB10/GB300) replace this step; same outputs.
     t = trigger_and_wait(run_id=run_id, candidate=candidate, incumbent=incumbent, collector=collector,
@@ -216,11 +280,18 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
     k8s.use_secret_as_volume(sg, secret_name="quay-push", mount_path="/etc/quay")
     k8s.use_secret_as_volume(sg, secret_name="cosign-signing-key", mount_path="/etc/cosign")
     k8s.use_secret_as_env(sg, secret_name="cosign-signing-key", secret_key_to_env={"cosign.password": "COSIGN_PASSWORD"}, optional=True)
-    pr = open_promotion_pr(image_ref=sg.output, candidate=candidate, checkpoint_uri=t.outputs["checkpoint"], report_json=g.output,
+    reg = register_model(model_name=MODEL_NAME, image_ref=sg.outputs["image_ref"], candidate=candidate,
+                         checkpoint_uri=t.outputs["checkpoint"], dataset_uri=t.outputs["dataset_uri"],
+                         eval_report_uri=t.outputs["eval_report"], report_json=g.output, rekor_index=sg.outputs["rekor_index"],
+                         rekor_url=rekor_url, run_id=run_id, model_registry_url=model_registry_url)
+    reg.set_caching_options(False)
+    pr = open_promotion_pr(image_ref=sg.outputs["image_ref"], candidate=candidate, checkpoint_uri=t.outputs["checkpoint"], report_json=g.output,
                            github_repo=github_repo, gitops_branch=gitops_branch, fleet_file=fleet_file, consumer_file=consumer_file,
-                           fleet_ui_url=fleet_ui_url)
+                           fleet_ui_url=fleet_ui_url).after(reg)
     pr.set_caching_options(False)
     k8s.use_secret_as_volume(pr, secret_name="github-token", mount_path="/etc/github")
+    rp = record_pr_url(model_name=MODEL_NAME, candidate=candidate, pr_url=pr.output, model_registry_url=model_registry_url)
+    rp.set_caching_options(False)
 
 
 if __name__ == "__main__":

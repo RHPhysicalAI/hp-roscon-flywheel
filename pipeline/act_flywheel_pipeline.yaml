@@ -17,6 +17,7 @@
 #    incumbent_checkpoint: str [Default: 'hf']
 #    kafka_bootstrap: str [Default: 'edge-kafka.flywheel.svc:9092']
 #    mode: str [Default: 'desktop']
+#    model_registry_url: str [Default: 'https://flywheel.rhoai-model-registries.svc:8443']
 #    modelcar_base: str [Default: 'registry.access.redhat.com/ubi9/ubi-micro:9.8-1787778798']
 #    platform: list [Default: ['linux/amd64', 'linux/arm64']]
 #    registry_repo: str [Default: 'quay.io/jary/soarm-act-modelcar']
@@ -85,6 +86,52 @@ components:
       parameters:
         Output:
           parameterType: STRING
+  comp-record-pr-url:
+    executorLabel: exec-record-pr-url
+    inputDefinitions:
+      parameters:
+        candidate:
+          parameterType: STRING
+        model_name:
+          parameterType: STRING
+        model_registry_url:
+          parameterType: STRING
+        pr_url:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-register-model:
+    executorLabel: exec-register-model
+    inputDefinitions:
+      parameters:
+        candidate:
+          parameterType: STRING
+        checkpoint_uri:
+          parameterType: STRING
+        dataset_uri:
+          parameterType: STRING
+        eval_report_uri:
+          parameterType: STRING
+        image_ref:
+          parameterType: STRING
+        model_name:
+          parameterType: STRING
+        model_registry_url:
+          parameterType: STRING
+        rekor_index:
+          parameterType: NUMBER_INTEGER
+        rekor_url:
+          parameterType: STRING
+        report_json:
+          parameterType: STRING
+        run_id:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
   comp-sign-modelcar:
     executorLabel: exec-sign-modelcar
     inputDefinitions:
@@ -97,8 +144,10 @@ components:
           parameterType: STRING
     outputDefinitions:
       parameters:
-        Output:
+        image_ref:
           parameterType: STRING
+        rekor_index:
+          parameterType: NUMBER_INTEGER
   comp-trigger-and-wait:
     executorLabel: exec-trigger-and-wait
     inputDefinitions:
@@ -126,6 +175,8 @@ components:
     outputDefinitions:
       parameters:
         checkpoint:
+          parameterType: STRING
+        dataset_uri:
           parameterType: STRING
         eval_report:
           parameterType: STRING
@@ -327,6 +378,110 @@ deploymentSpec:
           , r.stderr[-1500:]); raise SystemExit(1)\n    ref = r.stdout.strip().splitlines()[-1];\
           \ print(\"pushed\", ref); return ref\n\n"
         image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
+    exec-record-pr-url:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - record_pr_url
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'model-registry==0.3.11'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef record_pr_url(model_name: str, candidate: str, pr_url: str, model_registry_url:\
+          \ str) -> str:\n    \"\"\"Second half of register_model: the PR URL exists\
+          \ only after open_promotion_pr, so it is written\n    onto the version's\
+          \ custom properties here.\"\"\"\n    from urllib.parse import urlsplit\n\
+          \    from model_registry import ModelRegistry\n    u = urlsplit(model_registry_url)\n\
+          \    tok = open(\"/var/run/secrets/kubernetes.io/serviceaccount/token\"\
+          ).read().strip()\n    mr = ModelRegistry(f\"{u.scheme}://{u.hostname}\"\
+          , u.port, author=\"act-flywheel-pipeline\", user_token=tok,\n          \
+          \             custom_ca=\"/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt\"\
+          \ if u.scheme == \"https\" else None)\n    mv = mr.get_model_version(model_name,\
+          \ candidate)\n    props = dict(mv.custom_properties or {}); props[\"pr_url\"\
+          ] = pr_url; mv.custom_properties = props\n    mv = mr.update(mv); print(\"\
+          pr_url recorded on\", model_name, candidate, mv.id, \"->\", pr_url); return\
+          \ pr_url\n\n"
+        image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
+    exec-register-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - register_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'model-registry==0.3.11'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef register_model(model_name: str, image_ref: str, candidate: str,\
+          \ checkpoint_uri: str, dataset_uri: str,\n                   eval_report_uri:\
+          \ str, report_json: str, rekor_index: int, rekor_url: str, run_id: str,\n\
+          \                   model_registry_url: str) -> str:\n    \"\"\"D027: the\
+          \ durable promotion record. Registered model <model_name>, version <candidate>,\
+          \ artifact\n    uri = the signed modelcar digest, custom properties = the\
+          \ five-way join (dataset, eval, Rekor, PR).\n    Auth: the pod's own SA\
+          \ token through the registry's OAuth proxy (RoleBinding in\n    gitops/operators-config/model-registry.yaml);\
+          \ TLS via OpenShift's service CA. Returns the version id.\"\"\"\n    import\
+          \ json\n    from urllib.parse import urlsplit\n    from model_registry import\
+          \ ModelRegistry\n    rep = json.loads(report_json); u = urlsplit(model_registry_url)\n\
+          \    tok = open(\"/var/run/secrets/kubernetes.io/serviceaccount/token\"\
+          ).read().strip()\n    mr = ModelRegistry(f\"{u.scheme}://{u.hostname}\"\
+          , u.port, author=\"act-flywheel-pipeline\", user_token=tok,\n          \
+          \             custom_ca=\"/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt\"\
+          \ if u.scheme == \"https\" else None)\n    meta = dict(dataset_uri=dataset_uri,\
+          \ checkpoint_uri=checkpoint_uri, eval_report_uri=eval_report_uri,\n    \
+          \            incumbent=rep[\"incumbent\"], incumbent_success_rate=float(rep[\"\
+          incumbent_success_rate\"]),\n                candidate_success_rate=float(rep[\"\
+          candidate_success_rate\"]), n_paired=int(rep[\"n_paired\"]),\n         \
+          \       fixed=int(rep[\"fixed\"]), broken=int(rep[\"broken\"]), net=int(rep[\"\
+          net\"]), sign_test_p=float(rep[\"sign_test_p\"]),\n                gate_rule=rep[\"\
+          rule\"], verdict=rep[\"verdict\"], rekor_index=rekor_index, rekor_url=rekor_url,\n\
+          \                pr_url=\"\", dsp_run_id=run_id)\n    rm = mr.register_model(model_name,\
+          \ image_ref, model_format_name=\"lerobot-act\", model_format_version=\"\
+          1\",\n                           version=candidate, description=\"SO-ARM\
+          \ ACT pick-and-place policy (flywheel promotions)\",\n                 \
+          \          version_description=f\"{rep['incumbent']} {rep['incumbent_success_rate']:.2f}\
+          \ -> {candidate} \"\n                                               f\"\
+          {rep['candidate_success_rate']:.2f}, net {rep['net']:+d}, p={rep['sign_test_p']}\"\
+          ,\n                           metadata=meta)\n    mv = mr.get_model_version(model_name,\
+          \ candidate)\n    print(json.dumps({\"registered_model_id\": rm.id, \"model_version_id\"\
+          : mv.id, \"custom_properties\": mv.custom_properties}, indent=1))\n    return\
+          \ mv.id\n\n"
+        image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
     exec-sign-modelcar:
       container:
         args:
@@ -354,11 +509,14 @@ deploymentSpec:
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef sign_modelcar(image_ref: str, rekor_url: str, cosign_version:\
-          \ str) -> str:\n    \"\"\"cosign v2.x sign by digest, --recursive so every\
-          \ per-arch manifest of the index carries its own\n    signature (containers/image\
+          \ str) -> NamedTuple(\"SignOutputs\", [(\"image_ref\", str), (\"rekor_index\"\
+          , int)]):\n    \"\"\"cosign v2.x sign by digest, --recursive so every per-arch\
+          \ manifest of the index carries its own\n    signature (containers/image\
           \ verifies the instance it selects); Rekor when rekor_url is set (RHTAS).\n\
           \    COSIGN_PASSWORD arrives from the cosign-signing-key Secret's `cosign.password`\
-          \ key.\"\"\"\n    import os, platform as _plat, subprocess, urllib.request\n\
+          \ key.\n    rekor_index = the index's own tlog entry (the first `tlog entry\
+          \ created` line; -1 without Rekor).\"\"\"\n    import os, platform as _plat,\
+          \ re, subprocess, urllib.request\n    from collections import namedtuple\n\
           \    arch = {\"x86_64\": \"amd64\", \"amd64\": \"amd64\", \"aarch64\": \"\
           arm64\", \"arm64\": \"arm64\"}[_plat.machine()]\n    urllib.request.urlretrieve(f\"\
           https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-{arch}\"\
@@ -372,8 +530,12 @@ deploymentSpec:
           /tmp/docker\"\n    cmd = [\"/tmp/cosign\", \"sign\", \"--key\", \"/etc/cosign/cosign.key\"\
           , \"-y\", \"--recursive\", image_ref]\n    cmd += [\"--rekor-url\", rekor_url,\
           \ \"--tlog-upload=true\"] if rekor_url else [\"--tlog-upload=false\"]\n\
-          \    subprocess.run(cmd, check=True); print(\"signed\", image_ref); return\
-          \ image_ref\n\n"
+          \    r = subprocess.run(cmd, capture_output=True, text=True); print(r.stdout);\
+          \ print(r.stderr)\n    if r.returncode != 0: raise SystemExit(1)\n    idx\
+          \ = [int(m) for m in re.findall(r\"tlog entry created with index: (\\d+)\"\
+          , r.stdout + r.stderr)]\n    print(\"signed\", image_ref, \"rekor indexes\"\
+          , idx)\n    return namedtuple(\"SignOutputs\", [\"image_ref\", \"rekor_index\"\
+          ])(image_ref, idx[0] if idx else -1)\n\n"
         image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
     exec-trigger-and-wait:
       container:
@@ -406,13 +568,15 @@ deploymentSpec:
           \ collector: str,\n                     incumbent_checkpoint: str, steps_per_frame:\
           \ float, eval_n: int,\n                     eval_seed_base: int, kafka_bootstrap:\
           \ str, timeout_min: int,\n                     eval_report: dsl.OutputPath(str),\
-          \ checkpoint: dsl.OutputPath(str)):\n    \"\"\"[desktop shim] publish a\
-          \ training trigger and wait for the host runner's result.\"\"\"\n    import\
-          \ json, sys, time\n    from kafka import KafkaConsumer, KafkaProducer\n\
-          \    msg = dict(run_id=run_id, candidate=candidate, incumbent=incumbent,\
-          \ collector=collector,\n               incumbent_checkpoint=incumbent_checkpoint,\
-          \ steps_per_frame=steps_per_frame,\n               eval_n=eval_n, eval_seed_base=eval_seed_base)\n\
-          \    consumer = KafkaConsumer(\"training-results\", bootstrap_servers=kafka_bootstrap,\n\
+          \ checkpoint: dsl.OutputPath(str), dataset_uri: dsl.OutputPath(str)):\n\
+          \    \"\"\"[desktop shim] publish a training trigger and wait for the host\
+          \ runner's result.\n    dataset_uri is the runner's assembled LeRobot dataset\
+          \ (\"reused\" on the D023 pre-trained path).\"\"\"\n    import json, sys,\
+          \ time\n    from kafka import KafkaConsumer, KafkaProducer\n    msg = dict(run_id=run_id,\
+          \ candidate=candidate, incumbent=incumbent, collector=collector,\n     \
+          \          incumbent_checkpoint=incumbent_checkpoint, steps_per_frame=steps_per_frame,\n\
+          \               eval_n=eval_n, eval_seed_base=eval_seed_base)\n    consumer\
+          \ = KafkaConsumer(\"training-results\", bootstrap_servers=kafka_bootstrap,\n\
           \                             group_id=f\"pipeline-{run_id}\", auto_offset_reset=\"\
           latest\",\n                             consumer_timeout_ms=60_000,\n  \
           \                           value_deserializer=lambda v: json.loads(v.decode()))\n\
@@ -427,9 +591,10 @@ deploymentSpec:
           host runner failed:\", res.get(\"message\")); sys.exit(1)\n            \
           \    with open(eval_report, \"w\") as f: f.write(res[\"eval_report_uri\"\
           ])\n                with open(checkpoint, \"w\") as f: f.write(res[\"checkpoint_uri\"\
-          ])\n                return\n        print(\"waiting for training-results...\"\
-          , flush=True)\n    print(\"timed out waiting for the host runner\"); sys.exit(1)\n\
-          \n"
+          ])\n                with open(dataset_uri, \"w\") as f: f.write(str(res.get(\"\
+          dataset_uri\", \"\")))\n                return\n        print(\"waiting\
+          \ for training-results...\", flush=True)\n    print(\"timed out waiting\
+          \ for the host runner\"); sys.exit(1)\n\n"
         image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
 pipelineInfo:
   description: assemble -> train -> eval gate -> package -> sign -> Fleet promotion
@@ -460,6 +625,7 @@ root:
           name: comp-open-promotion-pr
         dependentTasks:
         - eval-gate
+        - register-model
         - sign-modelcar
         - trigger-and-wait
         inputs:
@@ -482,7 +648,7 @@ root:
               componentInputParameter: gitops_branch
             image_ref:
               taskOutputParameter:
-                outputParameterKey: Output
+                outputParameterKey: image_ref
                 producerTask: sign-modelcar
             report_json:
               taskOutputParameter:
@@ -517,6 +683,75 @@ root:
               componentInputParameter: s3_endpoint
         taskInfo:
           name: package-modelcar
+      record-pr-url:
+        cachingOptions: {}
+        componentRef:
+          name: comp-record-pr-url
+        dependentTasks:
+        - open-promotion-pr
+        inputs:
+          parameters:
+            candidate:
+              componentInputParameter: candidate
+            model_name:
+              runtimeValue:
+                constant: soarm-act
+            model_registry_url:
+              componentInputParameter: model_registry_url
+            pr_url:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: open-promotion-pr
+        taskInfo:
+          name: record-pr-url
+      register-model:
+        cachingOptions: {}
+        componentRef:
+          name: comp-register-model
+        dependentTasks:
+        - eval-gate
+        - sign-modelcar
+        - trigger-and-wait
+        inputs:
+          parameters:
+            candidate:
+              componentInputParameter: candidate
+            checkpoint_uri:
+              taskOutputParameter:
+                outputParameterKey: checkpoint
+                producerTask: trigger-and-wait
+            dataset_uri:
+              taskOutputParameter:
+                outputParameterKey: dataset_uri
+                producerTask: trigger-and-wait
+            eval_report_uri:
+              taskOutputParameter:
+                outputParameterKey: eval_report
+                producerTask: trigger-and-wait
+            image_ref:
+              taskOutputParameter:
+                outputParameterKey: image_ref
+                producerTask: sign-modelcar
+            model_name:
+              runtimeValue:
+                constant: soarm-act
+            model_registry_url:
+              componentInputParameter: model_registry_url
+            rekor_index:
+              taskOutputParameter:
+                outputParameterKey: rekor_index
+                producerTask: sign-modelcar
+            rekor_url:
+              componentInputParameter: rekor_url
+            report_json:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: eval-gate
+            run_id:
+              runtimeValue:
+                constant: '{{$.pipeline_job_uuid}}'
+        taskInfo:
+          name: register-model
       sign-modelcar:
         cachingOptions: {}
         componentRef:
@@ -622,6 +857,10 @@ root:
         parameterType: STRING
       mode:
         defaultValue: desktop
+        isOptional: true
+        parameterType: STRING
+      model_registry_url:
+        defaultValue: https://flywheel.rhoai-model-registries.svc:8443
         isOptional: true
         parameterType: STRING
       modelcar_base:
