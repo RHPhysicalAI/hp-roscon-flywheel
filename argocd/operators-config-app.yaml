@@ -15,5 +15,5 @@ spec:
     targetRevision: desktop-gpu-split
   syncPolicy:
     automated:
-      prune: false
+      prune: true
       selfHeal: true

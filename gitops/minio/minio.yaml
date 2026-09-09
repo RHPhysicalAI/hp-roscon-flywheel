@@ -12,15 +12,8 @@ kind: Namespace
 metadata:
   name: minio
 ---
-apiVersion: v1
-kind: Secret
-metadata:
-  name: minio-credentials
-  namespace: minio
-type: Opaque
-stringData:
-  root-user: minioadmin
-  root-password: minioadmin
+# Secret minio-credentials (keys root-user, root-password) is hand-created and deliberately not
+# in git (Phase 4.5 F, D026 row 13) — see argocd/README.md "Hand-created Secrets".
 ---
 apiVersion: v1
 kind: PersistentVolume

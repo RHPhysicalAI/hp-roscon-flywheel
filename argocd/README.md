@@ -18,18 +18,24 @@ export KUBECONFIG=~/sno-flywheel/auth/kubeconfig
 | 1 | `storage-app.yaml` | `storage` | `local-path-storage` | — (default StorageClass `local-path`) |
 | 2 | `operators-app.yaml` | `operators` | `openshift-operators` | 1 |
 | 3 | `operators-config-app.yaml` | `operators-config` | `redhat-ods-operator` | 2 — all CSVs `Succeeded` (`oc get csv -A`) |
-| 4 | — | `act-serving` | `flywheel` | retired 2026-09-09 after the first RHEM promotion and rollback (D025): file removed, app and its Deployments/Service deleted |
-| 5 | `repo-flightctl-charts.yaml` | — (repository Secret) | `openshift-gitops` | — |
-| 6 | `rhem-app.yaml` | `rhem` | `flightctl` | 1, 5, **OCP ≥ 4.19** (chart `kubeVersion >= 1.32`) |
-| 7 | `tekton-app.yaml` | `tekton` | `flywheel` | 2 (Pipelines CSV, `pipeline` SA); Secrets `quay-push` + `cosign-signing` (below) |
+| 4 | `minio-app.yaml` | `minio` | `minio` | 1; Secret `minio-credentials` (below) |
+| 5 | `flywheel-app.yaml` | `flywheel` | `flywheel` | 3, 4; Secret `hub-credentials` (below) |
+| 6 | `observability-app.yaml` | `observability` | `observability` | Perses CRDs — Cluster Observability + Tempo operators, installed by hand (not in `gitops/operators/`) |
+| 7 | — | `act-serving` | `flywheel` | retired 2026-09-09 after the first RHEM promotion and rollback (D025): file removed, app and its Deployments/Service deleted |
+| 8 | `repo-flightctl-charts.yaml` | — (repository Secret) | `openshift-gitops` | — |
+| 9 | `rhem-app.yaml` | `rhem` | `flightctl` | 1, 8, **OCP ≥ 4.19** (chart `kubeVersion >= 1.32`) |
+| 10 | `tekton-app.yaml` | `tekton` | `flywheel` | 2 (Pipelines CSV, `pipeline` SA); Secrets `quay-push` + `cosign-signing` (below) |
 
-The `flywheel`, `minio` and `observability` Applications exist on the cluster but are not yet
-in this directory (Phase 4.5 F ride-along).
+Every app runs `prune: true` (D026 row 5, Phase 4.5 F): the cluster equals `gitops/<dir>`, and
+`oc get applications.argoproj.io -n openshift-gitops` lists exactly one app per `*-app.yaml` here.
 
 ```bash
 oc apply -f argocd/storage-app.yaml
 oc apply -f argocd/operators-app.yaml
 oc apply -f argocd/operators-config-app.yaml     # after CSVs are Succeeded
+oc apply -f argocd/minio-app.yaml                # after creating minio-credentials by hand
+oc apply -f argocd/flywheel-app.yaml             # after creating hub-credentials by hand
+oc apply -f argocd/observability-app.yaml
 oc apply -f argocd/repo-flightctl-charts.yaml
 oc apply -f argocd/rhem-app.yaml                 # after the cluster is on 4.19
 oc apply -f argocd/tekton-app.yaml               # runtime-image build + sign (D028)
@@ -38,10 +44,31 @@ oc get applications.argoproj.io -n openshift-gitops
 
 ## Hand-created Secrets (never in git)
 
-| Secret (ns `flywheel`) | Keys | Used by | Created with |
-|---|---|---|---|
-| `cosign-signing` | `cosign.key`, `cosign.pub`, `cosign.password` | `tekton` app — `cosign-sign` Task (workspace `cosign-key`) | `oc create secret generic cosign-signing -n flywheel --from-file=cosign.key=$HOME/cosign/cosign.key --from-file=cosign.pub=$HOME/cosign/cosign.pub --from-literal=cosign.password="$COSIGN_PASSWORD"` on the desktop (same key as the KFP `cosign-signing-key` Secret and the Fleet's `cosign.pub`) |
-| `quay-push` | `.dockerconfigjson` | KFP `package_modelcar`/`sign_modelcar`; `tekton` app projects it as `config.json` (PipelineRun workspace `items:`) | quay.io robot dockerconfigjson |
+Argo does not track these (no `argocd.argoproj.io/tracking-id` annotation), so `prune: true`
+never touches them; a fresh cluster needs each one before the app that consumes it syncs. Names
+and keys only — the MinIO values live in `~/.minio-env` on the desktop, the rest with the operator.
+
+| Secret | Namespace | Keys | Used by | Created with |
+|---|---|---|---|---|
+| `minio-credentials` | `minio` | `root-user`, `root-password` | MinIO server; `minio-olga-readonly-setup` Job | the `oc create secret … \| oc apply` pair below |
+| `hub-credentials` | `flywheel` | `s3-access-key`, `s3-secret-key` (same values) | sync-agent, rejected-mirror, DSPA object storage, KFP `eval_gate`/`package_modelcar` — `gitops/flywheel/README.md` | same |
+| `minio-olga-readonly-credentials` | `minio` | `access-key`, `secret-key` | `minio-olga-readonly-setup` Job | see `gitops/minio/minio-readonly-user.yaml` |
+| `cosign-signing-key` | `flywheel` | `cosign.key`, `cosign.pub`, `cosign.password` | KFP `sign_modelcar` (`COSIGN_PASSWORD` ← `cosign.password`) | same key material as `cosign-signing` |
+| `github-token` | `flywheel` | `token` | KFP `open_promotion_pr` | GitHub fine-grained token (contents + pull requests) |
+| `cosign-signing` | `flywheel` | `cosign.key`, `cosign.pub`, `cosign.password` | `tekton` app — `cosign-sign` Task (workspace `cosign-key`) | `oc create secret generic cosign-signing -n flywheel --from-file=cosign.key=$HOME/cosign/cosign.key --from-file=cosign.pub=$HOME/cosign/cosign.pub --from-literal=cosign.password="$COSIGN_PASSWORD"` on the desktop (same key as the KFP `cosign-signing-key` Secret and the Fleet's `cosign.pub`) |
+| `quay-push` | `flywheel` | `.dockerconfigjson` | KFP `package_modelcar`/`sign_modelcar`; `tekton` app projects it as `config.json` (PipelineRun workspace `items:`) | quay.io robot dockerconfigjson |
+
+The MinIO pair, from the desktop, without echoing values:
+
+```bash
+set -a; source ~/.minio-env; set +a
+oc create secret generic minio-credentials -n minio \
+  --from-literal=root-user="$MINIO_ACCESS_KEY" --from-literal=root-password="$MINIO_SECRET_KEY" \
+  --dry-run=client -o yaml | oc apply -f -
+oc create secret generic hub-credentials -n flywheel \
+  --from-literal=s3-access-key="$MINIO_ACCESS_KEY" --from-literal=s3-secret-key="$MINIO_SECRET_KEY" \
+  --dry-run=client -o yaml | oc apply -f -
+```
 
 ## The Helm OCI repository Secret (`repo-flightctl-charts.yaml`)
 
