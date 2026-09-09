@@ -23,7 +23,7 @@ Phase 3 closes it with governance; Phase 3+ makes the improvement autonomous.
 | 3 — Training + close the loop | **Complete** (2026-09-08) — eval harness (D020), self-improvement proof (D021: 73% → 86%, p=0.019), governed pipeline through RHOAI/RHTAS with PR #1 merged and swapped, loop closed on v2; static chart shipped | D015, D020–D022 |
 | 3+ — Bootstrap loop | **Post-ROSCon** — designed, prerequisites complete (recording + trainable data landed in Phase 2.5, flywheel-data training proven in Phase 3), not scheduled; the remaining work is the privileged expert, a held-out randomized eval set, and the curriculum controller (operator decision 2026-09-09) | `BOOTSTRAP-LOOP.md` |
 | 4 — Demo hardening + Fury prep | **In progress** — item 1 done (2026-09-08): `docs/DEMO_RUNBOOK.md`, Short Cut + Full Live, every screen verified live (D023) | D023 |
-| 4.5 — RHEM device plane | **In progress** — A–F, G-prep done; full-project review + hardening done (D113–D120); kit recording + rehearsal (operator), then Fury on site | D024–D120 |
+| 4.5 — RHEM device plane | **In progress** — A–F, G-prep done; full-project review, hardening and deployment done (D113–D130); kit recording + rehearsal (operator), then Fury on site | D024–D120 |
 
 ---
 
@@ -526,6 +526,8 @@ Closed 2026-09-09 (D113): lineage-aware prune, Fleet-following coordinator defau
 | `run-coordinator.sh` default `MODEL_VERSION` must follow the Fleet | — | **done (D113)** — host copy synced |
 | `consumer.py` per-manifest `pending=<n>` log line | — | **done (D113)** — lands on next Argo sync |
 | `healthcheck.sh` cannot see a wedged action server | F/G | planned — needs a liveness-probe or heartbeat design, not a same-pass fix (D113) |
+| Deploy the review's source fixes (C3/C10/C12 sim image; C11/C12 runtime image) | — | **done (D129–D130)** — sim image rebuilt and swapped; runtime rebuilt in one clean Tekton run, re-pinned, device rv8 Healthy; 10-min validation loop clean |
+| Port + prune bags before the next longer loop (319 bags, 110 G free; guard parks at 330 / 100 G) | operator | planned |
 | `aggregate.success_rate` should exclude `goal_accepted: false` episodes | F/G | **done (D113)** — not live until the next Tekton runtime-image build + sign + Fleet re-pin (`coordinator.py` is baked into the image) |
 | OTel re-emission and AMQ Streams | — | post-ROSCon deferrals (D026) |
 | Fury on site: `device/provision.sh` on aarch64 + CDI, enroll with Fury labels, fresh SNO 4.19+ with `argocd/*-app.yaml` + `rhem/bootstrap/*` | G | Sept 20–25 |

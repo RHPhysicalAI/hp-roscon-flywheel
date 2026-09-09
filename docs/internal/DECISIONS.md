@@ -4198,3 +4198,27 @@ unchanged, so no modelcar pull.
 A 10-minute validation loop follows to exercise the whole path; the loop is stopped afterwards
 and the disk guard stays armed. The `runtime-image-a4` PipelineRun and its 60 Gi PVC remain to
 be deleted after the kit recording (inbox).
+
+---
+
+## D130 — Re-pin outcome and validation loop: device Healthy on the clean build; the rebuilt sim and runtime run the loop end to end
+
+**Date:** 2026-09-09
+**Record (re-pin, D129):** ResourceSync picked up `934371e`; device rv 7 → 8, `UpToDate`,
+`applicationsSummary: Healthy` at +8:33 from the push (one RS poll + container recreate + health
+start period); the app container's `ImageDigest` is `02e66d89…`; no modelcar pull.
+**Record (validation loop, 10 min):** `run-coordinator.sh` started with no `MODEL_VERSION` and
+followed the Fleet (`act-v2-ft160`, D113 verified live) on the new runtime digest. 13 episodes,
+0 goal rejections, 0 errors; coordinator logged `Observed model_version: act-v2-ft160`; emitter
+verdicts 12 FAIL / 1 SUCCESS with **no `INJECTED-FAIL`** (D115's removal is live on the sim
+image); dashboard `flywheel_running: true`, counts 0 → 1 curated / 12 rejected / 1 sent, trigger
+1/160; device stayed rv8 Healthy throughout. The 1-in-13 warm-up ratio equals D073's first-12-
+minute window (1 curated / 13 rejected) — consistent, not a regression signal; the window is too
+short to compare success rates. Loop stopped afterwards; disk guard resident.
+**Decision:** C11 and C12 are closed as deployed, not just fixed in source; D112's "one clean
+end-to-end run" is closed by `runtime-image-plt5s`.
+**Consequences:** host root disk 110 G free with 319 bags after the loop — the guard parks the
+loop at < 100 G or ≥ 330 bags, so a port + prune (`assemble_all.sh` → `prune_bags.py --yes`,
+now lineage-aware) is due before the next longer loop (operator). Two finished PipelineRuns
+(`runtime-image-a4`, `runtime-image-plt5s`) each hold a 60 Gi PVC until deleted (after the kit
+recording, per the inbox).
