@@ -133,14 +133,18 @@ def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, pl
 def sign_modelcar(image_ref: str, rekor_url: str, cosign_version: str) -> NamedTuple("SignOutputs", [("image_ref", str), ("rekor_index", int)]):
     """cosign v2.x sign by digest, --recursive so every per-arch manifest of the index carries its own
     signature (containers/image verifies the instance it selects); Rekor when rekor_url is set (RHTAS).
-    COSIGN_PASSWORD arrives from the cosign-signing-key Secret's `cosign.password` key.
+    COSIGN_PASSWORD comes from the cosign-signing-key Secret's `cosign.password` key, read from the
+    Secret's volume mount (the DSP launcher does not honour an optional secretKeyRef env; a Secret
+    without the key means an unencrypted signing key).
     rekor_index = the index's own tlog entry (the first `tlog entry created` line; -1 without Rekor)."""
     import os, platform as _plat, re, subprocess, urllib.request
     from collections import namedtuple
     arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[_plat.machine()]
     urllib.request.urlretrieve(f"https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-{arch}", "/tmp/cosign")
     os.chmod("/tmp/cosign", 0o755)
-    if "COSIGN_PASSWORD" not in os.environ:
+    if os.path.exists("/etc/cosign/cosign.password"):
+        os.environ["COSIGN_PASSWORD"] = open("/etc/cosign/cosign.password").read().strip()
+    else:
         print("cosign-signing-key has no `cosign.password` key; assuming an unencrypted signing key"); os.environ["COSIGN_PASSWORD"] = ""
     import json as _j; os.makedirs("/tmp/docker", exist_ok=True)
     cfg = _j.load(open("/etc/quay/.dockerconfigjson"))
@@ -278,8 +282,7 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
     k8s.use_secret_as_volume(pk, secret_name="quay-push", mount_path="/etc/quay")
     sg = sign_modelcar(image_ref=pk.output, rekor_url=rekor_url, cosign_version=cosign_version); sg.set_caching_options(False)
     k8s.use_secret_as_volume(sg, secret_name="quay-push", mount_path="/etc/quay")
-    k8s.use_secret_as_volume(sg, secret_name="cosign-signing-key", mount_path="/etc/cosign")
-    k8s.use_secret_as_env(sg, secret_name="cosign-signing-key", secret_key_to_env={"cosign.password": "COSIGN_PASSWORD"}, optional=True)
+    k8s.use_secret_as_volume(sg, secret_name="cosign-signing-key", mount_path="/etc/cosign")  # cosign.key (+ cosign.password if set)
     reg = register_model(model_name=MODEL_NAME, image_ref=sg.outputs["image_ref"], candidate=candidate,
                          checkpoint_uri=t.outputs["checkpoint"], dataset_uri=t.outputs["dataset_uri"],
                          eval_report_uri=t.outputs["eval_report"], report_json=g.output, rekor_index=sg.outputs["rekor_index"],

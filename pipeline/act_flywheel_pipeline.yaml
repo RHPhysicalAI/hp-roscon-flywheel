@@ -513,18 +513,22 @@ deploymentSpec:
           , int)]):\n    \"\"\"cosign v2.x sign by digest, --recursive so every per-arch\
           \ manifest of the index carries its own\n    signature (containers/image\
           \ verifies the instance it selects); Rekor when rekor_url is set (RHTAS).\n\
-          \    COSIGN_PASSWORD arrives from the cosign-signing-key Secret's `cosign.password`\
-          \ key.\n    rekor_index = the index's own tlog entry (the first `tlog entry\
-          \ created` line; -1 without Rekor).\"\"\"\n    import os, platform as _plat,\
-          \ re, subprocess, urllib.request\n    from collections import namedtuple\n\
-          \    arch = {\"x86_64\": \"amd64\", \"amd64\": \"amd64\", \"aarch64\": \"\
-          arm64\", \"arm64\": \"arm64\"}[_plat.machine()]\n    urllib.request.urlretrieve(f\"\
+          \    COSIGN_PASSWORD comes from the cosign-signing-key Secret's `cosign.password`\
+          \ key, read from the\n    Secret's volume mount (the DSP launcher does not\
+          \ honour an optional secretKeyRef env; a Secret\n    without the key means\
+          \ an unencrypted signing key).\n    rekor_index = the index's own tlog entry\
+          \ (the first `tlog entry created` line; -1 without Rekor).\"\"\"\n    import\
+          \ os, platform as _plat, re, subprocess, urllib.request\n    from collections\
+          \ import namedtuple\n    arch = {\"x86_64\": \"amd64\", \"amd64\": \"amd64\"\
+          , \"aarch64\": \"arm64\", \"arm64\": \"arm64\"}[_plat.machine()]\n    urllib.request.urlretrieve(f\"\
           https://github.com/sigstore/cosign/releases/download/{cosign_version}/cosign-linux-{arch}\"\
-          , \"/tmp/cosign\")\n    os.chmod(\"/tmp/cosign\", 0o755)\n    if \"COSIGN_PASSWORD\"\
-          \ not in os.environ:\n        print(\"cosign-signing-key has no `cosign.password`\
-          \ key; assuming an unencrypted signing key\"); os.environ[\"COSIGN_PASSWORD\"\
-          ] = \"\"\n    import json as _j; os.makedirs(\"/tmp/docker\", exist_ok=True)\n\
-          \    cfg = _j.load(open(\"/etc/quay/.dockerconfigjson\"))\n    _j.dump({\"\
+          , \"/tmp/cosign\")\n    os.chmod(\"/tmp/cosign\", 0o755)\n    if os.path.exists(\"\
+          /etc/cosign/cosign.password\"):\n        os.environ[\"COSIGN_PASSWORD\"\
+          ] = open(\"/etc/cosign/cosign.password\").read().strip()\n    else:\n  \
+          \      print(\"cosign-signing-key has no `cosign.password` key; assuming\
+          \ an unencrypted signing key\"); os.environ[\"COSIGN_PASSWORD\"] = \"\"\n\
+          \    import json as _j; os.makedirs(\"/tmp/docker\", exist_ok=True)\n  \
+          \  cfg = _j.load(open(\"/etc/quay/.dockerconfigjson\"))\n    _j.dump({\"\
           auths\": cfg.get(\"auths\", {})}, open(\"/tmp/docker/config.json\", \"w\"\
           ))  # drop credsStore/credHelpers\n    os.environ[\"DOCKER_CONFIG\"] = \"\
           /tmp/docker\"\n    cmd = [\"/tmp/cosign\", \"sign\", \"--key\", \"/etc/cosign/cosign.key\"\
@@ -940,15 +944,6 @@ platforms:
               runtimeValue:
                 constant: quay-push
         exec-sign-modelcar:
-          secretAsEnv:
-          - keyToEnv:
-            - envVar: COSIGN_PASSWORD
-              secretKey: cosign.password
-            optional: true
-            secretName: cosign-signing-key
-            secretNameParameter:
-              runtimeValue:
-                constant: cosign-signing-key
           secretAsVolume:
           - mountPath: /etc/quay
             optional: false
