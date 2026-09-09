@@ -11,7 +11,7 @@
 #   - `--recursive`: a manifest list gets one signature per platform image plus one for the
 #     list itself, so podman on the device (which verifies the platform manifest it resolves to)
 #     and cosign on the list digest both pass.
-#   - a verify step that runs *without* --insecure-ignore-tlog and with SIGSTORE_REKOR_PUBLIC_KEY
+#   - a verify step that never bypasses the transparency log, with SIGSTORE_REKOR_PUBLIC_KEY
 #     pointing at the rekor-public-key ConfigMap (D045: with a custom --rekor-url cosign otherwise
 #     looks the log key up in the public Sigstore TUF root). The same rekor.pub is on every device.
 #   - the key password comes from the `cosign.password` file in the cosign-key workspace
@@ -153,14 +153,24 @@ spec:
             export DOCKER_CONFIG=/tmp/.docker
           fi
         fi
-        # Rekor SET verification against the in-cluster log key; never --insecure-ignore-tlog.
+        # Rekor SET verification against the in-cluster log key; never the tlog bypass flag.
         export SIGSTORE_REKOR_PUBLIC_KEY="${REKOR_PUB}"
         echo "Verifying ${PARAMS_IMAGE} against cosign.pub + Rekor key ${REKOR_PUB}"
+        # Pass/fail is the exit code only: over the plain-HTTP in-cluster Service a missing log
+        # entry surfaces as exit 12 with an undecodable error body, over the TLS route as
+        # "signature not found in transparency log" — the text differs, the code does not.
+        set +e
         /tools/cosign verify \
           --key "${KEYS}/cosign.pub" \
           --rekor-url "${PARAMS_REKOR_URL}" \
           --output json \
           "${PARAMS_IMAGE}" > /tmp/verify.json
+        rc=$?
+        set -e
+        if [[ ${rc} -ne 0 ]]; then
+          echo "cosign verify failed with exit code ${rc}" >&2
+          exit "${rc}"
+        fi
 
         INDEX="$(grep -o '"logIndex":[0-9]*' /tmp/verify.json | head -1 | cut -d: -f2)"
         [[ -n "${INDEX}" ]] || { echo "verified payload carries no Rekor logIndex" >&2; exit 1; }
