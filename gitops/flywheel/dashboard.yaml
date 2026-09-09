@@ -8,14 +8,19 @@
 # The dashboard itself is a demo beat: it is GitOps-delivered (Argo CD sync),
 # runs on the edge device (not the hub), and needs no terminal during Acts 2-3.
 #
-# Controls:  Start/Stop Flywheel, Clear Data
+# Controls:  Clear Data
 # Display:   Sim status, rollout stats, curation log (scrolling tail),
 #            policy comparison (v1 vs v2 rollout videos),
 #            flywheel progress bar, model version indicator
 #
+# Lineage (model version badge, curated count, trigger bar): read from the
+# manifest-consumer Deployment's COLLECTOR env, which Argo syncs from the same
+# promotion commit that edits the RHEM Fleet (D072); the Deployment's last
+# rollout time is the epoch the consumer counts from. The dashboard follows the
+# device by the Argo poll (~1-3 min after the device serves the new version).
+#
 # Auth posture: none (matches PoC-wide unauthenticated posture).
-# RBAC: dashboard SA has Deployment patch in flywheel namespace + Service read
-#       in act-serving namespace (to detect active policy version).
+# RBAC: dashboard SA reads/patches Deployments in the flywheel namespace.
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -53,8 +58,10 @@ data:
     ROLLOUTS      = DATA / "rollouts"
     HTML_FILE     = pathlib.Path(os.environ.get("HTML_FILE",  "/app/index.html"))
     FW_NS         = os.environ.get("FLYWHEEL_NS", "flywheel")
-    ACT_NS        = os.environ.get("ACT_NS",      "flywheel")
     THRESHOLD     = int(os.environ.get("TRIGGER_THRESHOLD", "10"))
+    COLLECTOR_DEPLOY = os.environ.get("COLLECTOR_DEPLOYMENT", "manifest-consumer")
+    BASELINE_MV   = os.environ.get("BASELINE_MODEL_VERSION", "upstream-act-teacher")
+    LOOP_ACTIVE_S = int(os.environ.get("LOOP_ACTIVE_SECONDS", "180"))
 
     # ---- K8s helpers ---------------------------------------------------------
     def _apps() -> Optional["k8s.AppsV1Api"]:
@@ -108,17 +115,50 @@ data:
             app.logger.error(f"set_env {ns}/{name} {key}={value}: {e}")
             return False
 
+    _lineage_cache = {"mv": "", "since": 0.0, "ts": 0.0}
+
+    def _lineage() -> tuple[str, float]:
+        """(COLLECTOR, epoch) from the manifest-consumer Deployment; its pending count restarts at 0 on each rollout (D072)."""
+        now = time.time()
+        if now - _lineage_cache["ts"] < 10:
+            return _lineage_cache["mv"], _lineage_cache["since"]
+        mv, since = "", 0.0
+        api = _apps()
+        if api:
+            try:
+                d = api.read_namespaced_deployment(COLLECTOR_DEPLOY, FW_NS)
+                for c in d.spec.template.spec.containers:
+                    for ev in c.env or []:
+                        if ev.name == "COLLECTOR" and ev.value:
+                            mv = ev.value
+                for cond in d.status.conditions or []:
+                    if cond.type == "Progressing" and cond.last_update_time:
+                        since = cond.last_update_time.timestamp()
+            except Exception as e:
+                app.logger.warning(f"lineage from {FW_NS}/{COLLECTOR_DEPLOY}: {e}")
+        _lineage_cache.update(mv=mv, since=since, ts=now)
+        return mv, since
+
     def get_model_version() -> str:
-        """blue selector = v1, green = v2."""
-        api = _core()
-        if not api:
-            return "soarm-act-v1"
-        try:
-            svc = api.read_namespaced_service("act-policy", ACT_NS)
-            color = (svc.spec.selector or {}).get("color", "blue")
-            return "soarm-act-v2" if color == "green" else "soarm-act-v1"
-        except Exception:
-            return "soarm-act-v1"
+        return _lineage()[0]
+
+    _mv_by_file: dict[str, tuple[float, str]] = {}
+
+    def _lineage_count(dirs, mv: str, since: float) -> int:
+        """Episodes stamped `mv` that landed after `since` -- what the consumer counts toward the trigger."""
+        n = 0
+        for d in dirs:
+            for p in _jsons(d):
+                try:
+                    mtime = p.stat().st_mtime
+                    hit = _mv_by_file.get(p.name)
+                    if not hit or hit[0] != mtime:
+                        hit = (mtime, json.loads(p.read_text()).get("model_version") or "")
+                        _mv_by_file[p.name] = hit
+                    n += hit[1] == mv and mtime >= since
+                except Exception:
+                    pass
+        return n
 
     # ---- Episode helpers -----------------------------------------------------
     def _jsons(d: pathlib.Path) -> list[pathlib.Path]:
@@ -163,8 +203,11 @@ data:
     def status_snapshot() -> dict:
         ep     = _latest_episode()
         sent   = _count(EP_SENT)
-        curated = _count(EP_CUR)
-        mv     = get_model_version()
+        mv, since = _lineage()
+        # Curated successes of the live lineage since the consumer's last rollout (sync-agent
+        # moves curated -> sent within seconds, so the curated/ dir alone always reads 0).
+        curated = _lineage_count((EP_CUR, EP_SENT), mv, since) if mv else _count(EP_CUR)
+        running = bool(ep) and (time.time() - ep.get("_mtime", 0)) < LOOP_ACTIVE_S
         d      = _rollouts()
 
         # Extract Generator output from latest episode (D031 format)
@@ -197,13 +240,14 @@ data:
             },
             "trigger": {
                 "threshold": THRESHOLD,
-                "progress":  min(sent, THRESHOLD),
-                "pct":       min(100, round(sent / THRESHOLD * 100)),
-                "triggered": sent >= THRESHOLD,
+                "progress":  min(curated, THRESHOLD),
+                "pct":       min(100, round(curated / THRESHOLD * 100)),
+                "triggered": curated >= THRESHOLD,
             },
-            "flywheel_running": get_replicas(FW_NS, "so-arm-sim") > 0,
+            "flywheel_running": running,
             "model_version":    mv,
-            "promoted":         mv == "soarm-act-v2",
+            "promoted":         bool(mv) and mv != BASELINE_MV,
+            "lineage_since":    since,
             "latest": {
                 "scene":             scene,
                 "scene_description": scene_description,
@@ -1259,8 +1303,8 @@ data:
     // ---- Apply status -------------------------------------------------------
     function applyStatus(s) {
       // Model version
-      const mv = s.model_version || 'soarm-act-v1';
-      const isV2 = mv === 'soarm-act-v2';
+      const mv = s.model_version || 'unknown';
+      const isV2 = !!s.promoted;
       document.getElementById('model-label').textContent = mv;
       document.getElementById('model-badge').className = isV2 ? 'v2' : 'v1';
       document.getElementById('sb-model').textContent = mv;
@@ -1282,7 +1326,7 @@ data:
 
       // Counts
       const c = s.counts || {};
-      document.getElementById('c-total').textContent    = (c.raw||0)+(c.curated||0)+(c.rejected||0)+(c.sent||0);
+      document.getElementById('c-total').textContent    = (c.raw||0)+(c.rejected||0)+(c.sent||0);
       document.getElementById('c-rejected').textContent = c.rejected || 0;
       document.getElementById('c-sent').textContent     = c.sent     || 0;
 
@@ -1673,7 +1717,7 @@ roleRef:
   name: dashboard-flywheel
   apiGroup: rbac.authorization.k8s.io
 ---
-# Same namespace — read Service selector to detect active policy version
+# Same namespace — Service read is unused since act-serving was retired (D075); kept for the Deployment read
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -1736,6 +1780,8 @@ spec:
               value: "flywheel"
             - name: TRIGGER_THRESHOLD
               value: "160"   # matches manifest-consumer (D022/D023); was thor-testing's 10
+            - name: DASHBOARD_CODE_REV
+              value: "2026-09-09-g"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
             - name: FRAMES_DIR
               value: "/data/frames"
             - name: HTML_FILE
