@@ -32,7 +32,10 @@
 #                                             (Rekor SET enforced on the device), signedIdentity matchRepository;
 #                                             the RHEL default entries for registry.access.redhat.com /
 #                                             registry.redhat.io are preserved because this file REPLACES the
-#                                             distro file; default stays insecureAcceptAnything for everything else
+#                                             distro file; the default is REJECT (review W-10): any reference
+#                                             outside the four enumerated registries/repos — a renamed repo, a
+#                                             typo in a promotion edit, a mirror, docker.io — is refused before
+#                                             any signature is even looked at (third negative test, D091 + Case 3)
 #   /etc/containers/registries.d/quay-jary.yaml  use-sigstore-attachments for quay.io/jary — without it
 #                                             containers/image never looks for the cosign attachment and every
 #                                             pull fails with "A signature was required, but no signature exists"
@@ -90,7 +93,7 @@ spec:
                 {
                     "default": [
                         {
-                            "type": "insecureAcceptAnything"
+                            "type": "reject"
                         }
                     ],
                     "transports": {
@@ -206,7 +209,7 @@ spec:
 
                 [Container]
                 # Runtime image: built + signed by Tekton (Phase 4.5 F), referenced by the multi-arch manifest-list digest (docs/eval-records/runtime-image-tekton.md: tag act-inference-aa7392f, Rekor 11/12/13).
-                Image=quay.io/jary/soarm-flywheel@sha256:3d67f4246fd0915278b419bf4a3c67c3c9e0f8a07c553305a7445f65fc2cb4af
+                Image=quay.io/jary/soarm-flywheel@sha256:02e66d895ed4ba328aa43263561027c18406d774887f465ab7acbd81e4c42d08
                 ContainerName=act-inference
                 Network=host
                 EnvironmentFile=/etc/act-inference/env

@@ -1,8 +1,11 @@
 # This project was developed with assistance from AI tools.
 #
-# Registers the aarch64 binfmt_misc handler on every amd64 node so buildah can run arm64
-# userland (apt, colcon, pip) under qemu-user during the cross-arch build of the runtime image
-# (D028). The init container writes the registration with the fix-binary (F) flag, so the qemu
+# Registers the foreign-architecture binfmt_misc handler on every node so buildah can run the
+# other arch's userland (apt, colcon, pip) under qemu-user during the cross-arch build of the
+# runtime image (D028): the `qemu-binfmt` DaemonSet registers arm64 on amd64 nodes (the
+# development SNO), `qemu-binfmt-arm64-host` registers amd64 on arm64 nodes (the Fury's SNO).
+# Each selects its own node arch, so exactly one of them schedules on a given cluster and the
+# other stays pending with no pods. The init container writes the registration with the fix-binary (F) flag, so the qemu
 # binary is loaded from this image once and build containers need nothing of their own; the
 # `hold` container only keeps the DaemonSet pod alive so the registration is re-applied after a
 # node reboot. Registration is idempotent (an already-registered arch is left in place).
@@ -61,6 +64,59 @@ spec:
           # docker.io/tonistiigi/binfmt:qemu-v10.2.3 (multi-arch index)
           image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
           args: ["--install", "arm64"]
+          securityContext:
+            privileged: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+      containers:
+        - name: hold
+          # registry.access.redhat.com/ubi9/ubi-minimal:9.6-1760515502
+          image: registry.access.redhat.com/ubi9/ubi-minimal@sha256:34880b64c07f28f64d95737f82f891516de9a3b43583f39970f7bf8e4cfa48b7
+          command: ["sleep", "infinity"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: qemu-binfmt-arm64-host
+  namespace: flywheel
+  labels:
+    app: qemu-binfmt-arm64-host
+spec:
+  selector:
+    matchLabels:
+      app: qemu-binfmt-arm64-host
+  template:
+    metadata:
+      labels:
+        app: qemu-binfmt-arm64-host
+    spec:
+      serviceAccountName: qemu-binfmt
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      initContainers:
+        - name: register
+          # docker.io/tonistiigi/binfmt:qemu-v10.2.3 (multi-arch index)
+          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          args: ["--install", "amd64"]
           securityContext:
             privileged: true
           resources:

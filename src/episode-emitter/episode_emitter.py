@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 """Episode emitter — bridges SO-ARM101 Rosetta rollouts to the flywheel curator.
 
 After each ACT policy rollout in the Gazebo sim, this node:
@@ -94,6 +95,16 @@ class EpisodeEmitter(Node):
         # (D018, Phase 2.5 step 3) just before the 'end' signal. Latch the last
         # value; it's stamped into the episode JSON as dataset_path.
         self._dataset_path = None
+        # The coordinator also publishes the episode's peak cube count before 'end' — the
+        # same ground truth its keep/prune decision used. Preferred over this node's own
+        # poll so the curator record and the bag decision never disagree.
+        self._coord_peak_cubes = None
+        self.create_subscription(
+            String,
+            "/flywheel/episode_cubes",
+            self._on_cubes,
+            control_qos,
+        )
         self.create_subscription(
             String,
             "/flywheel/episode_dataset",
@@ -150,6 +161,13 @@ class EpisodeEmitter(Node):
         """Store the recorded-bag ref for the current episode."""
         self._dataset_path = msg.data.strip() or None
 
+    def _on_cubes(self, msg: String):
+        """Store the coordinator's peak cube count for the current episode."""
+        try:
+            self._coord_peak_cubes = int(msg.data.strip())
+        except ValueError:
+            self._coord_peak_cubes = None
+
     def _on_model_version(self, msg: String):
         """Adopt the served policy's label published by the coordinator."""
         mv = msg.data.strip()
@@ -165,6 +183,8 @@ class EpisodeEmitter(Node):
         self._prev_positions = None
         self._smoothness_deltas = []
         self._peak_cubes = 0  # high-water mark for cubes on tray
+        self._poll_ok = False  # any successful ground-truth read this episode
+        self._coord_peak_cubes = None  # set by the coordinator before 'end'
         self._dataset_path = None  # set by the coordinator before 'end'
         self._rollout_active = True
         self.get_logger().info(f"Episode started: {self._episode_id}")
@@ -181,6 +201,7 @@ class EpisodeEmitter(Node):
                     )
                     m = re.search(r"cubes_placed=(\d+)/", result.stdout)
                     if m:
+                        self._poll_ok = True
                         n = int(m.group(1))
                         if n > self._peak_cubes:
                             self._peak_cubes = n
@@ -233,11 +254,12 @@ class EpisodeEmitter(Node):
         if now - self._last_command_time > EPISODE_TIMEOUT_S:
             self._end_episode()
 
-    def _compute_task_success(self) -> tuple[bool, int]:
+    def _compute_task_success(self) -> tuple[bool, int | None]:
         """Evaluate task success from actual Gazebo cube positions.
 
         Queries each cube's world pose and checks whether it's resting inside
-        the tray footprint. This is ground-truth, not a heuristic.
+        the tray footprint. This is ground-truth, not a heuristic. cubes is
+        None when the pose source could not be read.
         """
         if self._steps < MIN_STEPS:
             return False, 0
@@ -245,8 +267,8 @@ class EpisodeEmitter(Node):
             import task_eval
             return task_eval.evaluate_task()
         except Exception as e:
-            self.get_logger().warn(f"Task eval failed, falling back: {e}")
-            return False, 0
+            self.get_logger().warn(f"Task eval failed: {e}")
+            return False, None
 
     def _avg_smoothness(self) -> float:
         """Mean absolute joint-command delta across the episode."""
@@ -261,10 +283,17 @@ class EpisodeEmitter(Node):
         _, snapshot_cubes = self._compute_task_success()
         avg_smoothness = self._avg_smoothness()
 
-        # Use peak cube count (tracked throughout the episode) if higher
-        # than end-of-episode snapshot. Captures partial successes that
-        # the snapshot misses (e.g. cube 1 placed then knocked off).
-        cubes_placed = max(self._peak_cubes, snapshot_cubes)
+        # The coordinator's peak count (published before 'end') is the same ground
+        # truth its keep/prune decision used — prefer it. Otherwise the local peak
+        # (a cube placed then knocked off still counts) vs. the end snapshot. If the
+        # pose source was never readable this episode, record null: a sensor fault,
+        # which the curator rejects as such rather than as a policy failure.
+        if self._coord_peak_cubes is not None:
+            cubes_placed = self._coord_peak_cubes
+        elif snapshot_cubes is None and not self._poll_ok:
+            cubes_placed = None
+        else:
+            cubes_placed = max(self._peak_cubes, snapshot_cubes or 0)
         task_success = (cubes_placed == 3)
 
         # has_failure is always False: this project scores on ground truth only
@@ -288,6 +317,7 @@ class EpisodeEmitter(Node):
             },
             "task_success": task_success,
             "cubes_placed": cubes_placed,
+            "score_reason": None if cubes_placed is not None else "sensor-unavailable",
             "avg_smoothness": round(avg_smoothness, 6),
             # Repo-relative pointer to the recorded LeRobot-bound MCAP bag for
             # this rollout (D018). Populated by the coordinator via

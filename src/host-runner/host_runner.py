@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# This project was developed with assistance from AI tools.
 """Host runner — [desktop shim] the pipeline's train + eval stages, executed on the host GPU.
 
 On the target (GB10/GB300) the GPU is in the cluster and the KFP pipeline runs training and the

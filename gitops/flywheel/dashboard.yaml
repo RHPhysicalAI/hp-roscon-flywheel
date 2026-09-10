@@ -2,16 +2,12 @@
 #
 # Physical AI Edge Flywheel Dashboard
 #
-# Display console + control panel + educational overlay running as a MicroShift
-# workload on SNO. Served at http://<node-ip>:30801.
+# Display console for the demo, running on the hub (SNO). Served at http://<node-ip>:30801.
+# GitOps-delivered (Argo CD sync); needs no terminal during Beats 2, 4 and 6.
 #
-# The dashboard itself is a demo beat: it is GitOps-delivered (Argo CD sync),
-# runs on the edge device (not the hub), and needs no terminal during Acts 2-3.
-#
-# Controls:  Clear Data
-# Display:   Sim status, rollout stats, curation log (scrolling tail),
-#            policy comparison (v1 vs v2 rollout videos),
-#            flywheel progress bar, model version indicator
+# Controls:  none during a demo. Clear Data is reachable only with ?ops=1 and a confirm.
+# Display:   Sim cameras, latest rollout + curation log, flywheel progress bar,
+#            model version indicator
 #
 # Lineage (model version badge, curated count, trigger bar): read from the
 # manifest-consumer Deployment's COLLECTOR env, which Argo syncs from the same
@@ -33,7 +29,7 @@ data:
     """Physical AI Edge Flywheel Dashboard -- Flask backend."""
     import json, os, pathlib, queue, shutil, threading, time
     from typing import Optional
-    from flask import Flask, Response, jsonify, request, send_file
+    from flask import Flask, Response, abort, jsonify, request, send_file
 
     try:
         from kubernetes import client as k8s, config as k8scfg
@@ -55,13 +51,35 @@ data:
     EP_CUR        = DATA / "episodes" / "curated"
     EP_REJ        = DATA / "episodes" / "rejected"
     EP_SENT       = DATA / "episodes" / "sent"
-    ROLLOUTS      = DATA / "rollouts"
     HTML_FILE     = pathlib.Path(os.environ.get("HTML_FILE",  "/app/index.html"))
+    # The camera bridge runs next to the simulator, not in the cluster; the browser fetches the
+    # streams directly, so this must be the address the *viewer* can reach.
+    CAMERA_HOST   = os.environ.get("CAMERA_HOST", "10.0.0.48")
     FW_NS         = os.environ.get("FLYWHEEL_NS", "flywheel")
     THRESHOLD     = int(os.environ.get("TRIGGER_THRESHOLD", "10"))
     COLLECTOR_DEPLOY = os.environ.get("COLLECTOR_DEPLOYMENT", "manifest-consumer")
     BASELINE_MV   = os.environ.get("BASELINE_MODEL_VERSION", "upstream-act-teacher")
     LOOP_ACTIVE_S = int(os.environ.get("LOOP_ACTIVE_SECONDS", "180"))
+
+    # ---- Paired A/B clips (Beat 4) -------------------------------------------
+    # Same seeded scene run twice (v1 teacher vs v2 fine-tuned), overhead camera, stored in MinIO
+    # under paired-ab/. Served here so the browser plays them from the dashboard. This is a live/
+    # desktop card; at the booth (no cluster) Beat 4 falls back to the static ladder chart.
+    import re as _re
+    MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://minio.minio.svc:9000")
+    MINIO_ACCESS   = os.environ.get("MINIO_ACCESS_KEY", "")
+    MINIO_SECRET   = os.environ.get("MINIO_SECRET_KEY", "")
+    PAIRED_BUCKET  = os.environ.get("PAIRED_BUCKET", "episodes-data")
+    PAIRED_PREFIX  = "paired-ab"
+    _SEED_RE = _re.compile(r"^[0-9]{1,10}$")
+
+    def _s3():
+        import boto3
+        from botocore.config import Config
+        return boto3.client(
+            "s3", endpoint_url=MINIO_ENDPOINT,
+            aws_access_key_id=MINIO_ACCESS, aws_secret_access_key=MINIO_SECRET,
+            config=Config(signature_version="s3v4", s3={"addressing_style": "path"}))
 
     # ---- K8s helpers ---------------------------------------------------------
     def _apps() -> Optional["k8s.AppsV1Api"]:
@@ -192,14 +210,6 @@ data:
         rows.sort(key=lambda e: e["_mtime"], reverse=True)
         return rows[:n]
 
-    def _rollouts() -> dict:
-        if not ROLLOUTS.exists():
-            return {"v1": None, "v2": None}
-        mp4s = list(ROLLOUTS.glob("*.mp4"))
-        v1 = sorted(f.name for f in mp4s if "-soarm-act-v1.mp4" in f.name)
-        v2 = sorted(f.name for f in mp4s if "-soarm-act-v2.mp4" in f.name)
-        return {"v1": v1[-1] if v1 else None, "v2": v2[-1] if v2 else None}
-
     def status_snapshot() -> dict:
         ep     = _latest_episode()
         sent   = _count(EP_SENT)
@@ -208,7 +218,6 @@ data:
         # moves curated -> sent within seconds, so the curated/ dir alone always reads 0).
         curated = _lineage_count((EP_CUR, EP_SENT), mv, since) if mv else _count(EP_CUR)
         running = bool(ep) and (time.time() - ep.get("_mtime", 0)) < LOOP_ACTIVE_S
-        d      = _rollouts()
 
         # Extract Generator output from latest episode (D031 format)
         scene = frame = curation_score = curation_reason = curation_verdict = None
@@ -262,7 +271,6 @@ data:
                 "curation_reason":   curation_reason,
                 "curation_verdict":  curation_verdict,
             },
-            "rollouts": d,
             # Full recent-episode list (authoritative, mtime-sorted). The
             # frontend rebuilds the curation log from this every tick, so the
             # log is robust to the fast curated->sent file moves and to any
@@ -304,10 +312,9 @@ data:
                     _sse_queues.remove(q)
 
     _watcher_seen_ep:     set[str] = set()
-    _watcher_seen_rollouts: set[str] = set()
 
     def _watcher():
-        global _watcher_seen_ep, _watcher_seen_rollouts
+        global _watcher_seen_ep
         last_status = 0.0
         while True:
             time.sleep(1)
@@ -329,12 +336,6 @@ data:
                             })
                         except Exception:
                             pass
-            if ROLLOUTS.exists():
-                for p in ROLLOUTS.glob("*.mp4"):
-                    if p.name not in _watcher_seen_rollouts:
-                        _watcher_seen_rollouts.add(p.name)
-                        ver = "v2" if "-soarm-act-v2.mp4" in p.name else "v1"
-                        broadcast("rollout_video", {"file": p.name, "version": ver, "ts": now})
             if now - last_status >= 3:
                 last_status = now
                 try:
@@ -348,7 +349,7 @@ data:
     @app.route("/")
     def index():
         html = HTML_FILE.read_text() if HTML_FILE.exists() else "<h1>index.html not mounted</h1>"
-        return Response(html, mimetype="text/html")
+        return Response(html.replace("__CAMERA_HOST__", CAMERA_HOST), mimetype="text/html")
 
     @app.route("/api/events")
     def sse():
@@ -377,13 +378,6 @@ data:
     def api_status():
         return jsonify(status_snapshot())
 
-    @app.route("/api/rollout/<path:name>")
-    def serve_rollout(name):
-        p = ROLLOUTS / name
-        if not p.exists():
-            return ("not found", 404)
-        return send_file(p, mimetype="video/mp4", conditional=True)
-
     @app.route("/api/control/flywheel", methods=["POST"])
     def ctrl_flywheel():
         action   = (request.json or {}).get("action", "start")
@@ -396,7 +390,7 @@ data:
 
     @app.route("/api/control/clear", methods=["POST"])
     def ctrl_clear():
-        global _watcher_seen_ep, _watcher_seen_rollouts
+        global _watcher_seen_ep
         cleared = 0
         for d in (EP_RAW, EP_CUR, EP_REJ, EP_SENT):
             if d.exists():
@@ -406,20 +400,44 @@ data:
                         cleared += 1
                     except Exception:
                         pass
-        # Also clear rollout comparison videos
-        if ROLLOUTS.exists():
-            for p in ROLLOUTS.glob("*.mp4"):
-                try:
-                    p.unlink()
-                    cleared += 1
-                except Exception:
-                    pass
-        # Reset watcher seen-sets so new episodes get broadcast
-        _watcher_seen_ep    = set()
-        _watcher_seen_rollouts = set()
+        # Reset the watcher seen-set so new episodes get broadcast
+        _watcher_seen_ep = set()
         broadcast("clear", {"cleared": cleared})
         broadcast("status", status_snapshot())
         return jsonify({"ok": True, "cleared": cleared})
+
+    @app.route("/api/paired")
+    def api_paired():
+        """The paired-clip manifest (seeds + per-policy outcomes). 404 if MinIO/manifest is
+        unavailable, so the card degrades gracefully rather than 500ing the page."""
+        try:
+            obj = _s3().get_object(Bucket=PAIRED_BUCKET, Key=f"{PAIRED_PREFIX}/manifest.json")
+            return Response(obj["Body"].read(), mimetype="application/json")
+        except Exception:
+            return jsonify({"error": "paired manifest not available"}), 404
+
+    @app.route("/api/paired/<seed>/<policy>.mp4")
+    def api_paired_clip(seed, policy):
+        """Stream a paired clip from MinIO. Seed/policy are validated before building the key."""
+        if not _SEED_RE.match(seed) or policy not in ("v1", "v2"):
+            abort(400)
+        key = f"{PAIRED_PREFIX}/seed-{seed}/{policy}.mp4"
+        rng = request.headers.get("Range")
+        try:
+            kwargs = {"Bucket": PAIRED_BUCKET, "Key": key}
+            if rng:
+                kwargs["Range"] = rng
+            obj = _s3().get_object(**kwargs)
+            body = obj["Body"].read()
+            headers = {"Content-Type": "video/mp4", "Accept-Ranges": "bytes",
+                       "Content-Length": str(len(body))}
+            status = 200
+            if rng and obj.get("ContentRange"):
+                headers["Content-Range"] = obj["ContentRange"]
+                status = 206
+            return Response(body, status=status, headers=headers)
+        except Exception:
+            abort(404)
 
     if __name__ == "__main__":
         app.run(host="0.0.0.0", port=8080, threaded=True)
@@ -734,63 +752,6 @@ data:
     }
     #trigger-banner.show { display: block; }
 
-    /* ---- Dream comparison (HERO) ---------------------------------------- */
-    #dream-card { grid-column: 1 / -1; grid-row: 3; }
-    #dream-body { padding: 14px; }
-    #dream-annotation {
-      font-size: 11px; color: var(--txt3);
-      margin-bottom: 14px;
-      padding-bottom: 10px;
-      border-bottom: 1px solid var(--border);
-    }
-    #dream-videos {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-    }
-    .dream-panel {}
-    .dream-video-wrap {
-      aspect-ratio: 16/9;
-      background: var(--card2);
-      border-radius: 6px;
-      overflow: hidden;
-      position: relative;
-      border: 1px solid var(--border);
-      margin-bottom: 10px;
-    }
-    .dream-video-wrap.has-video {
-      border-color: var(--border2);
-    }
-    .dream-video-wrap.v2.has-video {
-      border-color: var(--green);
-      box-shadow: 0 0 12px rgba(14,138,98,0.15);
-    }
-    .dream-video {
-      width: 100%; height: 100%;
-      object-fit: cover;
-      display: none;
-    }
-    .dream-video.loaded { display: block; }
-    .dream-placeholder {
-      position: absolute; inset: 0;
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      gap: 8px;
-      color: var(--txt3);
-    }
-    .dream-placeholder .icon { font-size: 28px; }
-    .dream-placeholder .label { font-size: 11px; line-height: 1.5; text-align: center; }
-    .dream-placeholder.hidden { display: none; }
-    .dream-meta {
-      display: flex; align-items: center; justify-content: space-between;
-      flex-wrap: wrap; gap: 6px;
-    }
-    .dream-version-label { font-size: 12px; font-weight: 600; }
-    .dream-version-label.v1 { color: var(--blue); }
-    .dream-version-label.v2 { color: var(--green); }
-    .dream-controls { display: flex; gap: 6px; }
-    .dream-smoothness { font-size: 11px; color: var(--txt2); }
-
     /* ---- Curation log (inline in Generator Output card) -------------------- */
     #log-body {
       max-height: 200px;
@@ -889,6 +850,25 @@ data:
       display: flex; align-items: center; gap: 5px;
       font-size: 10px; color: var(--green);
     }
+    .running-indicator.stopped { color: var(--txt3); }
+    .ops-only { display: none; }
+    body.ops .ops-only { display: inline-flex; }
+    #btn-clear { color: var(--txt3); cursor: pointer; text-decoration: underline dotted; }
+    /* ---- Paired A/B video card ------------------------------------------ */
+    #paired-videos { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 4px 0 6px; }
+    .paired-col { display: flex; flex-direction: column; gap: 6px; }
+    .paired-video { width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 6px; border: 1px solid var(--border); }
+    .paired-label { font-size: 12px; font-weight: 600; }
+    .paired-label.v1 { color: var(--blue); }
+    .paired-label.v2 { color: var(--green); }
+    .paired-outcome { font-size: 13px; font-weight: 700; color: var(--txt3); }
+    .paired-outcome.ok  { color: var(--green); }
+    .paired-outcome.bad { color: var(--red); }
+    #paired-seedbar { display: flex; gap: 6px; margin-bottom: 8px; }
+    .seed-btn { padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border2);
+      background: var(--card2); color: var(--txt2); font-size: 12px; cursor: pointer; }
+    .seed-btn.active { background: var(--blue-dim); border-color: var(--blue); color: var(--blue); font-weight: 600; }
+    #paired-controls { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
     </style>
     </head>
 
@@ -909,12 +889,9 @@ data:
       </div>
 
       <div id="controls">
-        <div id="flywheel-status" class="running-indicator">
-          <div class="dot-pulse"></div> Flywheel running
+        <div id="flywheel-status" class="running-indicator stopped">
+          &#9632; Loop stopped
         </div>
-        <button class="btn btn-gray btn-sm" id="btn-clear" onclick="controlClear()">
-          &#10226; Clear Data
-        </button>
         <div class="theme-toggle" id="theme-toggle">
           <button id="theme-light" title="Light" onclick="setTheme('light')">&#9788;</button>
           <button id="theme-dark" title="Dark" onclick="setTheme('dark')">&#9790;</button>
@@ -966,14 +943,14 @@ data:
         </div>
       </div>
 
-      <!-- STEP 1: Generate plan video + action policy (D031) -->
+      <!-- Latest rollout + curation log -->
       <div class="card" id="generator-card">
         <div class="card-header">
-          <span class="card-title">1 &middot; SO-ARM101 rollout &mdash; ACT policy controlling arm in Gazebo sim</span>
+          <span class="card-title">SO-ARM101 rollout &mdash; ACT policy controlling the arm in Gazebo</span>
         </div>
         <div class="card-body" id="generator-body">
           <div id="gen-empty" style="color:var(--txt3);font-size:12px;padding:30px 0;text-align:center">
-            Awaiting first episode&hellip;
+            Collection loop stopped &mdash; episodes appear here once it runs.
           </div>
           <div id="gen-fields" style="display:none">
             <!-- Two-column: Rollout stats | Task result -->
@@ -1028,7 +1005,7 @@ data:
             <!-- Inline curation log (moved here from standalone card) -->
             <div id="log-body" style="max-height:200px;overflow-y:auto;margin-top:10px;font-size:11px">
               <div id="log-empty" style="color:var(--txt3);text-align:center;padding:12px 0;font-size:11px">
-                Episodes will appear here once the flywheel starts
+                Collection loop stopped &mdash; episodes appear here once it runs.
               </div>
             </div>
           </div>
@@ -1048,7 +1025,7 @@ data:
             <div id="prog-track"><div id="prog-fill" style="width:0%"></div></div>
             <div id="prog-label">
               <span id="prog-text">0 / 160 curated episodes sent to hub</span>
-              <span id="prog-state" style="color:var(--txt3)">idle</span>
+              <span id="prog-state" style="color:var(--txt3)">loop stopped</span>
             </div>
           </div>
           <div id="prog-counts" style="color:var(--txt2)">
@@ -1062,70 +1039,28 @@ data:
         </div>
       </div>
 
-      <!-- DREAM COMPARISON (HERO) -->
-      <div class="card" id="dream-card">
+      <!-- PAIRED A/B VIDEO (Beat 4) -- hidden until the manifest loads -->
+      <div class="card hidden" id="paired-card" style="grid-column: 1 / -1">
         <div class="card-header">
-          <span class="card-title">2 &middot; Policy comparison &mdash; v1 (baseline) vs v2 (fine-tuned) rollout</span>
-
+          <span class="card-title">Policy improvement &mdash; same seeded scene, teacher vs fine-tuned</span>
+          <span class="annotation" id="paired-note"></span>
         </div>
-        <div id="dream-body">
-          <div id="dream-annotation" class="annotation">
-            Policy comparison: same task, same starting conditions &mdash; v1 is the baseline
-            ACT policy, v2 is fine-tuned on curated rollout data from the flywheel.
-            Compare task success rate, trajectory smoothness, and placement accuracy
-            to see the flywheel&rsquo;s improvement.
+        <div id="paired-body">
+          <div id="paired-seedbar"></div>
+          <div id="paired-videos">
+            <div class="paired-col">
+              <div class="paired-label v1">v1 &middot; upstream teacher</div>
+              <video id="paired-v1" class="paired-video" muted loop playsinline controls preload="metadata"></video>
+              <div class="paired-outcome" id="paired-out-v1">&mdash;</div>
+            </div>
+            <div class="paired-col">
+              <div class="paired-label v2">v2 &middot; fine-tuned on its own curated data</div>
+              <video id="paired-v2" class="paired-video" muted loop playsinline controls preload="metadata"></video>
+              <div class="paired-outcome" id="paired-out-v2">&mdash;</div>
+            </div>
           </div>
-          <div id="dream-videos">
-
-            <!-- V1 DREAM -->
-            <div class="dream-panel">
-              <div class="dream-video-wrap v1" id="dream-wrap-v1">
-                <div class="dream-placeholder" id="dream-ph-v1">
-                  <div class="icon">&#9654;</div>
-                  <div class="label">Press Play v1<br>for the baseline rollout</div>
-                </div>
-                <video class="dream-video" id="dream-v1" loop muted playsinline></video>
-              </div>
-              <div class="dream-meta">
-                <div>
-                  <div class="dream-version-label v1">soarm-act-v1</div>
-                  <div class="dream-smoothness" id="dream-smooth-v1">Baseline policy</div>
-                </div>
-                <div class="dream-controls">
-                  <button class="btn btn-blue btn-sm" id="btn-dream-v1"
-                          onclick="toggleDream('v1')">
-                    &#9654; Play v1
-                  </button>
-
-                </div>
-              </div>
-            </div>
-
-            <!-- V2 DREAM -->
-            <div class="dream-panel">
-              <div class="dream-video-wrap v2" id="dream-wrap-v2">
-                <div class="dream-placeholder" id="dream-ph-v2">
-                  <div class="icon" style="color:var(--txt3)">&#9654;</div>
-                  <div class="label" style="color:var(--txt3)">
-                    Press Play v2<br>for the fine-tuned rollout
-                  </div>
-                </div>
-                <video class="dream-video" id="dream-v2" loop muted playsinline></video>
-              </div>
-              <div class="dream-meta">
-                <div>
-                  <div class="dream-version-label v2">soarm-act-v2</div>
-                  <div class="dream-smoothness" id="dream-smooth-v2">Fine-tuned policy</div>
-                </div>
-                <div class="dream-controls">
-                  <button class="btn btn-gold btn-sm" id="btn-dream-v2"
-                          onclick="toggleDream('v2')">
-                    &#9654; Play v2
-                  </button>
-                </div>
-              </div>
-            </div>
-
+          <div id="paired-controls">
+            <button class="btn btn-blue btn-sm" onclick="pairedPlayBoth()">&#9654; Play both</button>
           </div>
         </div>
       </div>
@@ -1163,6 +1098,10 @@ data:
           <span class="sb-label">updated</span>
           <span class="sb-val" id="sb-ts">--</span>
         </div>
+        <span class="sb-sep ops-only">&middot;</span>
+        <div class="sb-item ops-only">
+          <a id="btn-clear" onclick="controlClear(); return false;" href="#">clear episode data</a>
+        </div>
       </div>
 
     </div>
@@ -1191,17 +1130,22 @@ data:
       document.getElementById('theme-dark').classList.toggle('active', t === 'dark');
     });
 
-    // ---- Camera feeds (direct to camera bridge on host) ----------------------
+    // ---- Camera feeds (direct to the camera bridge next to the sim) ----------
     (function() {
-      // Camera bridge runs on the desktop host (not in SNO) alongside the sim.
-      // TODO: make configurable via env/config instead of hardcoded.
-      const camHost = '10.0.0.48';
+      // Substituted by the Flask app from the CAMERA_HOST env var: the browser fetches the
+      // streams itself, so this is the address the viewer can reach, not the pod.
+      const camHost = '__CAMERA_HOST__';
       const camBase = 'http://' + camHost + ':8081';
       const staticEl = document.getElementById('cam-static');
       const wristEl = document.getElementById('cam-wrist');
       if (staticEl) staticEl.src = camBase + '/static';
       if (wristEl) wristEl.src = camBase + '/wrist';
     })();
+
+    // ---- Operator-only controls: ?ops=1 reveals the confirm-gated Clear link --
+    if (new URLSearchParams(location.search).get('ops') === '1') {
+      document.body.classList.add('ops');
+    }
 
     // ---- State ---------------------------------------------------------------
     // annotations always visible (toggle removed)
@@ -1264,32 +1208,10 @@ data:
       renderLog(eps);   // initial paint; renderLog sorts newest-first by ts
     });
 
-    evtSource.addEventListener('rollout_video', e => {
-      const d = JSON.parse(e.data);
-      window._rolloutFiles = window._rolloutFiles || {};
-      window._rolloutFiles[d.version] = d.file;
-      dreamLoaded[d.version] = null;
-      showToast('Rollout ' + d.version + ' ready \u2014 press Play ' + d.version,
-                d.version === 'v2' ? 'toast-green' : 'toast-blue');
-    });
-
     evtSource.addEventListener('clear', e => {
-      // Reset dream videos
-      for (const ver of ['v1', 'v2']) {
-        const vid  = document.getElementById('dream-' + ver);
-        const ph   = document.getElementById('dream-ph-' + ver);
-        const wrap = document.getElementById('dream-wrap-' + ver);
-        vid.pause();
-        vid.removeAttribute('src');
-        vid.classList.remove('loaded');
-        ph.classList.remove('hidden');
-        wrap.classList.remove('has-video');
-        dreamLoaded[ver] = null;
-        setDreamButton(ver, false);
-      }
       // Reset log
       document.getElementById('log-body').innerHTML =
-        '<div id="log-empty">Cleared \u2014 episodes will appear here when flywheel runs</div>';
+        '<div id="log-empty">Cleared \u2014 episodes appear here once the collection loop runs</div>';
       // Reset generator panel
       document.getElementById('gen-empty').style.display = '';
       document.getElementById('gen-fields').style.display = 'none';
@@ -1309,9 +1231,18 @@ data:
       document.getElementById('model-badge').className = isV2 ? 'v2' : 'v1';
       document.getElementById('sb-model').textContent = mv;
 
-      // Flywheel running
+      // Flywheel running = an episode landed within LOOP_ACTIVE_SECONDS; otherwise the
+      // collection loop is stopped and the page says so instead of looking empty.
       const fw = s.flywheel_running;
-      document.getElementById('sb-fw').textContent = fw ? 'running' : 'idle';
+      window._fw = fw;
+      const fwEl = document.getElementById('flywheel-status');
+      fwEl.className = 'running-indicator' + (fw ? '' : ' stopped');
+      fwEl.innerHTML = fw ? '<div class="dot-pulse"></div> Flywheel running' : '&#9632; Loop stopped';
+      document.getElementById('sb-fw').textContent = fw ? 'running' : 'stopped';
+      const genEmpty = document.getElementById('gen-empty');
+      if (genEmpty) genEmpty.textContent = fw
+        ? 'Awaiting first episode…'
+        : 'Collection loop stopped — episodes appear here once it runs.';
 
       // Progress
       const t = s.trigger;
@@ -1321,7 +1252,7 @@ data:
       document.getElementById('prog-text').textContent =
         t.progress + ' / ' + t.threshold + ' curated episodes sent to hub';
       document.getElementById('prog-state').textContent =
-        t.triggered ? 'TRIGGERED' : (fw ? 'collecting' : 'idle');
+        t.triggered ? 'TRIGGERED' : (fw ? 'collecting' : 'loop stopped');
       document.getElementById('trigger-banner').classList.toggle('show', t.triggered);
 
       // Counts
@@ -1382,116 +1313,12 @@ data:
         }
       }
 
-      // Dreams: intentionally NOT auto-loaded here. The Play v1/v2 buttons
-      // are the trigger (playPinnedDream) so the rollouts stay on a placeholder
-      // until the user explicitly presses Play. We only stash the available
-      // filenames for the buttons to use.
-      window._dreamFiles = s.dreams || {};
-
       // Curation log (authoritative rebuild from the status snapshot)
       if (s.log) renderLog(s.log);
 
       // Timestamp
       document.getElementById('sb-ts').textContent =
         new Date().toLocaleTimeString();
-    }
-
-    // ---- Dream loader -------------------------------------------------------
-    const dreamLoaded = {v1: null, v2: null};
-
-    // Play<->Stop toggle button state. v1 is blue, v2 is gold when idle;
-    // both turn red ("Stop") while their rollout is playing.
-    function setDreamButton(ver, playing) {
-      const btn  = document.getElementById('btn-dream-' + ver);
-      if (!btn) return;
-      const idleCls = ver === 'v2' ? 'btn-gold' : 'btn-blue';
-      btn.classList.remove('btn-blue', 'btn-gold', 'btn-red');
-      if (playing) {
-        btn.classList.add('btn-red');
-        btn.innerHTML = '\u25A0 Stop ' + ver;
-      } else {
-        btn.classList.add(idleCls);
-        btn.innerHTML = '\u25B6 Play ' + ver;
-      }
-    }
-
-    // Attach play/pause listeners once so the button always reflects the real
-    // <video> state (covers loop, programmatic pause, Clear, etc.).
-    function wireDreamVideo(ver) {
-      const vid = document.getElementById('dream-' + ver);
-      if (vid._wired) return;
-      vid._wired = true;
-      vid.addEventListener('play',  () => setDreamButton(ver, true));
-      vid.addEventListener('pause', () => setDreamButton(ver, false));
-    }
-
-    // Toggle: play from the start if stopped, otherwise stop.
-    function toggleDream(ver) {
-      const vid = document.getElementById('dream-' + ver);
-      if (vid && !vid.paused && vid.classList.contains('loaded')) {
-        vid.pause();                 // -> 'pause' event flips button to Play
-      } else {
-        playPinnedDream(ver);        // load (if needed) + play from frame 0
-      }
-    }
-
-    function loadDream(ver, file, autoPlay) {
-      const vid  = document.getElementById('dream-' + ver);
-      const ph   = document.getElementById('dream-ph-' + ver);
-      const wrap = document.getElementById('dream-wrap-' + ver);
-      wireDreamVideo(ver);
-      // Reload only if the source changed; otherwise just replay from start.
-      if (dreamLoaded[ver] !== file) {
-        dreamLoaded[ver] = file;
-        vid.src = '/api/dream/' + file + '?t=' + Date.now();
-        vid.load();
-        vid.onloadeddata = () => {
-          vid.classList.add('loaded');
-          ph.classList.add('hidden');
-          wrap.classList.add('has-video');
-          if (ver === 'v2') {
-            document.getElementById('dream-smooth-v2').textContent = 'Fine-tuned policy rollout';
-          }
-          if (autoPlay) { vid.currentTime = 0; vid.play(); }
-        };
-      } else if (autoPlay) {
-        // Already loaded -- restart playback from the first frame.
-        vid.classList.add('loaded');
-        ph.classList.add('hidden');
-        wrap.classList.add('has-video');
-        vid.currentTime = 0;
-        vid.play();
-      }
-    }
-
-    // ---- Pinned showcase rollout playback -----------------------------------
-    // The Play v1/v2 buttons play the pinned, curated comparison pair
-    // (zzz-showcase-soarm-act-v{1,2}.mp4 on /var/lib/dreams,
-    // immutable) via the same _dreams() [-1] pick the status snapshot uses.
-    // Deterministic: no live GPU dreamer run, same rollout every demo.
-    // Videos do NOT autoplay -- pressing Play is the explicit trigger.
-    async function playPinnedDream(ver) {
-      const btnId = ver === 'v2' ? 'btn-dream-v2' : 'btn-dream-v1';
-      setLoading(btnId, true);
-      try {
-        // Prefer the filenames stashed by the status stream; fall back to a fetch.
-        let file = (window._dreamFiles || {})[ver];
-        if (!file) {
-          const r = await fetch('/api/status');
-          const s = await r.json();
-          window._dreamFiles = s.dreams || {};
-          file = window._dreamFiles[ver];
-        }
-        if (file) {
-          loadDream(ver, file, true);   // true = play from first frame on load
-          showToast('Playing ' + ver + ' \u2014 Forward Dynamics rollout',
-                    ver === 'v2' ? 'toast-green' : 'toast-blue');
-        } else {
-          showToast('No ' + ver + ' rollout available', '');
-        }
-      } finally {
-        setLoading(btnId, false);
-      }
     }
 
     // ---- Curation log -------------------------------------------------------
@@ -1547,7 +1374,8 @@ data:
 
       const body = document.getElementById('log-body');
       if (!list.length) {
-        body.innerHTML = '<div id="log-empty" style="color:var(--txt3);text-align:center;padding:12px 0;font-size:11px">Episodes will appear here once the flywheel starts</div>';
+        body.innerHTML = '<div id="log-empty" style="color:var(--txt3);text-align:center;padding:12px 0;font-size:11px">' +
+          (window._fw ? 'Awaiting first episode…' : 'Collection loop stopped — episodes appear here once it runs.') + '</div>';
         return;
       }
       body.innerHTML = '';
@@ -1626,38 +1454,15 @@ data:
       if (b) b.disabled = loading;
     }
 
-    // controlFlywheel removed — sim runs continuously, no Start/Stop needed
-
-    async function controlDreamer(action, model_version) {
-      const btnId = action === 'start'
-        ? (model_version === 'soarm-act-v2' ? 'btn-dream-v2' : 'btn-dream-v1')
-        : 'btn-dream-stop';
-      setLoading(btnId, true);
-      try {
-        const r = await fetch('/api/control/dreamer', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({action, model_version})
-        });
-        const d = await r.json();
-        if (action === 'start') {
-          const ver = model_version === 'soarm-act-v2' ? 'v2' : 'v1';
-          showToast('Dreamer started \u2014 generating ' + ver + ' Forward Dynamics rollout\u2026',
-                    ver === 'v2' ? 'toast-gold' : 'toast-blue');
-        }
-      } finally {
-        setLoading(btnId, false);
-      }
-    }
-
+    // Operator-only (?ops=1): deletes every episode JSON the dashboard reads. Never during a demo.
     async function controlClear() {
-      if (!confirm('Clear all episode data? This cannot be undone.')) return;
+      if (!confirm('Clear all episode data on the hub? This cannot be undone.')) return;
       setLoading('btn-clear', true);
       try {
         const r = await fetch('/api/control/clear', {method: 'POST'});
         const d = await r.json();
         document.getElementById('log-body').innerHTML =
-          '<div id="log-empty">Cleared \u2014 episodes will appear here when flywheel runs</div>';
+          '<div id="log-empty">Cleared \u2014 episodes appear here once the collection loop runs</div>';
         logEntries = [];
         showToast('Cleared ' + d.cleared + ' episode files', '');
       } finally {
@@ -1676,6 +1481,61 @@ data:
         t.className = '';
       }, 4000);
     }
+
+    // ---- Paired A/B video (Beat 4) ------------------------------------------
+    let _pairedManifest = null;
+    function pairedOutcome(el, o) {
+      const ok = !!(o && o.success);
+      el.textContent = (o ? o.cubes : 0) + ' / 3 ' + (ok ? '✓' : '✗');
+      el.className = 'paired-outcome ' + (ok ? 'ok' : 'bad');
+    }
+    function pairedSelectSeed(seed) {
+      const p = (_pairedManifest.pairs || []).find(x => String(x.seed) === String(seed));
+      if (!p) return;
+      const v1 = document.getElementById('paired-v1');
+      const v2 = document.getElementById('paired-v2');
+      v1.src = '/api/paired/' + seed + '/v1.mp4';
+      v2.src = '/api/paired/' + seed + '/v2.mp4';
+      v1.load(); v2.load();
+      pairedOutcome(document.getElementById('paired-out-v1'), p.v1);
+      pairedOutcome(document.getElementById('paired-out-v2'), p.v2);
+      document.querySelectorAll('#paired-seedbar .seed-btn').forEach(b => {
+        b.classList.toggle('active', String(b.dataset.seed) === String(seed));
+      });
+    }
+    function pairedPlayBoth() {
+      const v1 = document.getElementById('paired-v1');
+      const v2 = document.getElementById('paired-v2');
+      v1.currentTime = 0; v2.currentTime = 0;
+      v1.play().catch(() => {}); v2.play().catch(() => {});
+    }
+    async function pairedInit() {
+      try {
+        const r = await fetch('/api/paired');
+        if (!r.ok) return;                       // 404 -> leave the card hidden
+        const m = await r.json();
+        if (!m || !Array.isArray(m.pairs) || !m.pairs.length) return;
+        _pairedManifest = m;
+        if (m.chunking) document.getElementById('paired-note').textContent = 'chunking ' + m.chunking;
+        const bar = document.getElementById('paired-seedbar');
+        bar.innerHTML = '';
+        // Only offer a seed picker when there's more than one pair to choose between.
+        if (m.pairs.length > 1) {
+          m.pairs.forEach(p => {
+            const b = document.createElement('button');
+            b.className = 'seed-btn'; b.dataset.seed = p.seed;
+            b.textContent = 'seed ' + p.seed;
+            b.onclick = () => pairedSelectSeed(p.seed);
+            bar.appendChild(b);
+          });
+        } else {
+          bar.style.display = 'none';
+        }
+        document.getElementById('paired-card').classList.remove('hidden');
+        pairedSelectSeed(m.pairs[0].seed);
+      } catch (e) { console.log('[dashboard] paired init failed:', e); }
+    }
+    pairedInit();
     </script>
     </body>
     </html>
@@ -1689,8 +1549,8 @@ metadata:
   annotations:
     # hostPath volumes require hostmount-anyuid SCC on MicroShift.
     # Applied via: oc adm policy add-scc-to-user hostmount-anyuid -z dashboard -n flywheel
-    # Same pattern as robot-sim, curator, dreamer (scc-rolebinding.yaml).
-    openshift.io/scc-note: "hostmount-anyuid required for episode/dream/frame hostPath mounts"
+    # Same pattern as curator and sync-agent (scc-rolebinding.yaml).
+    openshift.io/scc-note: "hostmount-anyuid required for the episode/frame hostPath mounts"
 ---
 # Flywheel namespace: read + scale Deployments (for controls)
 apiVersion: rbac.authorization.k8s.io/v1
@@ -1724,9 +1584,6 @@ metadata:
   name: dashboard-vllm-reader
   namespace: flywheel
 rules:
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["get", "list"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list"]
@@ -1770,7 +1627,7 @@ spec:
           command:
             - sh
             - -c
-            - pip install -q flask kubernetes && python /app/dashboard.py
+            - pip install -q flask kubernetes boto3 && python /app/dashboard.py
           ports:
             - containerPort: 8080
           env:
@@ -1781,11 +1638,48 @@ spec:
             - name: TRIGGER_THRESHOLD
               value: "160"   # matches manifest-consumer (D022/D023); was thor-testing's 10
             - name: DASHBOARD_CODE_REV
-              value: "2026-09-09-g"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
+              value: "2026-09-10-paired2"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
+            # MinIO (read-only) for the paired A/B video clips under paired-ab/. hub-credentials
+            # holds the same values as the MinIO root account (argocd/README.md).
+            - name: MINIO_ENDPOINT
+              value: "http://minio.minio.svc:9000"
+            - name: PAIRED_BUCKET
+              value: "episodes-data"
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hub-credentials
+                  key: s3-access-key
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hub-credentials
+                  key: s3-secret-key
             - name: FRAMES_DIR
               value: "/data/frames"
             - name: HTML_FILE
               value: "/app/index.html"
+            - name: CAMERA_HOST
+              # The address the *viewer's browser* uses to reach the camera bridge (port 8081),
+              # which runs next to the simulator, not in the cluster. On the Fury this is the
+              # Fury host's address on the booth network.
+              value: "10.0.0.48"
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: 8080
+            initialDelaySeconds: 20   # pip install at start
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/status
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 4
           resources:
             requests:
               cpu: 50m
@@ -1799,10 +1693,7 @@ spec:
               readOnly: true
             - name: episodes
               mountPath: /data/episodes
-              # writable so the Clear Data button can delete episode files
-            - name: dreams
-              mountPath: /data/dreams
-              # writable so Clear Data can also remove dream videos
+              # writable so the operator-only Clear control can delete episode files
             - name: frames
               mountPath: /data/frames
               readOnly: true
@@ -1813,9 +1704,6 @@ spec:
         - name: episodes
           hostPath:
             path: /var/lib/episodes
-        - name: dreams
-          hostPath:
-            path: /var/lib/dreams
         - name: frames
           hostPath:
             path: /var/lib/robot-sim/frames

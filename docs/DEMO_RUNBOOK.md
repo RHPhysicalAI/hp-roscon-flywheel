@@ -53,6 +53,7 @@ sim and no network — and every live element is a bonus layered on top, never a
 |---|---|
 | v1 = the upstream ACT teacher as shipped; v2 = the same weights fine-tuned on 160 of its own curated successes (D021) | `docs/eval-records/phase3-ladder/`, HF `jeremyary/soarm-act-v2-ft160` |
 | **73% → 86%** on 100 identical seeded scenes; paired **20 fixed / 7 broken**, net +13, sign-test **p = 0.019**; mean cubes 2.51 → 2.73 | `python3 src/eval-report/ladder_report.py …` (§ Reference) |
+| Those headline numbers were measured with the rosetta client at chunking **30 / 0.95**; the deployed configuration is **100 / 0.5** (D058/D059). A re-measure at the deployed setting is pending — say so if asked, don't imply the numbers were taken on today's config | D059; `docs/eval-records/phase3-ladder/` |
 | Fine-tuning on **20 or 40** successes made the policy **worse** (60%, 56%); 80 broke even (76%) — the eval gate exists because of this | same table |
 | The governed pipeline ran end to end unattended on the RHEM path: trigger → gate PASS → `crane append` → `cosign sign` (**Rekor index 4**) → **PR #2** (two files, five lines) → merged by a human → RHEM rolled it to the device with no one on the device: **serving at +2:10, Healthy at +2:42** (D068–D070) | run `192f3ec5…` in DSP, `docs/demo-kit/run-192f3ec5-*`, `docs/demo-kit/pr2.md`, `docs/eval-records/promotion-2.md` |
 | Rollback is `git revert` + merge, symmetric: **serving at +1:28, Healthy at +1:59, nothing re-pulled** (image volume `reclaimPolicy: Retain`) — PR #3 (D071, D074) | `docs/eval-records/promotion-2.md` § D3 |
@@ -162,13 +163,15 @@ Device `s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg` (alias `act-device
 container `act-inference-128875-act-inference` (the name survives rollouts, D071). Live modelcar
 `quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b`
 (`act-v2-ft160`); PR #2's promoted modelcar `…@sha256:1375d0bcc2c7c81867365b55a08bdd5fa03bf31d20cc7bde04044fdcf1a0784e`;
-runtime image (Tekton, multi-arch) `quay.io/jary/soarm-flywheel@sha256:3d67f4246fd0915278b419bf4a3c67c3c9e0f8a07c553305a7445f65fc2cb4af`.
+runtime image (Tekton, multi-arch) `quay.io/jary/soarm-flywheel@sha256:02e66d895ed4ba328aa43263561027c18406d774887f465ab7acbd81e4c42d08`.
 
 ### Known screen artifacts (narrate, don't debug)
 
 - **The Fleet banner goes green ~30 s before the app is Healthy** (D070: rollout success is counted
   on `UpToDate`, not on application health). Show the device's **Applications tab** (or
-  `applicationsSummary` in the terminal) for "serving", not the Fleet banner.
+  `applicationsSummary` in the terminal) for "serving", not the Fleet banner. The tab's *Healthy*
+  is `healthcheck.sh`'s verdict, which cannot see a wedged action server (D113): a green tab with
+  an arm that isn't moving means read the coordinator log, not the tab.
 - **The dashboard badge follows the hub, not the device.** It reads the `manifest-consumer`'s
   `COLLECTOR`, which Argo syncs ~1–3 min after the device is already serving the new version
   (D072). The device's own answer is the console log (`Published model_version:`). If the badge
@@ -185,8 +188,6 @@ runtime image (Tekton, multi-arch) `quay.io/jary/soarm-flywheel@sha256:3d67f4246
   seeds. If asked: "the desktop stand-in is CPU; the Fury serves on the GPU with the same Fleet."
 - **`flightctl` says `connection refused 127.0.0.1:3443`** for a few seconds now and then — the
   desktop port-forward loop is re-establishing. Re-run the command.
-- **Dashboard bottom card "Policy comparison v1 vs v2" is empty** (Cosmos-era rollout videos;
-  none exist). Keep it below the fold. Beat 4 is not on this dashboard.
 
 ---
 
@@ -655,8 +656,7 @@ signed in-cluster by Tekton for amd64 + arm64.
 run earlier that day (the runner reuses them — ~2 h of compute compressed); the RHEM candidate is
 v2's weights re-released as `act-v2-ft160-rhem` (D067); the desktop's device is a CPU VM (the sim,
 camera bridge and coordinator stay on the host GPU box); the sim is a simulation — no physical arm;
-the dashboard's "Policy comparison" card is an empty Cosmos-era leftover; the Catalog API is
-v1alpha1. Be upfront about all of it.
+the Catalog API is v1alpha1. Be upfront about all of it.
 
 ## On the Fury — the device is the host
 
@@ -683,7 +683,7 @@ served a policy yet.
 |---|---|
 | Camera stream blank | `curl -s -m 3 http://10.0.0.48:8081/health`; pose UI `:8090` has its own streams; last resort **[not rehearsed]** `docker restart so-arm-sim; sleep 60` then restart the loop |
 | Arm frozen, no `Early stop`/`Resetting cubes` in `docker logs --since 5m act-coordinator` | the loop is off or the device unhealthy: state check; restart the loop (below); if the device app is not Healthy, `flightctl get events --limit 10` says why |
-| **Loop (re)start** | on the host, disk guard first if not resident: `nohup ~/disk-guard.sh >/dev/null 2>&1 &`; then `IMAGE=quay.io/jary/soarm-flywheel@sha256:3d67f4246fd0915278b419bf4a3c67c3c9e0f8a07c553305a7445f65fc2cb4af MODEL_VERSION=<the Fleet's MODEL_VERSION> ~/run-coordinator.sh` (the script refuses without the guard or with < 100 GB free; the last loop ran on the interim digest `2ad1fb1c…` — first run with the Tekton digest **[not run today]**). Stop with `docker stop act-coordinator`. Never two coordinators (D057) |
+| **Loop (re)start** | on the host, disk guard first if not resident: `nohup ~/disk-guard.sh >/dev/null 2>&1 &`; then `IMAGE=quay.io/jary/soarm-flywheel@sha256:02e66d895ed4ba328aa43263561027c18406d774887f465ab7acbd81e4c42d08 MODEL_VERSION=<the Fleet's MODEL_VERSION> ~/run-coordinator.sh` (the script refuses without the guard or with < 100 GB free; the last loop ran on the interim digest `2ad1fb1c…` — first run with the Tekton digest **[not run today]**). Stop with `docker stop act-coordinator`. Never two coordinators (D057) |
 | Bags ≥ 330 or free < 100 GB (guard parks the loop) | port + prune first (`~/assemble_all.sh` pattern, `tools/host/prune_bags.py --yes`), then restart the loop |
 | **Host runner not resident** (`pgrep -af host_runner` empty; `trigger-and-wait` FAILED) | on the host: `set -a; source ~/.minio-env; set +a; nohup ~/venv-runner/bin/python ~/host_runner.py </dev/null >> ~/host-runner.log 2>&1 &` (the runner reads the MinIO credentials from the environment) **[not run today — the runner was resident]** |
 | Dashboard not updating | `/api/status` moving? reload; else `oc delete pod -n flywheel -l app=dashboard` (host) **[not run today]** |

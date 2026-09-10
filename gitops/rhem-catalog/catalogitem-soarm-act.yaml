@@ -11,7 +11,9 @@
 # VERSION GRAPH ONLY (D038): the Fleet carries the modelcar as a quadlet `.volume` with
 # `Driver=image`, a path on which flightctl offers no `catalogItemRef`, so the Fleet pins the
 # digest directly and this item is provenance beside it, not a live reference. The Fleet's pin
-# and the newest version here must agree (BUILD-PLAN Phase 4.5 E exit criterion).
+# and the newest version on the `stable` channel must agree (BUILD-PLAN Phase 4.5 E exit
+# criterion); a version that was promoted and then rolled back stays in the graph on the
+# `rolled-back` channel so the history is not erased.
 #
 # Naming: `versions[].version` must be strict semver (server validateSemver; no `v` prefix), so
 # the candidate `act-v<N>-<suffix>` is recorded as `<N>.0.0-<suffix>` and the candidate name is
@@ -42,8 +44,8 @@ spec:
         container: "sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b"
       readme: "candidate act-v2-ft160 -- quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b"
     - version: "2.0.0-ft160-rhem"
-      channels: [stable]
+      channels: [rolled-back]
       references:
         container: "sha256:18cc4412a21bfdd48d27b654558d1268e7c95f168f28b50873c4e2417369e61a"
       replaces: "2.0.0-ft160"
-      readme: "candidate act-v2-ft160-rhem -- quay.io/jary/soarm-act-modelcar@sha256:18cc4412a21bfdd48d27b654558d1268e7c95f168f28b50873c4e2417369e61a"
+      readme: "candidate act-v2-ft160-rhem -- quay.io/jary/soarm-act-modelcar@sha256:18cc4412a21bfdd48d27b654558d1268e7c95f168f28b50873c4e2417369e61a; promoted by PR #2 and rolled back by PR #3 (D074) -- the Fleet serves 2.0.0-ft160"

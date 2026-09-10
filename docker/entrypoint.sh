@@ -1,4 +1,5 @@
 #!/bin/bash
+# This project was developed with assistance from AI tools.
 # SO-ARM101 Flywheel Producer entrypoint (desktop-gpu-split mode).
 #
 # This version runs the sim, camera bridge, and episode emitter only.

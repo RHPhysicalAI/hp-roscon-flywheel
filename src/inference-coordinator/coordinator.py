@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 """Inference coordinator — drives the episode lifecycle with clean phasing.
 
 Sequence per episode (no overlap between reset and policy):
@@ -23,6 +24,7 @@ import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
+from action_msgs.srv import CancelGoal
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray, MultiArrayDimension, String
 
@@ -75,6 +77,11 @@ EVAL_MODE = os.environ.get("EVAL_MODE", "false").lower() == "true"
 EVAL_EPISODES = int(os.environ.get("EVAL_EPISODES", "50"))
 EVAL_SEED_BASE = int(os.environ.get("EVAL_SEED_BASE", "1000"))
 EVAL_RESULTS_DIR = os.environ.get("EVAL_RESULTS_DIR", "/data/eval")
+# Optional explicit seed list (comma/space separated) — overrides the contiguous
+# EVAL_SEED_BASE..+EVAL_EPISODES range. Used to re-run specific paired scenes (e.g. the
+# seeds v2 fixed or broke vs v1) for the side-by-side A/B recording. With RECORD=true the
+# eval loop records each attempt so the bag can be ported to a per-episode video.
+EVAL_SEEDS = [int(s) for s in os.environ.get("EVAL_SEEDS", "").replace(",", " ").split() if s.strip()]
 
 # --- Failure recovery: return to the policy's OWN rest pose after a failed episode ---
 # A failed episode can leave the arm in a rough spot (e.g. the gripper parked over the
@@ -91,6 +98,10 @@ RECOVER_ON_FAIL = os.environ.get("RECOVER_ON_FAIL", "true").lower() == "true"
 RECOVER_PUBLISH_S = float(os.environ.get("RECOVER_PUBLISH_S", "5.0"))
 RECOVER_RATE = float(os.environ.get("RECOVER_RATE", "20"))
 RECOVER_TOL = float(os.environ.get("RECOVER_TOL", "0.15"))  # rad; arm joints only
+# A wedged action server refuses every goal while staying registered on the graph (D063: 2188
+# silent rejections during the disk-outage recovery). After this many consecutive rejections the
+# loop cancels every goal on the server (the cheapest unwedge) and logs at error level.
+REJECT_ESCALATE_N = int(os.environ.get("REJECT_ESCALATE_N", "5"))
 # Joint order the forward_position_controller expects. /joint_states publishes joints
 # in a DIFFERENT (alphabetical) order, so commands are built by name, never by index.
 CTRL_JOINTS = [j.strip() for j in os.environ.get(
@@ -126,6 +137,11 @@ class Coordinator(Node):
         # to finalize, so it can stamp dataset_path into the curator JSON (D018,
         # Phase 2.5 step 3). Published after the policy window, before 'end'.
         self._dataset_pub = self.create_publisher(String, "/flywheel/episode_dataset", 10)
+        # The episode's peak cube count, published before 'end' so the emitter stamps the same
+        # ground truth the keep/prune decision used instead of re-deriving it from its own poll.
+        self._cubes_pub = self.create_publisher(String, "/flywheel/episode_cubes", 10)
+        self._consecutive_rejections = 0
+        self._cancel_all_client = self.create_client(CancelGoal, "/run_policy/_action/cancel_goal")
         # Latched publisher so a late-joining emitter still gets the label.
         latched = QoSProfile(
             depth=1,
@@ -230,7 +246,7 @@ class Coordinator(Node):
                 time.sleep(2.5)
                 try:
                     _, n = task_eval.evaluate_task()
-                    if n > self._peak_cubes:
+                    if n is not None and n > self._peak_cubes:
                         self._peak_cubes = n
                 except Exception:
                     pass
@@ -304,6 +320,30 @@ class Coordinator(Node):
             m.data = ""
         self._dataset_pub.publish(m)
         self.get_logger().info(f"Dataset ref: '{m.data}'")
+        self._publish_peak_cubes()
+
+    def _publish_peak_cubes(self):
+        """Publish this episode's peak cube count for the emitter (before 'end')."""
+        m = String()
+        m.data = str(self._peak_cubes)
+        self._cubes_pub.publish(m)
+
+    def _cancel_all_goals(self):
+        """Cancel every goal on the policy action server (an all-zero goal_info cancels
+        all) — the unwedge for a server that keeps refusing new goals."""
+        self.get_logger().error(
+            f"{REJECT_ESCALATE_N} consecutive goal rejections — cancelling all goals on /run_policy")
+        if not self._cancel_all_client.wait_for_service(timeout_sec=5.0):
+            self.get_logger().error("cancel_goal service not available; will keep retrying")
+            return
+        fut = self._cancel_all_client.call_async(CancelGoal.Request())
+        rclpy.spin_until_future_complete(self, fut, timeout_sec=10)
+        res = fut.result()
+        if res is None:
+            self.get_logger().error("cancel_goal call timed out")
+        else:
+            self.get_logger().warn(
+                f"cancel_goal return_code={res.return_code} goals_canceling={len(res.goals_canceling)}")
 
     def _load_rest_pose(self):
         """Load a previously learned rest pose from REST_POSE_FILE, or None."""
@@ -479,15 +519,24 @@ class Coordinator(Node):
             rclpy.spin_until_future_complete(self, send_future, timeout_sec=10)
             handle = send_future.result()
             if not handle or not handle.accepted:
-                self.get_logger().warn("Goal rejected — retrying next cycle")
+                self._consecutive_rejections += 1
+                self.get_logger().warn(
+                    f"Goal rejected — retrying next cycle "
+                    f"({self._consecutive_rejections} consecutive)")
                 self._stop_recording()
                 self._publish_dataset()
                 self._stop_peak_poll()
                 self._signal("end")
                 self._prune_bag_if_rejected()
                 self._last_failed = True
-                time.sleep(2)
+                if self._consecutive_rejections >= REJECT_ESCALATE_N:
+                    self._cancel_all_goals()
+                    self._consecutive_rejections = 0
+                    time.sleep(5)
+                else:
+                    time.sleep(2)
                 continue
+            self._consecutive_rejections = 0
 
             # 4. Policy attempt window — ends early once the task is complete
             #    and the arm has settled, so good runs don't wait out the clock.
@@ -594,23 +643,37 @@ class Coordinator(Node):
         return False
 
     def run_eval(self):
-        """Run EVAL_EPISODES over a fixed, seeded scene set and write results.
+        """Run a fixed, seeded scene set and write results.
 
-        No recording, no pruning, no curator — this is measurement only. Each
-        episode's scene is drawn from EVAL_SEED_BASE + i, so the sequence is
-        identical for every policy evaluated at the same config (apples-to-apples).
+        Measurement only (no pruning, no curator). Each episode's scene is drawn from
+        its seed, so the sequence is identical for every policy evaluated at the same
+        config (apples-to-apples). Seeds come from EVAL_SEEDS if set, else the contiguous
+        EVAL_SEED_BASE..+EVAL_EPISODES range. When RECORD=true each attempt is recorded and
+        the bag path is stored in the per-episode row, so the same seed can be ported to a
+        side-by-side video for two policies (paired A/B).
         """
+        seeds = EVAL_SEEDS if EVAL_SEEDS else [EVAL_SEED_BASE + i for i in range(EVAL_EPISODES)]
         self.get_logger().info(
-            f"EVAL MODE — {EVAL_EPISODES} episodes, seed_base={EVAL_SEED_BASE}, "
-            f"model_version={MODEL_VERSION or '(emitter default)'}")
+            f"EVAL MODE — {len(seeds)} episodes, seeds={'explicit ' + str(seeds) if EVAL_SEEDS else 'base ' + str(EVAL_SEED_BASE)}, "
+            f"record={RECORD}, model_version={MODEL_VERSION or '(emitter default)'}")
         self.get_logger().info("Waiting for action server...")
         self._client.wait_for_server()
         self.get_logger().info("Action server ready")
 
+        # Recorder availability is set up in run_forever for the production loop; the eval
+        # path needs the same check or _start_recording() silently no-ops (RECORD + a chosen
+        # EVAL_SEEDS is how the paired A/B clips are produced).
+        if RECORD:
+            self.get_logger().info("Waiting for episode recorder action server...")
+            if self._rec_client.wait_for_server(timeout_sec=RECORD_WAIT_S):
+                self._recording_available = True
+                self.get_logger().info("Episode recorder ready — eval rollouts will be recorded")
+            else:
+                self.get_logger().warn("Episode recorder not available — eval WITHOUT recording")
+
         results = []
-        for i in range(EVAL_EPISODES):
-            seed = EVAL_SEED_BASE + i
-            self.get_logger().info(f"[eval] episode {i + 1}/{EVAL_EPISODES} seed={seed}")
+        for i, seed in enumerate(seeds):
+            self.get_logger().info(f"[eval] episode {i + 1}/{len(seeds)} seed={seed}")
 
             # 1. Deterministic scene + clean arm start.
             self._reset(seed=seed)
@@ -627,7 +690,8 @@ class Coordinator(Node):
             # the curator under the eval label and pollute the production buckets (found
             # 2026-09-08: 135 eval-* objects in MinIO). The harness scores itself.
 
-            # 3. Send goal + run the attempt window.
+            # 3. Record (if enabled), send goal, run the attempt window, stop recording.
+            self._start_recording()   # no-op unless RECORD and the recorder is available
             goal = RunPolicy.Goal()
             goal.prompt = PROMPT
             send_future = self._client.send_goal_async(goal)
@@ -642,6 +706,7 @@ class Coordinator(Node):
                 cancel_future = handle.cancel_goal_async()
                 rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=10)
                 time.sleep(1.0)
+            self._stop_recording()   # finalizes the bag; sets self._last_bag_path
 
             # 4. Stop metrics, settle, then score from ground-truth cube poses.
             self._metrics_active = False
@@ -650,6 +715,9 @@ class Coordinator(Node):
             try:
                 import task_eval
                 _, snapshot = task_eval.evaluate_task()
+                if snapshot is None:
+                    self.get_logger().warn("[eval] cube pose source unavailable at episode end")
+                    snapshot = 0
             except Exception as e:
                 self.get_logger().warn(f"[eval] task eval failed: {e}")
                 snapshot = 0
@@ -668,6 +736,7 @@ class Coordinator(Node):
                 "duration_s": round(time.time() - ep_start, 2),
                 "early_stopped": early,
                 "goal_accepted": accepted,
+                "bag_path": self._last_bag_path,   # None unless RECORD; pairs v1/v2 by seed for the A/B video
             }
             results.append(row)
             self.get_logger().info(

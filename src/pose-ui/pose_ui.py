@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 """Pose UI — live camera streams + joint readout, with a one-click rest-pose snapshot.
 
 Operator tool for the failure-recovery mechanism (coordinator, D021): shows the two

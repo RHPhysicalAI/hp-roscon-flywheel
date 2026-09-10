@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 """Sim reset — resets cubes to starting positions and arm to home between episodes.
 
 Called by the episode emitter after each episode completes. Uses:

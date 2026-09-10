@@ -4024,3 +4024,304 @@ with the kit recording and the Fury bring-up on the same sim host, and nothing i
 narrative depends on it — the runbook already claims only one round of self-improvement.
 **Consequences:** the Q&A answer is "one round proven; the next step is a privileged expert,
 designed, with every prerequisite built." First upgrade after the event.
+
+---
+
+## D124 — Dashboard finished for the booth: Beat 4 panel from the frozen Phase 3 ladder, configurable camera host, operator-only Clear, honest empty state, probes
+
+**Date:** 2026-09-09 (operator-approved punch list)
+**Context:** the dashboard's bottom card was the Cosmos-era "Policy comparison" video player,
+waiting on rollout videos that never existed here; the camera bridge address was hardcoded; "Clear
+Data" sat in the header the runbook says must never be pressed; an idle loop looked like a broken
+page (`0 / 160`, `idle`, blank cards); the Deployment had no probes. BUILD-PLAN Phase 4 item 1
+intended Beat 4 to run on the dashboard from frozen records.
+**Decision:**
+1. The comparison card becomes **"Policy improvement — same policy, same 100 scenes, more of its
+   own curated data"**: CSS bars of success rate per rung (teacher 73% dashed baseline; 20 → 60%,
+   40 → 56%, 80 → 76%, 160 → 86%) and a table with N, mean cubes, fixed/broken, net, sign-test p
+   and the gate verdict, plus the headline the runbook narrates. Data is a new ConfigMap
+   `gitops/flywheel/phase3-ladder-summary.yaml` transcribed from `docs/eval-records/phase3-ladder/`
+   (regeneration command in its header), mounted at `/app/ladder` and served at `/api/ladder`.
+   No chart library; the page stays dependency-free. All dream/rollout code, the `/api/rollout`
+   route and the `/var/lib/dreams` hostPath mount are removed.
+2. `CAMERA_HOST` env (default `10.0.0.48`, the Fury host's booth address goes there) is
+   substituted into the page by the Flask app in place of the hardcoded host.
+3. Clear Data leaves the header; it is a footer link shown only with `?ops=1`, still
+   `confirm()`-gated, hitting the unchanged `/api/control/clear`.
+4. Empty state says what is true: header indicator "Loop stopped" (grey) vs "Flywheel running"
+   (green pulse — the old header always said running), progress state "loop stopped", and the
+   rollout/log cards read "Collection loop stopped — episodes appear here once it runs."
+5. Readiness and liveness probes on `/api/status` (readiness 20 s initial delay for the pip
+   install, liveness 60 s / 4 failures).
+6. Card titles lose the Cosmos-era "1 ·" / "2 ·" numbering. `DASHBOARD_CODE_REV` → `2026-09-09-h`.
+7. Runbook: Beat 4's primary screen is the dashboard panel, the static chart
+   `docs/internal/phase3-ladder.html` is the fallback; the "Policy comparison card is empty" known
+   artifact is gone; the kit table's Beat 4 row and the "What's real" line updated.
+**Verification:** YAML parses, `dashboard.py` `ast.parse`, extracted page JS `node --check`,
+ladder JSON parses; live after Argo sync — see the commit's follow-up check.
+
+---
+
+## D125 — The dashboard's Beat 4 ladder panel (D124) removed: Beat 4 belongs to the eval dashboard, and the real A/B artifact is paired episode video
+
+**Date:** 2026-09-09 (operator decision)
+**Context:** D124 replaced the dead Cosmos-era "Policy comparison" video card with a panel rendering the
+frozen Phase 3 ladder. On review the operator judged it a stopgap: it duplicates the read-only eval
+dashboard's scope (APPENG-6295 — success rate, cube distribution, smoothness per lineage, success vs.
+dataset size, replayable from a frozen file directory), and it is not the comparison the demo wants.
+The comparison that would actually land is paired *video*: the eval harness already runs identical
+seeded scenes per policy, so recording a chosen seed set for v1 and v2 (and later lineages), porting
+the bags to LeRobot, and showing the clips side by side with the per-episode numbers — designed
+tomorrow, not built tonight.
+**Decision:** the ladder card, its CSS/JS, the `/api/ladder` route, the `LADDER_FILE` env, the
+`/app/ladder` mount and the `phase3-ladder-summary` ConfigMap are removed; `DASHBOARD_CODE_REV`
+bumped to roll the pod. Everything else from D124 stays: `CAMERA_HOST` injection, readiness/liveness
+probes, the honest "Loop stopped" states and empty-state copy, the ops-only Clear control, the
+dropped card numbering. The old video card is not reinstated — the page simply has no Beat 4 card.
+The runbook's Beat 4 section, kit-table row and "What's real" line revert to the static chart
+(`docs/internal/phase3-ladder.html`) as primary with the eval dashboard taking the slot when it lands;
+the "Policy comparison card is empty" known-artifact bullet stays removed.
+**Consequences:** Beat 4 is the eval dashboard's (Olga's) or the static chart; the ops dashboard is
+Beats 1, 2 and 6 only. The paired-video design is the next Beat 4 conversation.
+
+---
+
+## D126 — Review batch, part 1: source hardening and documentation items (W-1, W-3, W-5, W-12, W-14, W-15, W-17, S-1, S-6)
+
+**Date:** 2026-09-09 (unattended runner, operator-approved batch)
+**Decision:**
+- W-12: `coordinator.py` counts consecutive `/run_policy` goal rejections; at `REJECT_ESCALATE_N`
+  (default 5) it logs at error level and cancels every goal on the server through
+  `/run_policy/_action/cancel_goal` with an all-zero goal_info (D063's cheapest unwedge), then resets.
+- W-17: the coordinator publishes its peak cube count on `/flywheel/episode_cubes` alongside the
+  dataset ref before `end`; the emitter prefers it over its own poll, so the curator record and the
+  bag keep/prune decision use one ground truth.
+- S-1: `task_eval.read_cube_poses()` returns `None` when the gz query fails or yields no cube;
+  `evaluate_task()` then returns `(False, None)`. The emitter records `cubes_placed: null` +
+  `score_reason: sensor-unavailable` only when no ground-truth read succeeded all episode and the
+  coordinator sent nothing; the curator rejects that as `sensor-unavailable` (Gate 2, new first check)
+  rather than `task-failed`. The eval harness logs and treats an unavailable end snapshot as 0.
+- W-1: a second DaemonSet `qemu-binfmt-arm64-host` (nodeSelector arm64, `--install amd64`) so the
+  Fury's aarch64 SNO registers the amd64 handler; the original stays amd64→arm64. One schedules per
+  cluster, the other stays pending with no pods. Server dry-run clean on the desktop.
+- S-6: CatalogItem `2.0.0-ft160-rhem` moves to channel `rolled-back` with its readme stating PR #2/
+  PR #3 (D074); the newest `stable` version is `2.0.0-ft160` = the Fleet's pin. Header invariant
+  reworded to "newest stable version".
+- W-3: `docker/zenoh-connect.json5` deleted (no live reference; entrypoints generate the session
+  config inline). W-5: AI-assistance marker added to the 12 unmarked files; `tools/ci/check-ai-marker.sh`
+  greps every tracked `*.py|*.sh|Dockerfile*` and exits non-zero on a miss (27/27 marked).
+- W-14/W-15: runbook — the Applications tab's Healthy inherits `healthcheck.sh`'s blind spot; the
+  headline eval numbers were measured at chunking 30/0.95 vs the deployed 100/0.5, re-measure pending.
+**Not live:** W-12, W-17 and S-1 are baked into the runtime and sim images — they ride the next
+Tekton build and the next host `docker/Dockerfile` build. The curator's `sensor-unavailable` gate
+lands with the gitops/flywheel roll in the next batch commit.
+
+---
+
+## D127 — Review batch, part 2: the KFP signing path gets the Tekton path's checks (W-7, W-8)
+
+**Date:** 2026-09-09 (unattended runner)
+**Decision:** `pipeline/act_flywheel_pipeline.py`:
+- W-7: the crane tarball and the cosign binary are SHA-256-checked against pinned release digests
+  (`crane_sha256_{amd64,arm64}` from go-containerregistry v0.20.3's `checksums.txt`,
+  `cosign_sha256_{amd64,arm64}` = the values `gitops/tekton/cosign-sign-task.yaml` already pins) before
+  either runs; a mismatch aborts the component. Both are pipeline parameters beside the versions.
+- W-8: `sign_modelcar` fails when `cosign sign` reports no Rekor entry (no more `-1`), then runs
+  `cosign verify --key cosign.pub --rekor-url <rekor> --output json` with `SIGSTORE_REKOR_PUBLIC_KEY`
+  pointed at the `rekor-public-key` ConfigMap (newly mounted at `/etc/rekor`) — pass/fail on exit
+  code, and the returned `rekor_index` is the verified bundle's `logIndex` on the index itself, the
+  same thing the Tekton task records. Without a Rekor URL the verify step is skipped and no bypass
+  flag exists anywhere in the file (the D3 grep still returns nothing).
+**Record:** compiled with kfp 2.17.0 and uploaded as DSP pipeline version
+`v-202609092137-hardening` (`fc9b8161-925d-4772-bb1c-60aae1291559`) of pipeline `99ec0aab-…`; no run
+started. The manifest-consumer selects the newest version on its next trigger, so the next
+promotion exercises these checks for real.
+
+---
+
+## D128 — Review batch, part 3: the flywheel namespace roll (W-9, W-11, W-2, W-4, S-2, S-1 curator gate)
+
+**Date:** 2026-09-09 (unattended runner; loop confirmed stopped before the push)
+**Decision:**
+- W-9: `manifest-consumer.py` verifies DSP's oauth-proxy cert against the service CA the pod
+  mounts (`/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt`, confirmed present) instead
+  of `CERT_NONE`; `sync_agent.py`'s SSL branch likewise (unverified context removed). `CONSUMER_CODE_REV`
+  bumped so the pod rolls.
+- W-11: SCC grants scoped per workload in `scc-rolebinding.yaml`: new `edge-kafka` ServiceAccount
+  with a namespaced RoleBinding to `privileged`; the `default` SA drops privileged for a namespaced
+  `hostmount-anyuid` binding — the admission controller was already admitting curator and
+  rejected-mirror under `hostmount-anyuid` (verified on the live pods), so nothing loses a capability
+  it used; the dashboard's binding becomes a RoleBinding. The cluster-wide `flywheel-privileged-scc`
+  ClusterRoleBinding is pruned by Argo.
+- W-2: `privileged` + root on the broker are kept and justified in the manifest: the log dir is a
+  hostPath with the host's SELinux label, writable only from a privileged (spc_t) container — the
+  same reason the local-path helper carries.
+- W-4: the dashboard Role loses its unused `services` verb (Role-only change; no pod roll).
+- S-2: `python:3.12-slim` pinned by digest (`sha256:78387bc3…`, the multi-arch manifest list resolved
+  on the host) in curator, sync-agent and rejected-mirror; the dashboard still uses the tag (out of
+  this finding's scope, same fix applies).
+- S-1 (curator half): Gate 2 rejects `cubes_placed: null` as `sensor-unavailable` before the
+  task-success check.
+**Consequences:** one push, one broker restart (new SA), curator and sync-agent re-pulled on the
+pinned digest; verified below in the runner's report.
+**Verified live:** Argo `flywheel` Synced/Healthy on `98933ab` in ~75 s; curator, sync-agent, edge-kafka
+and manifest-consumer rolled, all Ready with 0 restarts; SCC annotations curator/sync-agent
+`hostmount-anyuid`, edge-kafka `privileged` (SA `edge-kafka`), manifest-consumer `restricted-v2`; the
+`flywheel-privileged-scc` ClusterRoleBinding pruned; Kafka's GroupCoordinator stabilised the
+`manifest-consumer` group on the restarted consumer (generation 17). One more grant turned up that git
+never knew about: a hand-created RoleBinding `system:openshift:scc:privileged` (8 days old, the
+`oc adm policy add-scc-to-user` form, no Argo tracking) still bound the `default` SA to privileged —
+deleted live, since every default-SA pod was already admitted under `hostmount-anyuid`; `oc auth can-i
+use scc/privileged --as=system:serviceaccount:flywheel:default` is now **no**, `edge-kafka` **yes**. Its
+sibling `system:openshift:scc:hostmount-anyuid` (default + dashboard) duplicates the git-tracked bindings
+and was left in place.
+
+---
+
+## D129 — Runtime image rebuilt in one clean Tekton run and re-pinned; C11/C12 now on the device path
+
+**Date:** 2026-09-09
+**Record:** PipelineRun `runtime-image-plt5s` on `ea513fa`: git-clone, build-and-push (amd64 + arm64),
+sign, verify — all Succeeded in a single run, 20:29Z → 21:38Z. This is the "one clean end-to-end
+run" D112 left open. Manifest list `sha256:02e66d895ed4ba328aa43263561027c18406d774887f465ab7acbd81e4c42d08`
+(tag `act-inference-ea513fa`), platform digests arm64 `a7adc041…` / amd64 `6713857a…`, Rekor
+14/15/16. Verified independently from the host with `cosign verify --rekor-url` +
+`SIGSTORE_REKOR_PUBLIC_KEY` (claims validated, tlog existence verified, key verified; exit 0) and
+`crane manifest` (both platforms).
+**Decision:** Fleet `Image=` re-pinned to the new digest; the runbook's two digest references
+updated to match. The image carries D113's eval-gate fix (C11), D118's name-keyed joint checks and
+`sim_reset.py` parse fix (C12), and D115's emitter change is on the sim image already (D124-era
+host rebuild, `sim-only` re-tagged, previous image kept as `sim-only-prev-20260904`). Expected
+rollout: rv 7 → 8, container recreated, Healthy within ~4 min (D112's re-pin timing); modelcar
+unchanged, so no modelcar pull.
+**Consequences:** the sim (`so-arm-sim`) and the device now both run images built from `ea513fa`.
+A 10-minute validation loop follows to exercise the whole path; the loop is stopped afterwards
+and the disk guard stays armed. The `runtime-image-a4` PipelineRun and its 60 Gi PVC remain to
+be deleted after the kit recording (inbox).
+
+---
+
+## D130 — Re-pin outcome and validation loop: device Healthy on the clean build; the rebuilt sim and runtime run the loop end to end
+
+**Date:** 2026-09-09
+**Record (re-pin, D129):** ResourceSync picked up `934371e`; device rv 7 → 8, `UpToDate`,
+`applicationsSummary: Healthy` at +8:33 from the push (one RS poll + container recreate + health
+start period); the app container's `ImageDigest` is `02e66d89…`; no modelcar pull.
+**Record (validation loop, 10 min):** `run-coordinator.sh` started with no `MODEL_VERSION` and
+followed the Fleet (`act-v2-ft160`, D113 verified live) on the new runtime digest. 13 episodes,
+0 goal rejections, 0 errors; coordinator logged `Observed model_version: act-v2-ft160`; emitter
+verdicts 12 FAIL / 1 SUCCESS with **no `INJECTED-FAIL`** (D115's removal is live on the sim
+image); dashboard `flywheel_running: true`, counts 0 → 1 curated / 12 rejected / 1 sent, trigger
+1/160; device stayed rv8 Healthy throughout. The 1-in-13 warm-up ratio equals D073's first-12-
+minute window (1 curated / 13 rejected) — consistent, not a regression signal; the window is too
+short to compare success rates. Loop stopped afterwards; disk guard resident.
+**Decision:** C11 and C12 are closed as deployed, not just fixed in source; D112's "one clean
+end-to-end run" is closed by `runtime-image-plt5s`.
+**Consequences:** host root disk 110 G free with 319 bags after the loop — the guard parks the
+loop at < 100 G or ≥ 330 bags, so a port + prune (`assemble_all.sh` → `prune_bags.py --yes`,
+now lineage-aware) is due before the next longer loop (operator). Two finished PipelineRuns
+(`runtime-image-a4`, `runtime-image-plt5s`) each hold a 60 Gi PVC until deleted (after the kit
+recording, per the inbox).
+
+---
+
+## D131 — Review batch, part 4: the device trust policy fails closed (W-10)
+
+**Date:** 2026-09-09 (unattended runner; run last, after the D-re-pin rollout to renderedVersion 8
+and a 15-minute window with no collection loop)
+**Context:** review W-10 — `policy.json`'s `default` was `insecureAcceptAnything`, so signature +
+Rekor enforcement covered only the four enumerated entries and any other reference (renamed repo,
+promotion typo, mirror, docker.io) would pull unsigned without an error; D091's two negative tests
+never exercised the default branch.
+**Decision:** `gitops/rhem/fleet-act-inference.yaml`'s inline `policy.json` now has `"default":
+[{"type": "reject"}]`; the enumerated entries are unchanged (`registry.access.redhat.com`,
+`registry.redhat.io` with the RHEL keys; `quay.io/jary/soarm-act-modelcar`, `quay.io/jary/
+soarm-flywheel` with `cosign.pub` + `rekor.pub` and `signedIdentity: matchRepository`); the file's
+trust-chain header says so. Commit `366ac14`.
+**Record:** ResourceSync → device renderedVersion 9, `UpToDate` / `Healthy` at +105 s; the device's
+own `/etc/containers/policy.json` reads `default: reject`. Same session on the device (verbatim in
+`docs/eval-records/negative-trust-tests.md` Case 4): `docker.io/library/alpine:3.20` → `Source image
+rejected: Running image docker://alpine:3.20 is rejected by policy.` (exit 125); Cases 1 and 2 still
+rejected with their D091 strings; the pinned modelcar digest still pulls and stores its signature
+(exit 0); device Healthy afterwards. The first attempt hit the desktop's flightctl port-forward
+re-establishing (`127.0.0.1:3443 connection refused`, the runbook's known artifact) — retried, not
+a device fault.
+**Residual:** the "right signature, wrong repository" artifact
+(`quay.io/jary/soarm-flywheel-negtest:policy-default-2026-09-09`, the modelcar's bytes copied
+unsigned) was created but quay made the repository private, so its pull fails on authorization
+before policy — an operator action (make the repository public in quay) turns it into the standing
+Case 4b; expected result `rejected by policy`.
+**Consequences:** every registry the device may pull from is now an explicit allow-list entry; adding
+a registry (a mirror on the Fury, for example) is a Fleet edit, reviewed like a promotion.
+
+---
+
+## D132 — Loop bags archived to the media HDD; paired A/B episode video recorded for Beat 4 (v1 vs v2, same seed)
+
+**Date:** 2026-09-10
+**Context:** the operator asked for a real same-scene A/B (v1 teacher vs v2 fine-tuned) video for the
+dashboard's Beat 4, replacing the removed ladder-panel stopgap (D125). Two prerequisites surfaced:
+the host root disk was at 99 GB free (below the loop guard's 100 GB floor) with 319 loop bags
+(485 GB), and the eval harness records nothing.
+**Bag archive:** all 319 bags (485 GB) moved to `/media/jary/videos/flywheel-bags-archive/
+loop-bags-2026-09-04_09` — the same NTFS HDD the D062 proof bags live on. Two gotchas, both handled:
+`rsync -a` fails on that fuseblk mount (it rejects ownership/time ops — `mkstemp: Operation not
+permitted`), so the copy uses `rsync -rlD --no-perms --no-owner --no-group --no-times --size-only`;
+and `--remove-source-files` couldn't delete the source because the bags are root-owned (written by
+the recorder container), so after a byte-for-byte verification (total bytes + per-file name/size
+manifest md5 identical, 520,057,530,590 bytes each side) the source was deleted via a root
+container (`find /bags -mindepth 1 -delete`). Root: 98 GB → 583 GB free. The bags stay re-portable
+from the archive by pointing `--bags-root` there.
+**Recording mechanism:** `coordinator.py` `run_eval` gains optional `EVAL_SEEDS` (an explicit seed
+list) and, when `RECORD=true`, records each attempt (mirrors `run_forever`'s recorder-availability
+setup — the missing piece: `_recording_available` was only set in `run_forever`, so the first cut
+recorded nothing) and stamps `bag_path` into each result row. Built as a one-layer overlay image
+(`act-inference:eval-record`, `FROM` the deployed runtime + `COPY coordinator.py`).
+**The RHEM-era conflict, and how it was resolved:** a host eval container (ROLE=all, local policy)
+registers a second `/run_policy` on the sim's zenoh graph, which collides with the RHEM device that
+is *always* serving the policy into that same sim — every goal is rejected (`/rosetta_client/
+change_state` timeout). This is new since Phase 3 (pre-RHEM there was no device). Resolved by
+suspending the device VM for the recording window (`virsh suspend act-device`, operator — needs
+sudo; jary can't control the system domains), which detaches its policy from the sim. Confirmed no
+impact on Olga's eval dashboard (APPENG-6295): her sources are the SNO hub (Kafka/MinIO, a separate
+VM) and the loop was stopped, so no live flow. The sim had also stalled (~2.6 h stale camera) and
+was restarted. After recording, `virsh resume` + the D063 recovery (chrony resync stepped the
+~27-min clock skew, policy container restarted to reconnect to the restarted sim) returned the
+device to Online / UpToDate / Healthy / rv9.
+**Recording result (at the deployed 100/0.5 chunking):** v1 and v2 each ran seeds 1002/1019/1040/
+1024 (+ a warmup) with recording. Paired outcomes: **seed 1002 and 1019 both v1 1/3 ✗ → v2 3/3 ✓**
+(two vivid same-scene fixes); 1040 both-fail, 1024 both-pass. Note (W-15): these per-seed outcomes
+differ from the 30/0.95 eval records the seeds were chosen from — the deployed 100/0.5 config
+genuinely behaves differently per scene; no clean v1✓→v2✗ "broke" example landed on these seeds
+(the ladder chart still carries the honest aggregate 20-fixed/7-broken story). Bags ported to
+overhead-camera mp4 via `rosetta.port_bags` (staged with a *copied* mcap, not a symlink — a symlink
+to an unmounted host path dangles in the port container) and uploaded to MinIO
+`episodes-data/paired-ab/` (manifest + 4 clips, ~2–5 MB each). The dashboard card that serves them
+is a separate change.
+**Consequences:** `coordinator.py`'s `EVAL_SEEDS`/eval-recording is committed here but, like the
+other coordinator changes, is only live in a host overlay image — not in the device's Tekton
+runtime until the next build. Cleanup pending on the host: the recorded bags (~20 GB in
+`~/flywheel-data/bags`), the `ab-stage-*`/`ab-upload-*` temp dirs and `ab-datasets/`, and the
+`act-inference:eval-record` image (inbox). The C/D extension (ladder rungs as more columns) and a
+"broke" counterexample need another exclusive-sim window; deferred.
+
+---
+
+## D133 — Beat 4 paired A/B video card on the ops dashboard (served from MinIO)
+
+**Date:** 2026-09-10
+**Context:** the Beat-4 "policy improvement" story needed a real same-scene A/B, not the static
+ladder chart. Live-recorded clips (v1 teacher vs v2 act-v2-ft160 on identical seeds, overhead
+camera) were ported to mp4 and uploaded to MinIO `episodes-data/paired-ab/` with a manifest.
+**Decision:** `gitops/flywheel/dashboard.yaml` gains a paired-video card. Two routes in
+`dashboard.py`, backed by a read-only boto3 MinIO client: `GET /api/paired` streams
+`paired-ab/manifest.json`; `GET /api/paired/<seed>/<policy>.mp4` streams the clip after
+validating `seed` (digits) and `policy` (`v1`/`v2`) — with single-range (206) support and a
+graceful 404 when MinIO/the object is unavailable. The card (two `<video>` players, a seed
+selector, per-policy outcome badges, a "play both" button) fetches the manifest on load and stays
+hidden if it 404s. MinIO endpoint `minio.minio.svc:9000`; credentials from the existing
+`hub-credentials` Secret (`s3-access-key`/`s3-secret-key`) as env, never logged. `boto3` added
+to the pod's pip install; `DASHBOARD_CODE_REV` bumped so Argo rolls the pod.
+**Consequences:** live/desktop card only — at the booth (no cluster) Beat 4 still falls back to the
+static chart. The featured seeds (1002, 1019) each show v1 1/3 fail vs v2 3/3 success on the
+identical scene, measured at the deployed 100/0.5 chunking.

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# This project was developed with assistance from AI tools.
 """Ladder report — the Phase 3 proof table from the eval harness's episode records (D020/D021).
 
 Reads the per-policy results the coordinator's eval mode writes (/data/eval/<model_version>.json)
