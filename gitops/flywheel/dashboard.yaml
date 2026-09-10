@@ -29,7 +29,7 @@ data:
     """Physical AI Edge Flywheel Dashboard -- Flask backend."""
     import json, os, pathlib, queue, shutil, threading, time
     from typing import Optional
-    from flask import Flask, Response, jsonify, request, send_file
+    from flask import Flask, Response, abort, jsonify, request, send_file
 
     try:
         from kubernetes import client as k8s, config as k8scfg
@@ -60,6 +60,26 @@ data:
     COLLECTOR_DEPLOY = os.environ.get("COLLECTOR_DEPLOYMENT", "manifest-consumer")
     BASELINE_MV   = os.environ.get("BASELINE_MODEL_VERSION", "upstream-act-teacher")
     LOOP_ACTIVE_S = int(os.environ.get("LOOP_ACTIVE_SECONDS", "180"))
+
+    # ---- Paired A/B clips (Beat 4) -------------------------------------------
+    # Same seeded scene run twice (v1 teacher vs v2 fine-tuned), overhead camera, stored in MinIO
+    # under paired-ab/. Served here so the browser plays them from the dashboard. This is a live/
+    # desktop card; at the booth (no cluster) Beat 4 falls back to the static ladder chart.
+    import re as _re
+    MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://minio.minio.svc:9000")
+    MINIO_ACCESS   = os.environ.get("MINIO_ACCESS_KEY", "")
+    MINIO_SECRET   = os.environ.get("MINIO_SECRET_KEY", "")
+    PAIRED_BUCKET  = os.environ.get("PAIRED_BUCKET", "episodes-data")
+    PAIRED_PREFIX  = "paired-ab"
+    _SEED_RE = _re.compile(r"^[0-9]{1,10}$")
+
+    def _s3():
+        import boto3
+        from botocore.config import Config
+        return boto3.client(
+            "s3", endpoint_url=MINIO_ENDPOINT,
+            aws_access_key_id=MINIO_ACCESS, aws_secret_access_key=MINIO_SECRET,
+            config=Config(signature_version="s3v4", s3={"addressing_style": "path"}))
 
     # ---- K8s helpers ---------------------------------------------------------
     def _apps() -> Optional["k8s.AppsV1Api"]:
@@ -385,6 +405,39 @@ data:
         broadcast("clear", {"cleared": cleared})
         broadcast("status", status_snapshot())
         return jsonify({"ok": True, "cleared": cleared})
+
+    @app.route("/api/paired")
+    def api_paired():
+        """The paired-clip manifest (seeds + per-policy outcomes). 404 if MinIO/manifest is
+        unavailable, so the card degrades gracefully rather than 500ing the page."""
+        try:
+            obj = _s3().get_object(Bucket=PAIRED_BUCKET, Key=f"{PAIRED_PREFIX}/manifest.json")
+            return Response(obj["Body"].read(), mimetype="application/json")
+        except Exception:
+            return jsonify({"error": "paired manifest not available"}), 404
+
+    @app.route("/api/paired/<seed>/<policy>.mp4")
+    def api_paired_clip(seed, policy):
+        """Stream a paired clip from MinIO. Seed/policy are validated before building the key."""
+        if not _SEED_RE.match(seed) or policy not in ("v1", "v2"):
+            abort(400)
+        key = f"{PAIRED_PREFIX}/seed-{seed}/{policy}.mp4"
+        rng = request.headers.get("Range")
+        try:
+            kwargs = {"Bucket": PAIRED_BUCKET, "Key": key}
+            if rng:
+                kwargs["Range"] = rng
+            obj = _s3().get_object(**kwargs)
+            body = obj["Body"].read()
+            headers = {"Content-Type": "video/mp4", "Accept-Ranges": "bytes",
+                       "Content-Length": str(len(body))}
+            status = 200
+            if rng and obj.get("ContentRange"):
+                headers["Content-Range"] = obj["ContentRange"]
+                status = 206
+            return Response(body, status=status, headers=headers)
+        except Exception:
+            abort(404)
 
     if __name__ == "__main__":
         app.run(host="0.0.0.0", port=8080, threaded=True)
@@ -801,6 +854,21 @@ data:
     .ops-only { display: none; }
     body.ops .ops-only { display: inline-flex; }
     #btn-clear { color: var(--txt3); cursor: pointer; text-decoration: underline dotted; }
+    /* ---- Paired A/B video card ------------------------------------------ */
+    #paired-videos { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 4px 0 6px; }
+    .paired-col { display: flex; flex-direction: column; gap: 6px; }
+    .paired-video { width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 6px; border: 1px solid var(--border); }
+    .paired-label { font-size: 12px; font-weight: 600; }
+    .paired-label.v1 { color: var(--blue); }
+    .paired-label.v2 { color: var(--green); }
+    .paired-outcome { font-size: 13px; font-weight: 700; color: var(--txt3); }
+    .paired-outcome.ok  { color: var(--green); }
+    .paired-outcome.bad { color: var(--red); }
+    #paired-seedbar { display: flex; gap: 6px; margin-bottom: 8px; }
+    .seed-btn { padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border2);
+      background: var(--card2); color: var(--txt2); font-size: 12px; cursor: pointer; }
+    .seed-btn.active { background: var(--blue-dim); border-color: var(--blue); color: var(--blue); font-weight: 600; }
+    #paired-controls { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
     </style>
     </head>
 
@@ -968,6 +1036,33 @@ data:
         </div>
         <div id="trigger-banner">
           &#9889; Training threshold reached &mdash; LeRobot ACT fine-tune starting on curated rollout episodes
+        </div>
+      </div>
+
+      <!-- PAIRED A/B VIDEO (Beat 4) -- hidden until the manifest loads -->
+      <div class="card hidden" id="paired-card" style="grid-column: 1 / -1">
+        <div class="card-header">
+          <span class="card-title">Policy improvement &mdash; same scene, teacher vs fine-tuned</span>
+          <span class="annotation" id="paired-note"></span>
+        </div>
+        <div id="paired-body">
+          <div id="paired-seedbar"></div>
+          <div id="paired-videos">
+            <div class="paired-col">
+              <div class="paired-label v1">v1 &middot; upstream teacher</div>
+              <video id="paired-v1" class="paired-video" muted loop playsinline controls preload="metadata"></video>
+              <div class="paired-outcome" id="paired-out-v1">&mdash;</div>
+            </div>
+            <div class="paired-col">
+              <div class="paired-label v2">v2 &middot; fine-tuned on its own curated data</div>
+              <video id="paired-v2" class="paired-video" muted loop playsinline controls preload="metadata"></video>
+              <div class="paired-outcome" id="paired-out-v2">&mdash;</div>
+            </div>
+          </div>
+          <div id="paired-controls">
+            <button class="btn btn-blue btn-sm" onclick="pairedPlayBoth()">&#9654; Play both</button>
+            <span class="annotation" id="paired-caption"></span>
+          </div>
         </div>
       </div>
 
@@ -1387,6 +1482,57 @@ data:
         t.className = '';
       }, 4000);
     }
+
+    // ---- Paired A/B video (Beat 4) ------------------------------------------
+    let _pairedManifest = null;
+    function pairedOutcome(el, o) {
+      const ok = !!(o && o.success);
+      el.textContent = (o ? o.cubes : 0) + ' / 3 ' + (ok ? '✓' : '✗');
+      el.className = 'paired-outcome ' + (ok ? 'ok' : 'bad');
+    }
+    function pairedSelectSeed(seed) {
+      const p = (_pairedManifest.pairs || []).find(x => String(x.seed) === String(seed));
+      if (!p) return;
+      const v1 = document.getElementById('paired-v1');
+      const v2 = document.getElementById('paired-v2');
+      v1.src = '/api/paired/' + seed + '/v1.mp4';
+      v2.src = '/api/paired/' + seed + '/v2.mp4';
+      v1.load(); v2.load();
+      pairedOutcome(document.getElementById('paired-out-v1'), p.v1);
+      pairedOutcome(document.getElementById('paired-out-v2'), p.v2);
+      document.querySelectorAll('#paired-seedbar .seed-btn').forEach(b => {
+        b.classList.toggle('active', String(b.dataset.seed) === String(seed));
+      });
+    }
+    function pairedPlayBoth() {
+      const v1 = document.getElementById('paired-v1');
+      const v2 = document.getElementById('paired-v2');
+      v1.currentTime = 0; v2.currentTime = 0;
+      v1.play().catch(() => {}); v2.play().catch(() => {});
+    }
+    async function pairedInit() {
+      try {
+        const r = await fetch('/api/paired');
+        if (!r.ok) return;                       // 404 -> leave the card hidden
+        const m = await r.json();
+        if (!m || !Array.isArray(m.pairs) || !m.pairs.length) return;
+        _pairedManifest = m;
+        if (m.note) document.getElementById('paired-caption').textContent = m.note;
+        if (m.chunking) document.getElementById('paired-note').textContent = 'chunking ' + m.chunking;
+        const bar = document.getElementById('paired-seedbar');
+        bar.innerHTML = '';
+        m.pairs.forEach(p => {
+          const b = document.createElement('button');
+          b.className = 'seed-btn'; b.dataset.seed = p.seed;
+          b.textContent = 'seed ' + p.seed;
+          b.onclick = () => pairedSelectSeed(p.seed);
+          bar.appendChild(b);
+        });
+        document.getElementById('paired-card').classList.remove('hidden');
+        pairedSelectSeed(m.pairs[0].seed);
+      } catch (e) { console.log('[dashboard] paired init failed:', e); }
+    }
+    pairedInit();
     </script>
     </body>
     </html>
@@ -1478,7 +1624,7 @@ spec:
           command:
             - sh
             - -c
-            - pip install -q flask kubernetes && python /app/dashboard.py
+            - pip install -q flask kubernetes boto3 && python /app/dashboard.py
           ports:
             - containerPort: 8080
           env:
@@ -1489,7 +1635,23 @@ spec:
             - name: TRIGGER_THRESHOLD
               value: "160"   # matches manifest-consumer (D022/D023); was thor-testing's 10
             - name: DASHBOARD_CODE_REV
-              value: "2026-09-09-i"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
+              value: "2026-09-10-paired"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
+            # MinIO (read-only) for the paired A/B video clips under paired-ab/. hub-credentials
+            # holds the same values as the MinIO root account (argocd/README.md).
+            - name: MINIO_ENDPOINT
+              value: "http://minio.minio.svc:9000"
+            - name: PAIRED_BUCKET
+              value: "episodes-data"
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hub-credentials
+                  key: s3-access-key
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hub-credentials
+                  key: s3-secret-key
             - name: FRAMES_DIR
               value: "/data/frames"
             - name: HTML_FILE

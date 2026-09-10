@@ -4304,3 +4304,24 @@ runtime until the next build. Cleanup pending on the host: the recorded bags (~2
 `~/flywheel-data/bags`), the `ab-stage-*`/`ab-upload-*` temp dirs and `ab-datasets/`, and the
 `act-inference:eval-record` image (inbox). The C/D extension (ladder rungs as more columns) and a
 "broke" counterexample need another exclusive-sim window; deferred.
+
+---
+
+## D133 — Beat 4 paired A/B video card on the ops dashboard (served from MinIO)
+
+**Date:** 2026-09-10
+**Context:** the Beat-4 "policy improvement" story needed a real same-scene A/B, not the static
+ladder chart. Live-recorded clips (v1 teacher vs v2 act-v2-ft160 on identical seeds, overhead
+camera) were ported to mp4 and uploaded to MinIO `episodes-data/paired-ab/` with a manifest.
+**Decision:** `gitops/flywheel/dashboard.yaml` gains a paired-video card. Two routes in
+`dashboard.py`, backed by a read-only boto3 MinIO client: `GET /api/paired` streams
+`paired-ab/manifest.json`; `GET /api/paired/<seed>/<policy>.mp4` streams the clip after
+validating `seed` (digits) and `policy` (`v1`/`v2`) — with single-range (206) support and a
+graceful 404 when MinIO/the object is unavailable. The card (two `<video>` players, a seed
+selector, per-policy outcome badges, a "play both" button) fetches the manifest on load and stays
+hidden if it 404s. MinIO endpoint `minio.minio.svc:9000`; credentials from the existing
+`hub-credentials` Secret (`s3-access-key`/`s3-secret-key`) as env, never logged. `boto3` added
+to the pod's pip install; `DASHBOARD_CODE_REV` bumped so Argo rolls the pod.
+**Consequences:** live/desktop card only — at the booth (no cluster) Beat 4 still falls back to the
+static chart. The featured seeds (1002, 1019) each show v1 1/3 fail vs v2 3/3 success on the
+identical scene, measured at the deployed 100/0.5 chunking.
