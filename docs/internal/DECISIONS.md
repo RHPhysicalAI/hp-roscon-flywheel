@@ -4253,3 +4253,54 @@ before policy — an operator action (make the repository public in quay) turns 
 Case 4b; expected result `rejected by policy`.
 **Consequences:** every registry the device may pull from is now an explicit allow-list entry; adding
 a registry (a mirror on the Fury, for example) is a Fleet edit, reviewed like a promotion.
+
+---
+
+## D132 — Loop bags archived to the media HDD; paired A/B episode video recorded for Beat 4 (v1 vs v2, same seed)
+
+**Date:** 2026-09-10
+**Context:** the operator asked for a real same-scene A/B (v1 teacher vs v2 fine-tuned) video for the
+dashboard's Beat 4, replacing the removed ladder-panel stopgap (D125). Two prerequisites surfaced:
+the host root disk was at 99 GB free (below the loop guard's 100 GB floor) with 319 loop bags
+(485 GB), and the eval harness records nothing.
+**Bag archive:** all 319 bags (485 GB) moved to `/media/jary/videos/flywheel-bags-archive/
+loop-bags-2026-09-04_09` — the same NTFS HDD the D062 proof bags live on. Two gotchas, both handled:
+`rsync -a` fails on that fuseblk mount (it rejects ownership/time ops — `mkstemp: Operation not
+permitted`), so the copy uses `rsync -rlD --no-perms --no-owner --no-group --no-times --size-only`;
+and `--remove-source-files` couldn't delete the source because the bags are root-owned (written by
+the recorder container), so after a byte-for-byte verification (total bytes + per-file name/size
+manifest md5 identical, 520,057,530,590 bytes each side) the source was deleted via a root
+container (`find /bags -mindepth 1 -delete`). Root: 98 GB → 583 GB free. The bags stay re-portable
+from the archive by pointing `--bags-root` there.
+**Recording mechanism:** `coordinator.py` `run_eval` gains optional `EVAL_SEEDS` (an explicit seed
+list) and, when `RECORD=true`, records each attempt (mirrors `run_forever`'s recorder-availability
+setup — the missing piece: `_recording_available` was only set in `run_forever`, so the first cut
+recorded nothing) and stamps `bag_path` into each result row. Built as a one-layer overlay image
+(`act-inference:eval-record`, `FROM` the deployed runtime + `COPY coordinator.py`).
+**The RHEM-era conflict, and how it was resolved:** a host eval container (ROLE=all, local policy)
+registers a second `/run_policy` on the sim's zenoh graph, which collides with the RHEM device that
+is *always* serving the policy into that same sim — every goal is rejected (`/rosetta_client/
+change_state` timeout). This is new since Phase 3 (pre-RHEM there was no device). Resolved by
+suspending the device VM for the recording window (`virsh suspend act-device`, operator — needs
+sudo; jary can't control the system domains), which detaches its policy from the sim. Confirmed no
+impact on Olga's eval dashboard (APPENG-6295): her sources are the SNO hub (Kafka/MinIO, a separate
+VM) and the loop was stopped, so no live flow. The sim had also stalled (~2.6 h stale camera) and
+was restarted. After recording, `virsh resume` + the D063 recovery (chrony resync stepped the
+~27-min clock skew, policy container restarted to reconnect to the restarted sim) returned the
+device to Online / UpToDate / Healthy / rv9.
+**Recording result (at the deployed 100/0.5 chunking):** v1 and v2 each ran seeds 1002/1019/1040/
+1024 (+ a warmup) with recording. Paired outcomes: **seed 1002 and 1019 both v1 1/3 ✗ → v2 3/3 ✓**
+(two vivid same-scene fixes); 1040 both-fail, 1024 both-pass. Note (W-15): these per-seed outcomes
+differ from the 30/0.95 eval records the seeds were chosen from — the deployed 100/0.5 config
+genuinely behaves differently per scene; no clean v1✓→v2✗ "broke" example landed on these seeds
+(the ladder chart still carries the honest aggregate 20-fixed/7-broken story). Bags ported to
+overhead-camera mp4 via `rosetta.port_bags` (staged with a *copied* mcap, not a symlink — a symlink
+to an unmounted host path dangles in the port container) and uploaded to MinIO
+`episodes-data/paired-ab/` (manifest + 4 clips, ~2–5 MB each). The dashboard card that serves them
+is a separate change.
+**Consequences:** `coordinator.py`'s `EVAL_SEEDS`/eval-recording is committed here but, like the
+other coordinator changes, is only live in a host overlay image — not in the device's Tekton
+runtime until the next build. Cleanup pending on the host: the recorded bags (~20 GB in
+`~/flywheel-data/bags`), the `ab-stage-*`/`ab-upload-*` temp dirs and `ab-datasets/`, and the
+`act-inference:eval-record` image (inbox). The C/D extension (ladder rungs as more columns) and a
+"broke" counterexample need another exclusive-sim window; deferred.

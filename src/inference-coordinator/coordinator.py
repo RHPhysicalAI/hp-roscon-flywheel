@@ -77,6 +77,11 @@ EVAL_MODE = os.environ.get("EVAL_MODE", "false").lower() == "true"
 EVAL_EPISODES = int(os.environ.get("EVAL_EPISODES", "50"))
 EVAL_SEED_BASE = int(os.environ.get("EVAL_SEED_BASE", "1000"))
 EVAL_RESULTS_DIR = os.environ.get("EVAL_RESULTS_DIR", "/data/eval")
+# Optional explicit seed list (comma/space separated) — overrides the contiguous
+# EVAL_SEED_BASE..+EVAL_EPISODES range. Used to re-run specific paired scenes (e.g. the
+# seeds v2 fixed or broke vs v1) for the side-by-side A/B recording. With RECORD=true the
+# eval loop records each attempt so the bag can be ported to a per-episode video.
+EVAL_SEEDS = [int(s) for s in os.environ.get("EVAL_SEEDS", "").replace(",", " ").split() if s.strip()]
 
 # --- Failure recovery: return to the policy's OWN rest pose after a failed episode ---
 # A failed episode can leave the arm in a rough spot (e.g. the gripper parked over the
@@ -638,23 +643,37 @@ class Coordinator(Node):
         return False
 
     def run_eval(self):
-        """Run EVAL_EPISODES over a fixed, seeded scene set and write results.
+        """Run a fixed, seeded scene set and write results.
 
-        No recording, no pruning, no curator — this is measurement only. Each
-        episode's scene is drawn from EVAL_SEED_BASE + i, so the sequence is
-        identical for every policy evaluated at the same config (apples-to-apples).
+        Measurement only (no pruning, no curator). Each episode's scene is drawn from
+        its seed, so the sequence is identical for every policy evaluated at the same
+        config (apples-to-apples). Seeds come from EVAL_SEEDS if set, else the contiguous
+        EVAL_SEED_BASE..+EVAL_EPISODES range. When RECORD=true each attempt is recorded and
+        the bag path is stored in the per-episode row, so the same seed can be ported to a
+        side-by-side video for two policies (paired A/B).
         """
+        seeds = EVAL_SEEDS if EVAL_SEEDS else [EVAL_SEED_BASE + i for i in range(EVAL_EPISODES)]
         self.get_logger().info(
-            f"EVAL MODE — {EVAL_EPISODES} episodes, seed_base={EVAL_SEED_BASE}, "
-            f"model_version={MODEL_VERSION or '(emitter default)'}")
+            f"EVAL MODE — {len(seeds)} episodes, seeds={'explicit ' + str(seeds) if EVAL_SEEDS else 'base ' + str(EVAL_SEED_BASE)}, "
+            f"record={RECORD}, model_version={MODEL_VERSION or '(emitter default)'}")
         self.get_logger().info("Waiting for action server...")
         self._client.wait_for_server()
         self.get_logger().info("Action server ready")
 
+        # Recorder availability is set up in run_forever for the production loop; the eval
+        # path needs the same check or _start_recording() silently no-ops (RECORD + a chosen
+        # EVAL_SEEDS is how the paired A/B clips are produced).
+        if RECORD:
+            self.get_logger().info("Waiting for episode recorder action server...")
+            if self._rec_client.wait_for_server(timeout_sec=RECORD_WAIT_S):
+                self._recording_available = True
+                self.get_logger().info("Episode recorder ready — eval rollouts will be recorded")
+            else:
+                self.get_logger().warn("Episode recorder not available — eval WITHOUT recording")
+
         results = []
-        for i in range(EVAL_EPISODES):
-            seed = EVAL_SEED_BASE + i
-            self.get_logger().info(f"[eval] episode {i + 1}/{EVAL_EPISODES} seed={seed}")
+        for i, seed in enumerate(seeds):
+            self.get_logger().info(f"[eval] episode {i + 1}/{len(seeds)} seed={seed}")
 
             # 1. Deterministic scene + clean arm start.
             self._reset(seed=seed)
@@ -671,7 +690,8 @@ class Coordinator(Node):
             # the curator under the eval label and pollute the production buckets (found
             # 2026-09-08: 135 eval-* objects in MinIO). The harness scores itself.
 
-            # 3. Send goal + run the attempt window.
+            # 3. Record (if enabled), send goal, run the attempt window, stop recording.
+            self._start_recording()   # no-op unless RECORD and the recorder is available
             goal = RunPolicy.Goal()
             goal.prompt = PROMPT
             send_future = self._client.send_goal_async(goal)
@@ -686,6 +706,7 @@ class Coordinator(Node):
                 cancel_future = handle.cancel_goal_async()
                 rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=10)
                 time.sleep(1.0)
+            self._stop_recording()   # finalizes the bag; sets self._last_bag_path
 
             # 4. Stop metrics, settle, then score from ground-truth cube poses.
             self._metrics_active = False
@@ -715,6 +736,7 @@ class Coordinator(Node):
                 "duration_s": round(time.time() - ep_start, 2),
                 "early_stopped": early,
                 "goal_accepted": accepted,
+                "bag_path": self._last_bag_path,   # None unless RECORD; pairs v1/v2 by seed for the A/B video
             }
             results.append(row)
             self.get_logger().info(
