@@ -1042,7 +1042,7 @@ data:
       <!-- PAIRED A/B VIDEO (Beat 4) -- hidden until the manifest loads -->
       <div class="card hidden" id="paired-card" style="grid-column: 1 / -1">
         <div class="card-header">
-          <span class="card-title">Policy improvement &mdash; same scene, teacher vs fine-tuned</span>
+          <span class="card-title">Policy improvement &mdash; same seeded scene, teacher vs fine-tuned</span>
           <span class="annotation" id="paired-note"></span>
         </div>
         <div id="paired-body">
@@ -1061,7 +1061,6 @@ data:
           </div>
           <div id="paired-controls">
             <button class="btn btn-blue btn-sm" onclick="pairedPlayBoth()">&#9654; Play both</button>
-            <span class="annotation" id="paired-caption"></span>
           </div>
         </div>
       </div>
@@ -1517,17 +1516,21 @@ data:
         const m = await r.json();
         if (!m || !Array.isArray(m.pairs) || !m.pairs.length) return;
         _pairedManifest = m;
-        if (m.note) document.getElementById('paired-caption').textContent = m.note;
         if (m.chunking) document.getElementById('paired-note').textContent = 'chunking ' + m.chunking;
         const bar = document.getElementById('paired-seedbar');
         bar.innerHTML = '';
-        m.pairs.forEach(p => {
-          const b = document.createElement('button');
-          b.className = 'seed-btn'; b.dataset.seed = p.seed;
-          b.textContent = 'seed ' + p.seed;
-          b.onclick = () => pairedSelectSeed(p.seed);
-          bar.appendChild(b);
-        });
+        // Only offer a seed picker when there's more than one pair to choose between.
+        if (m.pairs.length > 1) {
+          m.pairs.forEach(p => {
+            const b = document.createElement('button');
+            b.className = 'seed-btn'; b.dataset.seed = p.seed;
+            b.textContent = 'seed ' + p.seed;
+            b.onclick = () => pairedSelectSeed(p.seed);
+            bar.appendChild(b);
+          });
+        } else {
+          bar.style.display = 'none';
+        }
         document.getElementById('paired-card').classList.remove('hidden');
         pairedSelectSeed(m.pairs[0].seed);
       } catch (e) { console.log('[dashboard] paired init failed:', e); }
@@ -1635,7 +1638,7 @@ spec:
             - name: TRIGGER_THRESHOLD
               value: "160"   # matches manifest-consumer (D022/D023); was thor-testing's 10
             - name: DASHBOARD_CODE_REV
-              value: "2026-09-10-paired"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
+              value: "2026-09-10-paired2"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
             # MinIO (read-only) for the paired A/B video clips under paired-ab/. hub-credentials
             # holds the same values as the MinIO root account (argocd/README.md).
             - name: MINIO_ENDPOINT
