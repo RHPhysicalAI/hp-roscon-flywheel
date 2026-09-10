@@ -214,17 +214,33 @@ exit=0
 ```
 Device after the session: renderedVersion 9, `UpToDate`, `Healthy`.
 
-The "right signature, wrong repository" variant — the pinned modelcar copied unmodified to
-`quay.io/jary/soarm-flywheel-negtest:policy-default-2026-09-09` (same digest `bdb513ca…`, never
-signed there) — could not be exercised yet: quay created that repository private, so the pull fails
-on `reading manifest … unauthorized` before the policy is consulted. Once the repository is made
-public in quay it becomes the standing artifact for that case; expected result is the same
-`rejected by policy` line, since `default: reject` applies before `signedIdentity` is ever evaluated.
+## Case 5 — right signature, wrong repository, rejected by the default (2026-09-10)
+
+The strongest variant: the pinned modelcar copied **unmodified** to
+`quay.io/jary/soarm-flywheel-negtest:policy-default-2026-09-09` (same digest `bdb513ca…`, a validly
+signed image — just in a repository the device's `policy.json` does not enumerate). Case 4 used an
+unsigned public image; this one carries a good signature, so it isolates the repository-enumeration
+half of `default: reject` from the signature check. Deferred on 2026-09-09 because quay created the
+repository private (the pull failed on `unauthorized` before policy was consulted); the operator made
+it public and it was run on 2026-09-10.
+```
+$ sudo -n podman pull quay.io/jary/soarm-flywheel-negtest:policy-default-2026-09-09
+Trying to pull quay.io/jary/soarm-flywheel-negtest:policy-default-2026-09-09...
+Error: unable to copy from source docker://quay.io/jary/soarm-flywheel-negtest:policy-default-2026-09-09: Source image rejected: Running image docker://quay.io/jary/soarm-flywheel-negtest:policy-default-2026-09-09 is rejected by policy.
+exit=125
+```
+`default: reject` applies before `signedIdentity` is ever evaluated — a real signature in a
+non-enumerated repository buys nothing. Positive control in the same session: the pinned runtime
+digest `quay.io/jary/soarm-flywheel@sha256:02e66d89…` pulled clean (`Storing signatures`). Device
+after: renderedVersion 9, `UpToDate`, `Healthy`. (Two `flightctl console` calls in the session hit a
+transient `127.0.0.1:3443: connection refused` — the desktop port-forward loop re-establishing — and
+succeeded on retry; not a device fault.)
 
 ## Artifacts left in place
 
-- `quay.io/jary/soarm-flywheel-negtest:policy-default-2026-09-09` (private until the operator flips it;
-  the pinned modelcar's bytes, no signature in that repository) — Case 4's wrong-repository variant.
+- `quay.io/jary/soarm-flywheel-negtest:policy-default-2026-09-09` (public; the pinned modelcar's bytes,
+  validly signed only in its origin repository) — Case 5's standing artifact. Keep it public and do not
+  add a `policy.json` entry for `soarm-flywheel-negtest`, or it stops being a negative test.
 
 - `quay.io/jary/soarm-flywheel:negtest-notlog-2026-09-09` (`sha256:d9996e7b…51d2cb`) and its
   `sha256-d9996e7b…51d2cb.sig` attachment stay in quay **on purpose** — they are the demo's
@@ -243,3 +259,6 @@ device under the Fleet's `policy.json`, with the logged image b as the positive 
 session. D026 rows 1 (node trust) and 2 (Rekor at verify) are demonstrated end to end on the device
 path; row 3 (Tekton-built) remains with F. Case 4 (2026-09-09, review W-10) closes the fail-open
 default: a reference outside the enumerated registries is rejected by policy, not accepted unsigned.
+Case 5 (2026-09-10) closes the same default against a *validly signed* image in a non-enumerated
+repository — the signature does not rescue it, so `default: reject` gates on the repository before the
+signature is ever considered.
