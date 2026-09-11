@@ -4394,3 +4394,19 @@ edge-manager is proven — the two coexist during migration, so peak demand need
 **Consequences:** no change to the running cluster; the integrated-console RHEM is one VM resize +
 `oc apply` away, reproducibly. If the resize isn't wanted before ROSCon, the standalone flightctl
 UI remains the working (capability-complete) view.
+
+### D135 addendum (2026-09-11) — ACM backed out: 2.17 dropped RHEM
+
+ACM 2.17 was installed to test the integrated-console RHEM path, but the MultiClusterHub validating
+webhook **rejected `edge-manager-preview`** ("not a known component") — Edge Manager has graduated
+out of RHACM into the standalone **Red Hat Edge Manager** product, so ACM is the wrong vehicle and
+gets us nothing for RHEM. The maxPods stall (node hit kubelet's 250-pod cap; ACM added ~147 pods on
+top of ~176) was all ACM add-ons we never needed. Backed out cleanly: deleted the MultiClusterHub
+(finalizer-stuck on the `local-cluster` ManagedCluster / klusterlet / MCE chain — force-cleared
+finalizers since we were removing it), removed the ACM operator (CSV + OperatorGroup + Subscription),
+deleted all `open-cluster-management*` / `multicluster-engine` / `local-cluster` namespaces, and
+removed the `acm`/`mce` entries from `console.operator/cluster` `spec.plugins` (back to
+networking+monitoring). Removed `gitops/acm/` and `argocd/acm-app.yaml` from git. The standalone
+flightctl and the enrolled device were untouched throughout. **Next:** the integrated console comes
+from the standalone RHEM's own `flightctl-plugin` ConsolePlugin — productized chart
+charts.openshift.io `flightctl` 1.0.2 — layered on the flightctl/RHEM install we KEEP; no ACM.
