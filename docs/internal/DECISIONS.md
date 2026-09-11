@@ -4361,3 +4361,36 @@ Reversible (set back to Removed).
 confirmation (the flywheel project's pipeline runs rendering in the UI) is the operator's browser
 check — the cluster-side mechanism (dashboard Managed + pods Ready + route + DS-project label +
 live DSPA) is in place.
+
+---
+
+## D135 — ACM (integrated-console RHEM) prepared under GitOps but NOT installed: the SNO has no room
+
+**Date:** 2026-09-11
+**Context:** the operator chose the product path — run RHEM as the RHACM **edge-manager** component
+so fleets/devices appear inside the OpenShift console (as thor-testing had it), rather than the
+standalone `flightctl` UI route we run now. ACM 2.17 (`advanced-cluster-management`, channel
+`release-2.17`, CSV v2.17.1) and its MCE dependency are in the catalog. Mechanism (RHACM docs,
+2.13-era, to re-validate on 2.17): enable the `edge-manager-preview` component in the
+`MultiClusterHub` CR, then add the flightctl console plugin to `console.operator/cluster`.
+**Resource finding (the blocker):** baselined the node before installing anything — it is at **87%
+CPU requested (13499m of 15500m allocatable), ~2 cores free**, memory 46%. That is up from ~67%
+earlier today because the RHOAI dashboard (D134) was enabled (`redhat-ods-applications` is now the
+top requester at 3410m; then `flightctl` 2412m, `openshift-gitops` 1875m, `flywheel` 1615m). ACM's
+MultiClusterHub base needs ~4+ CPU cores. It does not fit on the current 16-vCPU VM; forcing it
+would leave MCH components `Pending` and risk starving the running demo (RHOAI/RHTAS/pipelines/
+MinIO/Kafka/flywheel). Per the resource guardrail, **nothing was applied live.**
+**Decision:** staged the install under GitOps, unapplied: `gitops/acm/operator.yaml` (Namespace +
+OperatorGroup + Subscription), `gitops/acm/multiclusterhub.yaml` (MCH with `edge-manager-preview`
+enabled and heavy components trimmed), `gitops/acm/README.md` (apply order + the migration phase),
+`argocd/acm-app.yaml` (manual-sync, finalizer; deliberately no `automated:` block). The standalone
+`flightctl` (`argocd/rhem-app.yaml`) and the enrolled `act-device` are untouched and stay live.
+**Operator action required:** increase the SNO VM vCPU (≈16 → 24) and restart it (host `virsh`/
+sudo + SNO reboot — only the operator can do this) so the node has ~10 cores free. Then apply
+`argocd/acm-app.yaml`, validate the edge-manager component name on 2.17, bring up the MCH watching
+CPU, enable the console plugin. Migration to ACM's flightctl (re-enroll `act-device`, recreate
+Fleet/Catalog) and retirement of the standalone flightctl is a **later phase**, only after the ACM
+edge-manager is proven — the two coexist during migration, so peak demand needs the bigger node.
+**Consequences:** no change to the running cluster; the integrated-console RHEM is one VM resize +
+`oc apply` away, reproducibly. If the resize isn't wanted before ROSCon, the standalone flightctl
+UI remains the working (capability-complete) view.
