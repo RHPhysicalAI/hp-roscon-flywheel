@@ -30,7 +30,7 @@ spec:
       serving:
         managementState: Removed
     dashboard:
-      managementState: Removed
+      managementState: Managed   # D134: re-enabled — node headroom recovered; gives the DSP run graph (Beat 3) and Model Registry UI (Beat 6)
     workbenches:
       managementState: Removed
     modelmeshserving:
