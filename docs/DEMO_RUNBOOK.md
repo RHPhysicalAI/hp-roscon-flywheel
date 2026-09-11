@@ -151,6 +151,7 @@ says otherwise.
 | **RHEM UI** — Catalog (v1alpha1) | same | `https://ui.flightctl.apps.sno-flywheel.local/catalog` → `physical-ai-models` → `soarm-act` |
 | `flightctl` CLI | **desktop**, `~/.local/bin/flightctl`, through a `while true` port-forward loop on 3443 (`~/flightctl-pf.log`) | every `flightctl` line below runs over `ssh -n jary@10.0.0.48 '…'` |
 | Model Registry REST | SNO route (OAuth proxy; needs a bearer token) | `https://flywheel-rest.apps.sno-flywheel.local/api/model_registry/v1alpha3/…` — the Beat 6 curl below |
+| **RHOAI dashboard** (D134) — DSP run graph (Beat 3), Model Registry UI (Beat 6) | SNO route (OpenShift OAuth) | `https://rhods-dashboard-redhat-ods-applications.apps.sno-flywheel.local` → *Data Science Pipelines* / *Model Registry*, project **flywheel** |
 | Argo CD | SNO route | `https://openshift-gitops-server-openshift-gitops.apps.sno-flywheel.local` |
 
 Constants: host `jary@10.0.0.48` (always `ssh -n` for one-liners; `ssh … 'bash -s' <<'EOF'` for
@@ -197,7 +198,7 @@ runtime image (Tekton, multi-arch) `quay.io/jary/soarm-flywheel@sha256:02e66d895
    oauth, perses, tempo, sim-cameras. **Add** (one line, all → the node; the `flightctl` and
    `flywheel-rest` names were missing on 2026-09-09):
    ```
-   10.0.0.49 ui.flightctl.apps.sno-flywheel.local api.flightctl.apps.sno-flywheel.local flywheel-rest.apps.sno-flywheel.local rekor-search-ui-trusted-artifact-signer.apps.sno-flywheel.local rekor-server-trusted-artifact-signer.apps.sno-flywheel.local minio-console-minio.apps.sno-flywheel.local ds-pipeline-dspa-flywheel.apps.sno-flywheel.local
+   10.0.0.49 ui.flightctl.apps.sno-flywheel.local api.flightctl.apps.sno-flywheel.local flywheel-rest.apps.sno-flywheel.local rekor-search-ui-trusted-artifact-signer.apps.sno-flywheel.local rekor-server-trusted-artifact-signer.apps.sno-flywheel.local minio-console-minio.apps.sno-flywheel.local ds-pipeline-dspa-flywheel.apps.sno-flywheel.local rhods-dashboard-redhat-ods-applications.apps.sno-flywheel.local
    ```
 2. `ssh -n jary@10.0.0.48 true` works; `gh auth status` is logged in; this repo is checked out on
    the presenting laptop on `desktop-gpu-split` (for the chart and the report script). Log in to the RHEM UI
@@ -332,10 +333,15 @@ EOF
 > takes half an hour, so I'm showing you the real run, not making you watch it. It passed: 73 to
 > 86 percent, twenty scenes fixed, seven broken."
 
-**If it breaks:** port-forward flaky → `tail ~/pipeline-run.log` is the same information. Pods as
-evidence: `oc get pods -n flywheel | grep promotion` **[not run today]**. There is **no graphical
-run view** on this cluster (the RHOAI dashboard component is `Removed` in the DSC); the terminal is
-the screen.
+**Graphical run view (D134):** the RHOAI dashboard is enabled again, so the run DAG, per-step
+status/logs and artifacts are visible at the **RHOAI dashboard** →
+`https://rhods-dashboard-redhat-ods-applications.apps.sno-flywheel.local` (OpenShift OAuth login) →
+*Data Science Pipelines* under the **flywheel** project. This is the nicer Beat 3 screen; the
+terminal `kfp.Client` task list below is the fallback if the dashboard or its route is down.
+
+**If it breaks:** dashboard unreachable → the terminal task list is the same information;
+port-forward flaky → `tail ~/pipeline-run.log`; pods as evidence: `oc get pods -n flywheel | grep
+promotion`.
 
 ### Beat 4 — "Model improvement: v1 vs v2 side-by-side" (~60 s) — *two screens and a fallback*
 

@@ -4325,3 +4325,39 @@ to the pod's pip install; `DASHBOARD_CODE_REV` bumped so Argo rolls the pod.
 **Consequences:** live/desktop card only — at the booth (no cluster) Beat 4 still falls back to the
 static chart. The featured seeds (1002, 1019) each show v1 1/3 fail vs v2 3/3 success on the
 identical scene, measured at the deployed 100/0.5 chunking.
+
+---
+
+## D134 — RHOAI dashboard re-enabled; the rest of the RHOAI component set audited (deliberately off)
+
+**Date:** 2026-09-11
+**Context:** the operator noticed there was no RHOAI UI on the cluster and asked whether we should
+run it to see pipeline results, and what other RHOAI integration was overlooked. Audited the live
+DSC: Managed = `datasciencepipelines`, `kserve` (RawDeployment, `serving: Removed`), `modelregistry`;
+Removed = `dashboard`, `workbenches`, `modelmeshserving`, `ray`, `kueue`, `codeflare`,
+`trainingoperator`, `trustyai` (DSCI `monitoring`/`serviceMesh` also Removed). The dashboard was
+Removed during the Phase 4.5 build crunch (D084, node ~99% CPU-requested); runs were read via the
+kfp client / terminal.
+**Decision:** re-enable `dashboard` (`Managed`) — the node recovered to ~67% CPU / 37% mem after the
+KFP-pod cleanup and act-serving retirement, so it fits. It gives the DSP run DAG/logs (Beat 3) and
+the Model Registry UI (Beat 6) as real product screens instead of terminal/curl. For the DSP runs to
+appear, `flywheel` had to be labeled a Data Science Project (`opendatahub.io/dashboard: "true"` on
+the namespace — added to `gitops/flywheel/namespace.yaml` and applied live); without it the
+dashboard lists no pipeline server for the namespace. Route:
+`rhods-dashboard-redhat-ods-applications.apps.sno-flywheel.local` (OpenShift OAuth); added to the
+runbook cheat-sheet, the Mac `/etc/hosts` line, and Beat 3 (the "no graphical run view" caveat is
+replaced). 2/2 dashboard pods Ready; route serving (403 unauthenticated = oauth-proxy gating).
+Reversible (set back to Removed).
+**The rest, and why they stay off (not overlooked):**
+- `kserve` serving + `modelmeshserving` — the model serves at the **edge via RHEM** (D024), not
+  in-cluster; kserve is Managed only for the modelcar format/CRDs, serving nothing.
+- `ray`/`codeflare`/`kueue`/`trainingoperator` — training is a single-GPU LeRobot fine-tune;
+  distributed training is at most a GB300 stretch (PROJECT-BRIEF), not core.
+- `trustyai` — hooks KServe-served models for monitoring/bias; N/A while serving is at the edge.
+  The one genuine "new scope" option if post-deployment model monitoring is ever wanted.
+- `workbenches` — Jupyter; not needed (could optionally host exploratory/eval work).
+- DSCI `monitoring` — RHOAI's own metrics; we use Perses/Tempo instead.
+**Consequences:** dashboard enable committed as `043b852`; namespace label + runbook here. Visual
+confirmation (the flywheel project's pipeline runs rendering in the UI) is the operator's browser
+check — the cluster-side mechanism (dashboard Managed + pods Ready + route + DS-project label +
+live DSPA) is in place.
