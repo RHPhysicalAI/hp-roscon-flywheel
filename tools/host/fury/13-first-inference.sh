@@ -4,8 +4,8 @@
 # Policy and coordinator are separate containers - the shape the managed device will have - and the
 # policy stays SELinux-confined.
 #
-#   ./13-first-inference.sh [episodes] [cdi-device] [label]
-#                                          defaults: 5, nvidia.com/gpu=0:1, eval-fury-smoke; the sim must be up
+#   ./13-first-inference.sh [episodes] [cdi-device] [label] [image]
+#                                          defaults: 5, nvidia.com/gpu=0:1, eval-fury-smoke, the image below; the sim must be up
 #   ./13-first-inference.sh down           stop and remove the policy container
 #
 # Evidence that the policy really drove the arm is cubes_placed > 0 with goals accepted - a healthy
@@ -32,6 +32,7 @@ fi
 n=${1:-5}
 dev=${2:-nvidia.com/gpu=0:1}
 label=${3:-eval-fury-smoke}
+img=${4:-$img}
 
 podman container exists so-arm-sim      || die "the sim is not running - ./12-sim-smoke.sh first"
 [[ -x $src/tools/host/run-coordinator.sh ]] || die "no checkout at $src"

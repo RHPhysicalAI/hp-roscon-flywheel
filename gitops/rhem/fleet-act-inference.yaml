@@ -13,7 +13,12 @@
 # (device/enroll.sh) and are read here with flightctl's Go-template placeholders:
 #
 #   label            desktop VM      Fury host    used by
-#   site             desktop         fury         rolloutPolicy batch order (desktop first, then fury)
+#   site             desktop         fury         rolloutPolicy batch 2 on this branch (everything on the Fury)
+#   role             (unset)         canary       rolloutPolicy batch 1: one device carrying role=canary goes first.
+#                                                 A batch that matches nothing is passed over (flightctl
+#                                                 managing-fleets.md: batches "might be none"), so the Fleet
+#                                                 works before any canary exists; the implicit last batch
+#                                                 takes whatever the explicit ones did not select.
 #   gpu              none            nvidia       AddDevice=nvidia.com/gpu=<gpu_device> only when "nvidia";
 #                                                 OMP/TORCH thread caps only when "none"
 #   gpu_device       (unset)         MIG-<uuid>   the CDI device handed to the container: "all" when the
@@ -43,8 +48,9 @@
 #   /etc/containers/registries.d/quay-jary.yaml  use-sigstore-attachments for quay.io/jary — without it
 #                                             containers/image never looks for the cosign attachment and every
 #                                             pull fails with "A signature was required, but no signature exists"
-#   /etc/pki/containers/cosign.pub            the pipeline's cosign public key (desktop ~/cosign/cosign.pub)
-#   /etc/pki/containers/rekor.pub             RHTAS Rekor log public key (/api/v1/log/publicKey on the SNO route)
+#   /etc/pki/containers/cosign.pub            the pipeline's cosign public key (tools/hub/create-cosign-secrets.sh)
+#   /etc/pki/containers/rekor.pub             this hub's Rekor log public key (/api/v1/log/publicKey on the route;
+#                                             same bytes as gitops/tekton/rekor-public-key.yaml)
 # so both images below are pulled by podman under the same policy CRI-O would apply: unsigned → rejected,
 # signed without --tlog-upload → rejected (no SET), signed + logged → accepted.
 #
@@ -78,7 +84,8 @@ spec:
       sequence:
         - selector:
             matchLabels:
-              site: desktop
+              role: canary
+          limit: 1
           successThreshold: 100%
         - selector:
             matchLabels:
@@ -159,15 +166,15 @@ spec:
               mode: 0644
               content: |
                 -----BEGIN PUBLIC KEY-----
-                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9EGjXgISiy6pQ44C65fzeTYHua5k
-                23Jni5eZoOR06+M4CfWJo5JmFoV2vf6OzinFhlcwsPLFUGmJCdt3hcu45A==
+                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEBzDM5ZzFL6THPevBGQLp2oGYuPlN
+                8wIgS2RwhWwem9Zu5pAt1Tye/vcPSCFRUm3XkVG6D1ixarxBbCTxg/c2Zg==
                 -----END PUBLIC KEY-----
             - path: /etc/pki/containers/rekor.pub
               mode: 0644
               content: |
                 -----BEGIN PUBLIC KEY-----
-                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEpWlAeU1HRJIh3nRDD9chGR50khDP
-                kSs7UmieeG3iE9zHnCcU0rAUx8QsH2kDVpdFMr8IELMeRzPiqAv1E9qaAg==
+                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEhpJW95T/igzFRfnFWXNq8WvRtPQN
+                oZDRbkgmJpRJYZIlVc2Sn+2PtqT2hju2NJd/j9Jyw5Bylr9kNU7C+tSyZA==
                 -----END PUBLIC KEY-----
         - name: act-inference-env
           inline:
@@ -205,6 +212,7 @@ spec:
               content: |
                 [Volume]
                 Driver=image
+                # same checkpoint as the development stand-in; this hub's signature was added to the digest (D148: this hub's Rekor 1)
                 Image=quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b
             - path: act-inference.container
               content: |
@@ -212,8 +220,8 @@ spec:
                 Description=ACT policy inference (RHEM-managed, Fleet act-inference)
 
                 [Container]
-                # Runtime image: built + signed by Tekton (Phase 4.5 F), referenced by the multi-arch manifest-list digest (D129: tag act-inference-ea513fa, Rekor 14/15/16).
-                Image=quay.io/jary/soarm-flywheel@sha256:02e66d895ed4ba328aa43263561027c18406d774887f465ab7acbd81e4c42d08
+                # Runtime image: built natively on the arm64 hub and signed by Tekton, referenced by the manifest-list digest (D148: tag act-inference-e0716d0, linux/arm64 only, this hub's Rekor 2/3).
+                Image=quay.io/jary/soarm-flywheel@sha256:f5d3a91e9e15f47b99875d38b0020545a3a2135908cc886871a6a787f693c991
                 ContainerName=act-inference
                 Network=host
                 EnvironmentFile=/etc/act-inference/env

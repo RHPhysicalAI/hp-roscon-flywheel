@@ -4923,3 +4923,35 @@ inline `rekor.pub` and `cosign.pub` — the Fleet on this branch still names ima
 stand-in's trust root, so its two keys and its two digests change together, in one commit, once the first
 native build is signed here. No device can receive the half-changed state: the Fleet is not applied to this
 hub until the `rhem/bootstrap` step.
+
+## D148 — Fury Phase 3: a fresh trust root, and the first image built and signed natively on the hub
+
+**Date:** 2026-09-19
+**Result:** the runtime-image Pipeline ran on the arm64 hub with `platforms=linux/arm64` (nothing on this
+machine pulls amd64; the emulated amd64 leg would now be the slow one): **16 min 47 s** end to end — clone 31 s,
+build and push 16 min 0 s, sign and verify 16 s — against 53 minutes for the arm64 leg alone under emulation on
+the development stand-in. Tag `act-inference-e0716d0`, manifest list
+`sha256:f5d3a91e9e15f47b99875d38b0020545a3a2135908cc886871a6a787f693c991`, platform image
+`sha256:045b3d4ef70c5ea845fd1dfa659a67cb1ff8e0414e316f9ef45997475c2cef88`, this hub's Rekor entries 2 (list)
+and 3 (platform image). The digest-pinned `buildah` and `ubi-minimal` task images are multi-arch and needed no
+change; the `qemu-binfmt-arm64-host` DaemonSet was already in the repo for an amd64 leg, should one be wanted.
+**Trust root:** a fresh cosign key pair (made with cosign v2.6.5, the release the pipeline signs with) and the
+hub's own Rekor (D147). `tools/hub/create-cosign-secrets.sh` creates both signing Secrets from one passphrase
+prompt, checks that the passphrase opens the key first, and hands it to `oc` on stdin. The push and GitHub
+Secrets are the development stand-in's, copied cluster to cluster through a pipe.
+**The modelcar was not rebuilt:** the digest the Fleet already pins got a second signature — this hub's key, this
+hub's Rekor entry 1 — through the cluster's own `cosign-sign` Task. Checked from outside the cluster: that
+digest verifies under both trust roots (the stand-in's devices are unaffected; a `sigstoreSigned` policy is
+satisfied by any one valid signature), and the new runtime image verifies under the new root only.
+**The Fleet changed in one commit:** inline `cosign.pub`, inline `rekor.pub`, the runtime digest, and the
+rollout — batch 1 `role=canary` (`limit: 1`), batch 2 `site=fury`, then flightctl's implicit last batch.
+**Unknown 6 is retired on paper:** flightctl 1.3's fleet documentation says explicit batches "might be none"
+and that the implicit last batch takes every device the explicit ones did not select, and the stand-in ran for
+weeks with a second batch that matched nothing. Proof on this hub comes with the first enrolled device, which
+will meet an empty canary batch.
+**Carried into Phase 4:** the new image has not driven the arm yet. The host's own units and probe scripts
+(`tools/host/fury/flywheel/*.container`, scripts 10/13/21/22/23) still name the previous digest, which is signed
+under the old root only — once enrollment writes the new `policy.json` on the host, podman there will refuse
+it. Order: smoke the new image on the GPU (`13-first-inference.sh` now takes an image argument), move the host
+units to it, remove the hand-installed `act-inference` unit, then enroll. The demo runbook's stand-in-versus-Fury
+table still describes the old batch order; it gets rewritten with the rest of the runbook's Fury pass.
