@@ -250,6 +250,22 @@ Collection → 160-success threshold → pipeline (assemble → fine-tune on sli
 
 **Exit:** one promotion produced, signed and rolled out entirely on the Fury; the record written.
 
+**RHOAI in this phase (operator's check, 2026-09-19 — "make sure we are properly using RHOAI features").** On this
+hub the DataScienceCluster has `dashboard`, `aipipelines` and `modelregistry` Managed and everything else Removed.
+What the flywheel uses, and what Phase 5 has to show working on RHOAI 3.5 rather than assume:
+- **Data Science Pipelines:** the promotion is a KFP pipeline on the DSPA (`act-flywheel-promotion`, uploaded
+  2026-09-19 with `tools/hub/upload-pipeline.sh`); runs are started by the manifest consumer through the DSP API.
+  Exit adds: the run is visible with its step graph, parameters and artifacts in the RHOAI dashboard.
+- **Model Registry:** the pipeline registers every candidate with its dataset, eval report, image digest and Rekor
+  index. The client is pinned at `model-registry==0.3.11` for the 2.25-era API and has only ever seen a 401 from the
+  3.5 registry behind kube-rbac-proxy — **to verify before the first run**, and to fix if the API moved. Exit adds:
+  the promoted version is visible in the dashboard's registry view, with its lineage properties.
+- **Not used, deliberately:** RHOAI model serving (KServe) — the cluster VM has no GPU (decision 2), so the policy
+  is served on the device through RHEM and the act 2 model by Red Hat AI Inference on the host; workbenches, Ray /
+  Training Operator / Kueue (training runs on the host GPU, orchestrated by the pipeline), TrustyAI, Feast.
+  If the story needs more of RHOAI on stage, the candidates that fit this machine are a workbench for the eval
+  report, and the registry-to-catalog link (the RHEM catalog item is already generated from the registry entry).
+
 ### Phase 6 — Tenant T1: large-model inference on RHAIIS
 
 1. Verify RHAIIS has an aarch64 image: `skopeo inspect --raw docker://registry.redhat.io/rhaii/vllm-cuda-rhel9:<tag> | jq '.manifests[].platform'` (**the namespace is `rhaii/` from 3.4 on**; `rhaiis/` stops at 3.3 — catalog, 2026-09-19. Newest arm64: `3.5.1`, manifest list `sha256:c056e61672b6aea489ad5dde0bd2f8497230f5333e87f7cf6c494eba3bfdc808`; `3.4.4` is the release line the model card was validated on). If not, fallback is upstream vLLM aarch64 (`nvcr.io/nvidia/vllm:<tag>`) — note the story changes from "RHAIIS" to "vLLM on RHEL".
