@@ -67,6 +67,8 @@ linear_backend=auto     # NVFP4 linear layers (--linear-backend). auto tries fla
 attn_backend=auto       # auto puts FLASHINFER first on sm_10x; then FLASH_ATTN, TRITON_ATTN (vllm/platforms/cuda.py).
 gdn_backend=auto        # linear-attention prefill. auto is FlashInfer's JIT-compiled kernel on Blackwell with CUDA 13;
                         #   triton skips that JIT (vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py).
+fi_autotune=auto        # FlashInfer times every candidate kernel at start-up (--enable-flashinfer-autotune): minutes of
+                        #   silence with one core busy. no: skip it for a faster start and somewhat slower kernels.
 load_format=auto        # fastsafetensors if the weight load sits at 0 % (Getting started, DGX Spark chapter).
 clear_jemalloc=yes      # the image preloads a jemalloc built for 4k pages and this kernel has 64k: the container just
                         #   stops. Red Hat's documented fix is -e LD_PRELOAD= (Getting started, DGX Spark chapter).
@@ -128,7 +130,7 @@ model_id() {
     [[ -n $id ]] || die "nothing answers on $url - is it up?  $0 status"
 }
 
-knobs=' image max_len gpu_util max_seqs kv_dtype tool_parser enforce_eager moe_backend linear_backend attn_backend gdn_backend load_format
+knobs=' image max_len gpu_util max_seqs kv_dtype tool_parser enforce_eager moe_backend linear_backend attn_backend gdn_backend fi_autotune load_format
         clear_jemalloc selinux explicit_entry cache_vol host_ip ready_timeout debug_blocking extra_env '
 
 # each check in its own process: a failed kernel launch must not colour the next one
@@ -248,6 +250,8 @@ $(nvidia-ctk cdi list 2>/dev/null | grep 'nvidia.com/' | sed 's/^/    /')
     [[ $attn_backend != auto ]]  && run+=(--attention-backend "$attn_backend")
     [[ $gdn_backend != auto ]]   && run+=(--gdn-prefill-backend "$gdn_backend")
     [[ $load_format != auto ]]   && run+=(--load-format "$load_format")
+    [[ $fi_autotune == no ]]     && run+=(--no-enable-flashinfer-autotune)
+    [[ $fi_autotune == yes ]]    && run+=(--enable-flashinfer-autotune)
     echo "## starting"
     printf '%q ' "${run[@]}"; echo
     "${run[@]}" || die "podman could not start the container"
