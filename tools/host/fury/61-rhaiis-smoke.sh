@@ -236,7 +236,9 @@ $(nvidia-ctk cdi list 2>/dev/null | grep 'nvidia.com/' | sed 's/^/    /')
         while IFS= read -r kv; do [[ -n $kv ]] && run+=(-e "$kv"); done < <(sed -E 's/,([A-Za-z_][A-Za-z0-9_]*=)/\n\1/g' <<<"$extra_env")
     fi
     if [[ $selinux == disable ]]; then run+=(-v "$model:$mnt:ro"); else run+=(-v "$model:$mnt:ro,z"); fi
-    [[ -n $cache_vol ]] && run+=(-v "$cache_vol:/tmp")
+    # the same three locations for every image, all inside the volume (they are the Red Hat image's defaults)
+    [[ -n $cache_vol ]] && run+=(-v "$cache_vol:/tmp" -e FLASHINFER_WORKSPACE_BASE=/tmp -e VLLM_CACHE_ROOT=/tmp/vllm
+                                 -e TRITON_CACHE_DIR=/tmp/triton)
     [[ $explicit_entry == yes ]] && run+=(--entrypoint python3)
     run+=("$img")
     [[ $explicit_entry == yes ]] && run+=(-m vllm.entrypoints.openai.api_server)
@@ -381,9 +383,26 @@ status() {
     if podman container exists "$name"; then echo "## last 15 log lines"; podman logs --tail 15 "$name" 2>&1 | cut -c1-300; fi
 }
 
+# Kernels compiled at the first start are half an hour of work. The Red Hat image keeps them under /tmp, where
+# the volume is mounted; an image left to its defaults keeps them in the container's home directory, which goes
+# with the container. Copy whatever is there into the volume, in the layout `up` points every image at.
+keep_caches() {
+    local mp pair src dst
+    [[ -n $cache_vol ]] && podman volume exists "$cache_vol" || return 0
+    mp=$(podman volume inspect --format '{{.Mountpoint}}' "$cache_vol") || return 0
+    for pair in /root/.cache/flashinfer:.cache/flashinfer /root/.cache/vllm:vllm /root/.triton/cache:triton; do
+        src=${pair%%:*} dst=${pair#*:}
+        mkdir -p "$mp/$dst"
+        if podman cp "$name:$src/." "$mp/$dst/" 2>/dev/null; then
+            echo "kept $src ($(du -sh "$mp/$dst" | cut -f1)) in volume $cache_vol"
+        fi
+    done
+}
+
 down() {
     need podman
     if podman container exists "$name"; then
+        keep_caches
         podman stop -t 30 "$name" >/dev/null; podman rm "$name" >/dev/null
         echo "removed $name"
     else
