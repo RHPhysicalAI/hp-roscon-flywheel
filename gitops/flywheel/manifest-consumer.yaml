@@ -104,9 +104,9 @@ spec:
             - {name: COLLECTOR, value: "act-v2-ft160"}
             - {name: INCUMBENT_CHECKPOINT, value: "s3://episodes-data/checkpoints/act-v2-ft160/pretrained_model.tar.gz"}
             - {name: DSP_URL, value: "https://ds-pipeline-dspa.flywheel.svc:8443"}
-            # Deliberately not set yet on this hub: the host runner that does the training is not in place, and a
-            # run started now would wait ten hours for it and fail. The count is kept meanwhile (see main()).
-            # Arm it with:  - {name: TRAINING_PIPELINE_NAME, value: "act-flywheel-promotion"}
+            # Armed 2026-09-19, once the host runner, the eval rig, the incumbent checkpoint and the registry step
+            # were in place (D155). Remove this line to count without triggering: the count is kept (see main()).
+            - {name: TRAINING_PIPELINE_NAME, value: "act-flywheel-promotion"}
           volumeMounts:
             - {name: code, mountPath: /code}
           resources:
