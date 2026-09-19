@@ -11,7 +11,8 @@
 #       eval_n           default 100 seeded episodes per policy; 3 for a rehearsal
 #
 # Incumbent, collector and the incumbent's checkpoint are read from the manifest-consumer Deployment, so a
-# hand-started run fine-tunes from and is judged against the same model an automatic one would be.
+# hand-started run fine-tunes from and is judged against the same model an automatic one would be. Each can be
+# overridden for one run:  INCUMBENT=... COLLECTOR=... INCUMBENT_CHECKPOINT=s3://... EVAL_SEED_BASE=...
 set -euo pipefail
 NS=flywheel
 NAME=act-flywheel-promotion
@@ -23,7 +24,9 @@ n=${3:-100}
 [[ $spf =~ ^[0-9]*\.?[0-9]+$ && $n =~ ^[0-9]+$ ]] || die "steps_per_frame is a number, eval_n an integer"
 
 env_of() { oc -n "$NS" get deploy manifest-consumer -o json | jq -r --arg k "$1" '.spec.template.spec.containers[0].env[] | select(.name == $k) | .value'; }
-incumbent=$(env_of INCUMBENT); collector=$(env_of COLLECTOR); ckpt=$(env_of INCUMBENT_CHECKPOINT)
+incumbent=${INCUMBENT:-$(env_of INCUMBENT)}; collector=${COLLECTOR:-$(env_of COLLECTOR)}; ckpt=${INCUMBENT_CHECKPOINT:-$(env_of INCUMBENT_CHECKPOINT)}
+seed=${EVAL_SEED_BASE:-1000}
+[[ $seed =~ ^[0-9]+$ ]] || die "EVAL_SEED_BASE is an integer"
 [[ -n $incumbent && -n $collector && -n $ckpt ]] || die "could not read INCUMBENT / COLLECTOR / INCUMBENT_CHECKPOINT from deploy/manifest-consumer"
 
 host=$(oc -n "$NS" get route ds-pipeline-dspa -o jsonpath='{.spec.host}')
@@ -37,11 +40,11 @@ pid=$(api "https://$host/apis/v2beta1/pipelines?page_size=100" | jq -r --arg n "
 vid=$(api "https://$host/apis/v2beta1/pipelines/$pid/versions?sort_by=created_at%20desc&page_size=1" | jq -r '.pipeline_versions[0].pipeline_version_id')
 
 body=$(jq -n --arg c "$cand" --arg i "$incumbent" --arg col "$collector" --arg ck "$ckpt" --arg pid "$pid" --arg vid "$vid" \
-             --argjson spf "$spf" --argjson n "$n" \
+             --argjson spf "$spf" --argjson n "$n" --argjson seed "$seed" \
     '{display_name: ("promote-" + $c), pipeline_version_reference: {pipeline_id: $pid, pipeline_version_id: $vid},
       runtime_config: {parameters: {candidate: $c, incumbent: $i, collector: $col, incumbent_checkpoint: $ck,
-                                    steps_per_frame: $spf, eval_n: $n}}}')
+                                    steps_per_frame: $spf, eval_n: $n, eval_seed_base: $seed}}}')
 api -H 'Content-Type: application/json' -d "$body" "https://$host/apis/v2beta1/runs" |
     jq -r '"started run \(.run_id)  \(.display_name)  state \(.state)"'
-echo "incumbent $incumbent, collector $collector, steps_per_frame $spf, eval_n $n"
+echo "incumbent $incumbent, collector $collector, steps_per_frame $spf, eval_n $n from seed $seed"
 echo "follow it: RHOAI dashboard > Data science pipelines > Runs, and on the host: sudo journalctl -fu flywheel-runner"

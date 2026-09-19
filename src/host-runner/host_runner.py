@@ -138,6 +138,14 @@ def assemble(collector: str, repo_id: str) -> str:
     return f"s3://{BUCKET}/{collector}/{repo_id}.tar.gz"
 
 
+def reused_dataset_uri(candidate: str) -> str:
+    """The dataset a reused checkpoint was trained on, from the note beside it, or 'reused'."""
+    try:
+        return (FLY / "train" / candidate / "dataset_uri.txt").read_text().strip() or "reused"
+    except OSError:
+        return "reused"
+
+
 def resolve_incumbent(spec: str, name: str) -> str:
     """Return a host path to the incumbent checkpoint dir ('hf' = the upstream teacher)."""
     if spec == "hf":
@@ -365,7 +373,7 @@ def handle(t: dict, producer: KafkaProducer):
         if (ck / "model.safetensors").exists():
             # Idempotent: a checkpoint already trained under this candidate name (e.g. the D022
             # bootstrap that promotes the already-evaluated v2) is reused; assemble+train skipped.
-            log(f"checkpoint for {cand} exists — skipping assemble/train"); result["dataset_uri"] = "reused"
+            log(f"checkpoint for {cand} exists — skipping assemble/train"); result["dataset_uri"] = reused_dataset_uri(cand)
         else:
             repo_id = f"{cand}-train"
             result["dataset_uri"] = assemble(coll, repo_id)

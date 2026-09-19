@@ -639,3 +639,23 @@ def test_in_image_inprocess_mode_hands_expected_argv_to_sh(load_runner, monkeypa
 
     assert calls == [["bash", "-lc", PREFIX + "echo hi"]]
     assert result == "SENTINEL"
+
+
+def test_reused_dataset_uri_reads_the_note_beside_the_checkpoint(load_runner, tmp_path):
+    """A reused checkpoint reports the dataset named in train/<candidate>/dataset_uri.txt."""
+    runner = load_runner(FLYWHEEL_DATA=str(tmp_path))
+    d = tmp_path / "train" / "act-v2-ft160"
+    d.mkdir(parents=True)
+    uri = "s3://episodes-data/upstream-act-teacher/flywheel-ladder-160.tar.gz"
+    (d / "dataset_uri.txt").write_text(uri + chr(10))
+    assert runner.reused_dataset_uri("act-v2-ft160") == uri
+
+
+def test_reused_dataset_uri_falls_back_when_there_is_no_note(load_runner, tmp_path):
+    """Without the note, or with an empty one, the lineage value stays 'reused'."""
+    runner = load_runner(FLYWHEEL_DATA=str(tmp_path))
+    assert runner.reused_dataset_uri("nothing-here") == "reused"
+    d = tmp_path / "train" / "blank"
+    d.mkdir(parents=True)
+    (d / "dataset_uri.txt").write_text("  " + chr(10))
+    assert runner.reused_dataset_uri("blank") == "reused"
