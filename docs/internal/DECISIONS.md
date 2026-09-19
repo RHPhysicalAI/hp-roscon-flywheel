@@ -5104,3 +5104,14 @@ files, 45 GB, every file verified, in `/data/models` (`60-model-fetch.sh`); the 
 **Exit criterion:** met except for its last clause — episodes recorded with this policy as the only one on the
 graph, stamped with the Fleet's model version. That needs the recorder started by the operator.
 
+**Addendum (2026-09-19): Phase 4 closed.** With the agent's container the only policy on the graph, the recorder
+ran for about five minutes: seven episode records stamped `act-v2-ft160`, all `rollout.status: ok`, two of them
+with cubes placed (3 and 2). `ausearch -m avc -ts recent` printed nothing — no SELinux denials from the agent's
+first render on this host. The serving image pull (`rhaii/vllm-cuda-rhel9` 3.5.1) finished as well, so both act 2
+inputs are on the machine. **Worth watching, not a finding yet:** two of seven records placed cubes here against
+six of ten in the morning's run under the hand-installed unit, with the same image scoring 4/5 in the seeded
+smoke an hour earlier. Both runs show the same artefact — a zero-cube record 16–17 s after a successful one (the
+cube-reset caveat, D056/D138) — so the raw ratio overstates the difference, and seven records prove nothing either
+way. The only serving-side change is `ZENOH_ROUTER=10.20.0.1:7447` instead of `127.0.0.1`. Phase 5's collection
+run produces the sample that settles it; if the rate is low there, try the loopback address first.
+

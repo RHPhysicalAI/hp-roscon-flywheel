@@ -236,6 +236,8 @@ learned in `DECISIONS.md` as you go.
 
 ### Phase 4 — Enroll the Fury host as the GPU device
 
+> **Closed 2026-09-19 (D150, D152).** Done with `tools/host/fury/40-device-provision.sh` and `41-device-enroll.md`, not the two `device/` scripts named below (wrong for this host: NVIDIA repo, static `/etc/cdi`, `/etc/hosts`, passwordless sudo). The policy serves on the whole GPU (MIG off, no `gpu_device` label), not on slice `0:1`; the pull default is label-driven; mode switches use `flightctl app stop|start` around `fury-mode`.
+
 - `device/provision.sh` with `RHEM_HUB_IP=10.20.0.10`: it installs `flightctl-agent-1.3.0-1.el10` (aarch64 pin — verify the rpm exists on `rpm.flightctl.io` first) and re-runs `nvidia-ctk cdi generate` — harmless now that MIG is already on. Check `rpm -qf /etc/containers/policy.json` diffs *before* the Fleet overwrites the file (D042).
 - `device/enroll.sh` with labels `site=fury gpu=nvidia arch=arm64 policy_device=cuda zenoh_router=10.20.0.1` (plus `gpu_device=MIG-<uuid>` when serving from a slice).
 - The `ROLE=all` collision (D132): once the device serves, never run a second `/run_policy` on the host; local eval uses `ROLE=coordinator` against the device, or stop `flightctl-agent` + the quadlet first.
