@@ -12,7 +12,7 @@
 #                                          meant for a slice this server has to itself)
 #                                          Any judgement call below can be flipped for one run without editing:
 #                                            up nvidia.com/gpu=all 0.5 moe_backend=flashinfer_cutlass gdn_backend=triton
-#   ./61-rhaiis-smoke.sh probe [cdi-device]
+#   ./61-rhaiis-smoke.sh probe [cdi-device] [image=rhaii|upstream]
 #                                          no model, about a minute: one tiny call into each family of compiled GPU
 #                                          code in the image (torch, Triton, vLLM's own ops, FlashInfer) - which of them
 #                                          has a build this GPU can run. Default device nvidia.com/gpu=all.
@@ -36,6 +36,8 @@ if { : >> "$log"; } 2>/dev/null; then exec > >(tee -a "$log") 2>&1; fi
 
 # 3.5.1, arm64, pulled by digest into root's storage. The namespace is rhaii/ from 3.4 on, not rhaiis/.
 img=registry.redhat.io/rhaii/vllm-cuda-rhel9@sha256:c056e61672b6aea489ad5dde0bd2f8497230f5333e87f7cf6c494eba3bfdc808
+# the project's own image at the same vLLM version (v0.24.0, CUDA 13, multi-arch list pinned by digest): image=upstream
+upstream_img=docker.io/vllm/vllm-openai@sha256:251eba5cc7c12fed0b75da22a9240e582b1c9e39f6fbc064f86781b963bd814f
 model=/data/models/RedHatAI/Qwen3-Coder-Next-NVFP4      # 60-model-fetch.sh, revision 27a8f16f463b
 mnt=/models/Qwen3-Coder-Next-NVFP4
 name=rhaiis-smoke
@@ -46,6 +48,8 @@ url=http://127.0.0.1:$port
 # ==== judgement calls - flip these between attempts ====================================================================
 # One reason and one source each; the sources in full are in 61-rhaiis-smoke.md. vLLM file names are as of v0.24.0,
 # which is what 3.5.0 packages. 3.5.1 has no release-notes section yet: the first lines of the log give the version.
+image=rhaii             # which build of vLLM serves: rhaii (the Red Hat AI Inference image above) or upstream (the vLLM
+                        #   project's own image, same version). One switch, so either can stand in for the other.
 max_len=131072          # context. Native is 262144; KV is only ~24 KiB a token (12 full-attention layers, 2 KV heads,
                         #   config.json), so length is not what fills the slice. Upstream card: 32768 if it will not start.
 gpu_util=0.90           # a share of the slice, not of the GPU: vLLM sizes itself from CUDA's mem_get_info, which sees
@@ -84,6 +88,14 @@ ready_timeout=3600      # seconds. A cold FlashInfer JIT took 26 min for this mo
 # =======================================================================================================================
 
 follow='' tmp=''
+pick_image() {
+    case $image in
+        rhaii)    ;;
+        # its entrypoint is `vllm serve`, which wants the model as a positional argument: start the API server module
+        upstream) img=$upstream_img; explicit_entry=yes ;;
+        *)        die "image is 'rhaii' or 'upstream', not '$image'" ;;
+    esac
+}
 unfollow() { if [[ -n $follow ]]; then { kill "$follow"; wait "$follow"; } 2>/dev/null; follow=''; fi; }
 cleanup() { unfollow; [[ -n $tmp ]] && rm -rf "$tmp"; }
 trap cleanup EXIT
@@ -116,7 +128,7 @@ model_id() {
     [[ -n $id ]] || die "nothing answers on $url - is it up?  $0 status"
 }
 
-knobs=' max_len gpu_util max_seqs kv_dtype tool_parser enforce_eager moe_backend linear_backend attn_backend gdn_backend load_format
+knobs=' image max_len gpu_util max_seqs kv_dtype tool_parser enforce_eager moe_backend linear_backend attn_backend gdn_backend load_format
         clear_jemalloc selinux explicit_entry cache_vol host_ip ready_timeout debug_blocking extra_env '
 
 # each check in its own process: a failed kernel launch must not colour the next one
@@ -148,12 +160,22 @@ for name, code in checks:
 PYEOF
 
 probe() {
-    local dev=${1:-nvidia.com/gpu=all} pre=()
+    local dev=nvidia.com/gpu=all pre=() a
     need podman nvidia-ctk
+    for a in "$@"; do
+        case $a in
+            '')            ;;
+            nvidia.com/*)  dev=$a ;;
+            image=*)       image=${a#image=} ;;
+            *)             die "probe takes a CDI device and/or image=rhaii|upstream, not '$a'" ;;
+        esac
+    done
+    pick_image
+    podman image exists "$img" || die "the image is not in root's storage. Once, with the uplink:  sudo podman pull $img"
     cdi_has "$dev" || die "$dev is not a CDI device on this host right now"
     [[ $clear_jemalloc == yes ]] && pre+=(-e LD_PRELOAD=)
     date -u
-    echo "## no model: one tiny call into each family of compiled GPU code in the image, on $dev"
+    echo "## no model: one tiny call into each family of compiled GPU code in the $image image, on $dev"
     podman run --rm --pull=never --network none --device "$dev" --shm-size=1g "${pre[@]}" \
         -e HF_HUB_OFFLINE=1 -e VLLM_NO_USAGE_STATS=1 --entrypoint python3 "$img" -c "$probe_py" 2>&1 |
         grep -v -E '^(INFO|WARNING|DEBUG) [0-9-]+ ' || true
@@ -173,6 +195,7 @@ up() {
         fi
     done
     if [[ $debug_blocking == yes ]]; then enforce_eager=yes; fi
+    pick_image
     date -u
     echo "flipped for this run: ${flips[*]:-nothing}"
     mode=$(mig)
@@ -372,7 +395,7 @@ up)     up "${@:2}" ;;
 ask)    ask ;;
 bench)  bench "${2:-}" ;;
 status) status ;;
-probe)  probe "${2:-}" ;;
+probe)  probe "${@:2}" ;;
 down)   down "${2:-}" ;;
-*)      echo "usage: ${0##*/} up [cdi-device] [gpu-share] [knob=value ...] | probe [cdi-device] | ask | bench [n] | status | down [purge]" >&2; exit 1 ;;
+*)      echo "usage: ${0##*/} up [cdi-device] [gpu-share] [knob=value ...] | probe [cdi-device] [image=...] | ask | bench [n] | status | down [purge]" >&2; exit 1 ;;
 esac
