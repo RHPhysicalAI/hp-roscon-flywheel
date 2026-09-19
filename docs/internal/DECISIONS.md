@@ -5184,3 +5184,33 @@ stopped the systemd-run sim while "removing hand-started leftovers", then died o
 before `daemon-reload`; it now reloads first and leaves alone any container that carries a `PODMAN_SYSTEMD_UNIT`
 label. Still open: the sim does not exit on SIGINT within its stop timeout and gets killed.
 
+## D154 — Fury Phase 6, first half: the coding model serves on this machine, with tool calling, at about 140 tokens/s
+
+**Date:** 2026-09-19
+**What ran:** `tools/host/fury/61-rhaiis-smoke.sh` (`up`, `ask`, `bench`, `probe`, `status`, `down`): a hand-started
+container, loopback only, the model read-only and offline from `/data/models/RedHatAI/Qwen3-Coder-Next-NVFP4`
+(revision `27a8f16f`, fetched and verified by `60-model-fetch.sh`), SELinux confined, CDI device
+`nvidia.com/gpu=all` with `--gpu-memory-utilization 0.5` — **beside the running flywheel** (sim, RHEM-managed policy
+and the recorder kept collecting throughout), MIG off. This run used the vLLM project's own image at v0.24.0
+(`image=upstream`, pinned by digest in the script) — the plan's Phase 6 fallback; which image serves is one switch,
+so the Red Hat AI Inference image takes its place without any other change. Settings that differ from vLLM's
+defaults: `--linear-backend cutlass`, `--gdn-prefill-backend triton`, `--no-enable-flashinfer-autotune`, context
+131072, `--enable-auto-tool-choice --tool-call-parser qwen3_coder`.
+**Result:** cold start to ready **5 min 46 s** (weights 44.3 GiB in 2 min 41 s, torch.compile 49 s, profiling and
+warm-up about 2 min, CUDA graphs 8 s); KV cache 78.7 GiB = 3.39 M tokens, 25.9 full-length requests. A correct code
+answer; a well-formed tool call (`finish_reason: tool_calls`). Five sequential 256-token requests, single stream:
+**time to first token 0.16 s mean (0.13–0.22), decode 142.5 tokens/s mean (136–158), end to end 131.5 tokens/s.**
+**What was learned on the way:** (1) with vLLM's default kernel selection on this GPU the first start sat silent for
+over 40 minutes with one core busy — a Python-side kernel compiler for the FP4 paths plus FlashInfer's start-up
+autotuning, whose results vLLM 0.24.0 does not persist (`kernel_warmup.py`: `_FLASHINFER_USE_PERSISTENT_CACHE =
+False`), so every start would pay it. The two flags above avoid both, and the numbers above are without them. Worth
+an unattended run later to see what the default path costs cold and what it gains in tokens/s. (2) A server image
+keeps compiled kernels either under `/tmp` or in the container's home directory; the script now points every image
+at one named volume and copies a container's caches into it before removing it. (3) A one-minute, model-free
+`probe` (one tiny call into each family of compiled GPU code in an image) answers "can this image run on this GPU
+at all" before a 45 GB model load does.
+**Not yet done for Phase 6:** the same on the 3g MIG slice in tenants mode (the act 2 shape, and the number to quote),
+a warm restart to measure what the kept caches save, the governed form (a quadlet delivered through RHEM, D143),
+exposure beyond loopback, and the isolation test (training on another slice while it serves). Unknown 7 stays
+"retired on paper" for the product image and is retired in practice for serving this model on this GPU.
+
