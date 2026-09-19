@@ -250,7 +250,7 @@ Collection → 160-success threshold → pipeline (assemble → fine-tune on sli
 
 ### Phase 6 — Tenant T1: large-model inference on RHAIIS
 
-1. Verify RHAIIS has an aarch64 image: `skopeo inspect --raw docker://registry.redhat.io/rhaiis/vllm-cuda-rhel9:<tag> | jq '.manifests[].platform'`. If not, fallback is upstream vLLM aarch64 (`nvcr.io/nvidia/vllm:<tag>`) — note the story changes from "RHAIIS" to "vLLM on RHEL".
+1. Verify RHAIIS has an aarch64 image: `skopeo inspect --raw docker://registry.redhat.io/rhaii/vllm-cuda-rhel9:<tag> | jq '.manifests[].platform'` (**the namespace is `rhaii/` from 3.4 on**; `rhaiis/` stops at 3.3 — catalog, 2026-09-19. Newest arm64: `3.5.1`, manifest list `sha256:c056e61672b6aea489ad5dde0bd2f8497230f5333e87f7cf6c494eba3bfdc808`; `3.4.4` is the release line the model card was validated on). If not, fallback is upstream vLLM aarch64 (`nvcr.io/nvidia/vllm:<tag>`) — note the story changes from "RHAIIS" to "vLLM on RHEL".
 2. Mount the `models` disk **after asking what's on it** (or use `/data/models`); pull the model to it.
 3. Quadlet on the host: `AddDevice=nvidia.com/gpu=0:0`, `--gpu-memory-utilization` sized to 126 GB, no `CUDA_VISIBLE_DEVICES`. Expose on a route or a NodePort-style host port reachable over the tailnet; a minimal chat UI (any OpenAI-compatible client) for the booth.
 4. Prove isolation: run the flywheel training on `0:2` while the LLM serves; show latency unchanged.
@@ -273,6 +273,33 @@ Collection → 160-success threshold → pipeline (assemble → fine-tune on sli
 
 **Exit:** one screen shows four slices busy with four different things.
 
+### Phase 8b — Self-contained: both acts with the uplink down (added 2026-09-19, D151)
+
+**When:** after Phases 4 and 5 work connected — taking the internet away while a new platform is still being
+brought up doubles the unknowns in every failure. Its registry step may be pulled forward: it also makes every
+rollout local-speed. Before Phase 10, which then rehearses in this mode.
+
+**Scope:** the *running* demo — collect, train, package, sign, PR, merge, rollout, serve, the mode switch and
+act 2 — with no route off the machine. **Not in scope:** rebuilding images from upstream (apt, rosdep, PyPI,
+GitHub), installing operators, first pulls. Those are done connected, ahead of time.
+
+What the running demo reaches today, and where each goes:
+
+| Reaches out to | For | Becomes |
+|---|---|---|
+| `quay.io` | runtime image and modelcar push, signatures, every device pull | the cluster's internal registry, signed under the route name devices pull by; CA delivered by the Fleet; anonymous pull or a credential through RHEM's secret config; `policy.json` / `registries.d` re-pointed. **Spike first:** does the integrated registry take cosign's signature attachments |
+| GitHub (git) | Argo `repoURL`, flightctl `Repository`, Tekton clone | an in-cluster Gitea or Forgejo (arm64 image to confirm) as the working remote; GitHub stays the public mirror, synced when online |
+| GitHub (API) | the promotion PR (`PyGithub`) and the merge click | a provider switch in `open_promotion_pr`; the PR is merged in the local UI |
+| GitHub releases | `cosign` and `crane`, downloaded at **every** pipeline run (Tekton Task and KFP) | baked into the task/component images |
+| PyPI | six of seven KFP components `pip install` at start | baked into the component image |
+| pytorch.org / Hugging Face | possibly backbone weights at training start (unverified) | pre-seeded cache, offline switches set; found by the first offline training run |
+| Hugging Face, `registry.redhat.io` | the act 2 model and the serving image | fetched ahead (`tools/host/fury/60-model-fetch.sh`; the image by digest) |
+| Tailscale control plane / relay | the presenting laptop's path to the machine | a direct LAN path: the host's dnsmasq and the `10.20.0.0/24` route offered on a wired interface |
+
+**Exit:** with egress blocked on the host's firewall (every VM routes through it, so one rule is an air gap): one
+full promotion from collection to a device serving the new model, one `fury-mode` switch in each direction, and
+act 2 serving — then the rule is removed and the mirrors catch up.
+
 ### Phase 9 — (optional) GR00T day
 
 Stop T3/T4 tenants, `nvidia-smi mig -dci -dgi`, `-cgi 9,14,19 -C` (3g + 2g + 1g), regenerate CDI, re-point the Fleet's slice label if serving moves. Run NVIDIA's GR00T N1.6 playbook recipe (3B VLA, LIBERO) on the 2g; pre-bake a checkpoint as the fallback. Reslice back afterwards.
@@ -291,7 +318,7 @@ Full run of the booth narrative on the Fury: flywheel beats, tenant view, fleet 
 4. aarch64 availability (Phase 3) — **retired 2026-09-19 except RHTAS (D147):** on the 4.22 arm64 hub, OpenShift GitOps 1.21, Pipelines 1.24, the Cluster Observability Operator, Tempo, RHOAI 3.5 (dashboard behind the Gateway API included), MinIO, Kafka, Perses and RHEM 1.3 with its product UI all install and run; all eight Argo Applications are Synced/Healthy. Two amd64-only images had to be swapped (the RHEM UI and the chart's CLI image — D146/D147). **RHTAS still has no arm64 server images**, so Rekor + Trillian were rebuilt from the midstream source (`tools/host/fury/rhtas-arm64/`): built in under five minutes, Ready on the hub, a cosign sign/verify round trip passes (D147 addendum). The upstream `rekor` chart stays the fallback and was not needed.
 5. ~~KVM/UEFI aarch64 guest on Grace (Phase 2).~~ **Retired 2026-09-19 (D146):** a 32 vCPU / 128 GiB UEFI guest with a 4k-page kernel runs on the 64k-page host; the hub installed in one pass.
 6. ~~Empty/retargeted rollout batches (Phase 3.4).~~ **Retired on paper 2026-09-19 (D148):** the Fleet's batches are `role=canary` (limit 1), then `site=fury`, then flightctl's implicit last batch; its documentation expects batches that match nothing, and the development stand-in ran with one for weeks. Proof on this hub: the first enrolled device meets an empty canary batch (Phase 4).
-7. ~~RHAIIS aarch64 image (Phase 6.1).~~ **Retired on paper 2026-09-19:** RHAIIS 3.5 `rhaiis/vllm-cuda-rhel9` is published for arm64 and GB300/AArch64/CUDA 13 is in Red Hat's supported configurations (D143). Proof is pulling and serving it in Phase 6.
+7. ~~RHAIIS aarch64 image (Phase 6.1).~~ **Retired on paper 2026-09-19:** RHAIIS 3.5 `rhaii/vllm-cuda-rhel9` (not `rhaiis/`, which stops at 3.3) is published for arm64 and GB300/AArch64/CUDA 13 is in Red Hat's supported configurations (D143). Proof is pulling and serving it in Phase 6.
 8. DCGM exporter aarch64 (Phase 8).
 9. ~~*(added by the 21:10 re-check)* Tailscale subnet routing on the 64k kernel once `xt_mark` is loadable (Phase 0.6).~~ **Retired 2026-09-18:** with `kernel-64k-modules-extra` the `ts-forward` MARK rule installs; `10.20.0.0/24` is advertised and approved, a stand-in guest at `10.20.0.99` on `virbr-fury` answered pings from a laptop, and the laptop resolves the cluster names through split DNS.
 10. *(2026-09-19, D142)* **Gazebo cannot render on the GPU while MIG is on, and on CPU it is too slow for the policy.** With MIG off: two full-rate sims. Open: the demo structure (two GPU modes vs CUDA-rendered cameras under MIG).

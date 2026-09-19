@@ -232,8 +232,8 @@ spec:
                 PartOf=so-arm-sim.service
 
                 [Container]
-                # Runtime image: built natively on the arm64 hub and signed by Tekton, referenced by the manifest-list digest (D148: tag act-inference-e0716d0, linux/arm64 only, this hub's Rekor 2/3).
-                Image=quay.io/jary/soarm-flywheel@sha256:f5d3a91e9e15f47b99875d38b0020545a3a2135908cc886871a6a787f693c991
+                # Runtime image: built natively on the arm64 hub and signed by Tekton, referenced by the manifest-list digest (D149: tag act-inference-c2560cf, linux/arm64 only, this hub's Rekor 4/5; served 4/5 on the host's GPU before it was pinned).
+                Image=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837
                 ContainerName=act-inference
                 Network=host
                 EnvironmentFile=/etc/act-inference/env

@@ -13,7 +13,7 @@ PartOf=fury-flywheel.target
 
 [Container]
 ContainerName=act-inference
-Image=quay.io/jary/soarm-flywheel@sha256:02e66d895ed4ba328aa43263561027c18406d774887f465ab7acbd81e4c42d08
+Image=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837
 Network=host
 AddDevice=nvidia.com/gpu=all
 Environment=ROLE=policy POLICY_DEVICE=cuda MODEL_VERSION=act-v2-ft160 POLICY_PATH=/modelcar/models/act

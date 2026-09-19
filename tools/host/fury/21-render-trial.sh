@@ -81,7 +81,7 @@ full)
         -e POLICY_PATH=/modelcar/models/act -e ZENOH_ROUTER=127.0.0.1:7447 \
         -e ACTIONS_PER_CHUNK=100 -e CHUNK_SIZE_THRESHOLD=0.5 \
         --mount "type=image,source=quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b,destination=/modelcar" \
-        quay.io/jary/soarm-flywheel@sha256:02e66d895ed4ba328aa43263561027c18406d774887f465ab7acbd81e4c42d08 >/dev/null \
+        quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837 >/dev/null \
         || die "policy did not start"
     echo "MIG is OFF. next:  ./13-first-inference.sh 5 nvidia.com/gpu=all eval-fury-gpurender   then:  $0 restore"
     ;;

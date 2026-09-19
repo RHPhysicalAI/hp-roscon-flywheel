@@ -18,7 +18,7 @@ here=$(dirname "$(readlink -f "$0")")
 mkdir -p "$here/log"
 exec > >(tee -a "$here/log/$(basename "$0" .sh).log") 2>&1
 
-img=quay.io/jary/soarm-flywheel@sha256:02e66d895ed4ba328aa43263561027c18406d774887f465ab7acbd81e4c42d08
+img=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837
 car=quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b
 name=act-inference
 data=/data/flywheel

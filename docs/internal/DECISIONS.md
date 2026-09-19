@@ -4991,6 +4991,17 @@ worth adding before Phase 5's promotions depend on this path.
 pinned, `gitops/rhem/fleet-act-inference.yaml` on `fury` names an image that cannot start. The host keeps
 serving from the previous image under the hand-installed unit.
 
+**Addendum (2026-09-19): the rebuilt image serves, and only then was it pinned.** `runtime-image-7mdrb` from
+`c2560cf`: 14 min 15 s, tag `act-inference-c2560cf`, manifest list
+`sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837`, this hub's Rekor 4 and 5, verified from
+outside the cluster. The build-time assertion passed. GPU smoke on the host (MIG off, whole GPU, 5 seeded
+episodes): **4/5, mean 2.6 cubes, no goal rejected** — the same score as the previous good image in the same mode
+(D142); `served_model_version` is null in eval mode for both, so that is not a regression. The Fleet, the host's
+own units and the probe scripts now all name this digest; `docs/DEMO_RUNBOOK.md` still shows the old one and is
+rewritten in the runbook's Fury pass. The smoke itself needed a fix on the way: `13-first-inference.sh` reused
+any container called `act-inference`, including the dead one from the broken image, and then waited five minutes
+on it — it now reuses only a running container of the image under test and stops waiting when the policy dies.
+
 ## D150 — Fury Phase 4 design: the host is a device *and* a shared machine, so the Fleet's pull default is label-driven; the hub owns the policy's lifecycle
 
 **Date:** 2026-09-19
@@ -5035,4 +5046,28 @@ change is needed after all: approval sets `alias=fury-host`.
 after a by-hand stop; the agent's `Driver=image` pre-pull of the amd64-only modelcar on arm64; whether a newly
 approved device goes through the batch sequence at all (unknown 6's real proof may be the first template change,
 Phase 5); SELinux denials from the confined agent writing `/etc/containers/policy.json` on this host.
+
+## D151 — A self-contained mode becomes a phase of its own; the act 2 model and image are fetched ahead
+
+**Date:** 2026-09-19
+**Trigger:** a 4.2 GiB image pull from quay crawled at 2–11 MiB/s over the lab's uplink during a smoke test, and
+the operator asked whether moving to the internal registry and a local git would make the machine
+disconnected-capable. **Answer: those two are the largest pieces, but not the whole list.** A sweep of what the
+*running* demo reaches found five more: `cosign` and `crane` downloaded from GitHub releases at every pipeline
+run (Tekton Task and `pipeline/act_flywheel_pipeline.py:119,164`), `pip install` at the start of six of the seven
+KFP components (`:46,81,99,210,252,267`), possibly backbone weights at training start (unverified), the laptop's
+Tailscale path, and the one-time fetches for act 2.
+**Decision (operator's): it is wanted, and it is done at the appropriate time, not now** — recorded as Phase 8b
+of `FURY-PLAN.md` with the full inventory, the boundary (running the demo, not rebuilding images or installing
+operators) and an exit test (egress blocked on the host's firewall; a full promotion, both mode switches, act 2).
+After Phases 4 and 5 work connected; the registry step may come forward because it also makes rollouts local.
+Switching registries later is cheap: images copy with their digests, and a signature is per repository name, so
+it is one `cosign sign` and a Fleet edit.
+**Also found:** the runtime image ships as one 4.2 GiB layer (`buildah bud` without `--layers`, and no cache
+between runs), so every rebuild is a full pull everywhere. The serving image's namespace changed — 3.4 and 3.5
+are `registry.redhat.io/rhaii/vllm-cuda-rhel9`; `rhaiis/` stops at 3.3 — corrected in the plan. From this lab
+Hugging Face delivered 34 MB/s where quay managed 2–11: the uplink is not the bottleneck, quay's path is.
+**Fetch-ahead:** `tools/host/fury/60-model-fetch.sh` — the model at a pinned revision into `/data/models`, no
+root, no Python, resumable, every file verified (sha256 for the LFS files, git blob id for the rest); tested on
+the host with three small files including a corrupted one.
 
