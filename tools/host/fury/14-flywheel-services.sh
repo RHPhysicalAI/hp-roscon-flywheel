@@ -24,7 +24,13 @@ QUADLET_UNIT_DIRS=$here/flywheel /usr/libexec/podman/quadlet -dryrun >/dev/null 
 install -m 0755 "$here/fury-mode.sh"   /usr/local/sbin/fury-mode
 install -m 0755 "$here/mig-config.sh"  /usr/local/sbin/mig-config.sh
 install -m 0755 "$here/disk-guard.sh"  /usr/local/sbin/disk-guard.sh
-install -m 0644 "$here"/flywheel/*.container            /etc/containers/systemd/
+# once the host is enrolled the policy is the Fleet's quadlet, not ours
+if [[ -s /etc/flightctl/config.yaml ]]; then
+    install -m 0644 "$here"/flywheel/so-arm-sim.container "$here"/flywheel/act-coordinator.container /etc/containers/systemd/
+    echo "enrolled device: act-inference.container left out, the policy comes from RHEM"
+else
+    install -m 0644 "$here"/flywheel/*.container        /etc/containers/systemd/
+fi
 install -m 0644 "$here/flywheel/disk-guard.service"     /etc/systemd/system/
 install -m 0644 "$here/flywheel/fury-flywheel.target"   /etc/systemd/system/
 restorecon -R /usr/local/sbin /etc/containers/systemd /etc/systemd/system/disk-guard.service /etc/systemd/system/fury-flywheel.target

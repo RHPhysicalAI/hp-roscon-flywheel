@@ -1,7 +1,8 @@
 # This project was developed with assistance from AI tools.
 #
 # Same image, model volume and environment the Fleet renders for the device (gitops/rhem/fleet-act-inference.yaml),
-# installed by hand until the host is enrolled. Remove it before enrolling: the Fleet's unit has the same name.
+# installed by hand until the host is enrolled. 40-device-provision.sh removes it: the Fleet's copy runs under
+# another name (act-inference-<id>-act-inference), but two policy servers on one Zenoh graph reject every goal.
 # No health check yet: the one baked into this image hangs if it runs before the model version is published;
 # the fix is in docker/healthcheck.sh and arrives with the next image build.
 [Unit]

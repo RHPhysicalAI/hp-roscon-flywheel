@@ -5,8 +5,11 @@
 # will not start with less than the floor free - each successful episode keeps about 1.3 GB.
 [Unit]
 Description=Episode coordinator and recorder (the collection loop)
-Requires=act-inference.service
-After=act-inference.service disk-guard.service
+# The policy is the hand-installed unit before enrolment and the Fleet's afterwards, which the agent names
+# act-inference-<id>-...; Wants= of a unit that does not exist is ignored. Deliberately not Requires= on the
+# agent's unit: a Fleet update removes and re-adds it, which would stop the recorder at every promotion.
+Wants=act-inference.service
+After=act-inference.service act-inference-128875-flightctl-quadlet-app.target disk-guard.service
 BindsTo=disk-guard.service
 
 [Container]
