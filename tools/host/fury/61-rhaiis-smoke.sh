@@ -12,6 +12,10 @@
 #                                          meant for a slice this server has to itself)
 #                                          Any judgement call below can be flipped for one run without editing:
 #                                            up nvidia.com/gpu=all 0.5 moe_backend=flashinfer_cutlass gdn_backend=triton
+#   ./61-rhaiis-smoke.sh probe [cdi-device]
+#                                          no model, about a minute: one tiny call into each family of compiled GPU
+#                                          code in the image (torch, Triton, vLLM's own ops, FlashInfer) - which of them
+#                                          has a build this GPU can run. Default device nvidia.com/gpu=all.
 #   ./61-rhaiis-smoke.sh ask               one chat completion and one tool call; tokens/s            (no root)
 #   ./61-rhaiis-smoke.sh bench [n]         n streamed requests of 256 tokens, one after another (default 5):
 #                                          time to first token, tokens/s                              (no root)
@@ -23,7 +27,7 @@
 # This project was developed with assistance from AI tools.
 set -uo pipefail
 export LC_ALL=C
-case ${1:-} in up|down|status) [[ $EUID -eq 0 ]] || exec sudo "$0" "$@" ;; esac
+case ${1:-} in up|down|status|probe) [[ $EUID -eq 0 ]] || exec sudo "$0" "$@" ;; esac
 here=$(dirname "$(readlink -f "$0")")
 log=$here/log/$(basename "$0" .sh).log
 mkdir -p "$here/log" 2>/dev/null
@@ -114,6 +118,46 @@ model_id() {
 
 knobs=' max_len gpu_util max_seqs kv_dtype tool_parser enforce_eager moe_backend linear_backend attn_backend gdn_backend load_format
         clear_jemalloc selinux explicit_entry cache_vol host_ip ready_timeout debug_blocking extra_env '
+
+# each check in its own process: a failed kernel launch must not colour the next one
+read -r -d '' probe_py <<'PYEOF' || true
+import subprocess, sys
+head = "import torch\n"
+checks = [
+ ("torch: matmul (cuBLAS), bf16", "a=torch.randn(256,256,device='cuda',dtype=torch.bfloat16); print(float((a@a).sum()))"),
+ ("torch: elementwise kernel", "print(float(torch.sigmoid(torch.randn(4096,device='cuda')).sum()))"),
+ ("triton: a compiled function (inductor)", "f=torch.compile(lambda x: torch.nn.functional.silu(x)*x+1); print(float(f(torch.randn(4096,device='cuda')).sum()))"),
+ ("vllm _C: rms_norm", "from vllm import _custom_ops as ops; x=torch.randn(8,128,device='cuda',dtype=torch.float16); o=torch.empty_like(x); ops.rms_norm(o,x,torch.ones(128,device='cuda',dtype=torch.float16),1e-6); torch.cuda.synchronize(); print(float(o.sum()))"),
+ ("vllm _moe_C: topk_softmax", "from vllm import _custom_ops as ops; g=torch.randn(8,64,device='cuda',dtype=torch.float32); w=torch.empty(8,4,device='cuda',dtype=torch.float32); i=torch.empty(8,4,device='cuda',dtype=torch.int32); t=torch.empty(8,4,device='cuda',dtype=torch.int32); ops.topk_softmax(w,i,t,g); torch.cuda.synchronize(); print(float(w.sum()))"),
+ ("flashinfer: a prebuilt/JIT kernel (rmsnorm)", "import flashinfer; x=torch.randn(8,128,device='cuda',dtype=torch.float16); o=flashinfer.norm.rmsnorm(x,torch.ones(128,device='cuda',dtype=torch.float16)); torch.cuda.synchronize(); print(float(o.sum()))"),
+]
+info = ("import torch, vllm; print('device:', torch.cuda.get_device_name(0), 'capability', torch.cuda.get_device_capability(0));"
+        "print('torch', torch.__version__, 'cuda', torch.version.cuda, 'built for', ' '.join(torch.cuda.get_arch_list()));"
+        "print('vllm', vllm.__version__)")
+print(subprocess.run([sys.executable, "-c", info], capture_output=True, text=True).stdout.strip())
+try:
+    import flashinfer; print("flashinfer", flashinfer.__version__)
+except Exception as e: print("flashinfer: import failed:", e)
+for name, code in checks:
+    r = subprocess.run([sys.executable, "-c", head + code], capture_output=True, text=True, timeout=900)
+    if r.returncode == 0:
+        print(f"  ok    {name}")
+    else:
+        err = [l for l in r.stderr.strip().splitlines() if l.strip()]
+        print(f"  FAIL  {name}\n          {err[-1][:230] if err else 'no output'}")
+PYEOF
+
+probe() {
+    local dev=${1:-nvidia.com/gpu=all} pre=()
+    need podman nvidia-ctk
+    cdi_has "$dev" || die "$dev is not a CDI device on this host right now"
+    [[ $clear_jemalloc == yes ]] && pre+=(-e LD_PRELOAD=)
+    date -u
+    echo "## no model: one tiny call into each family of compiled GPU code in the image, on $dev"
+    podman run --rm --pull=never --network none --device "$dev" --shm-size=1g "${pre[@]}" \
+        -e HF_HUB_OFFLINE=1 -e VLLM_NO_USAGE_STATS=1 --entrypoint python3 "$img" -c "$probe_py" 2>&1 |
+        grep -v -E '^(INFO|WARNING|DEBUG) [0-9-]+ ' || true
+}
 
 up() {
     local dev=nvidia.com/gpu=0:0 mode state next t0 shards run pre=() a k v flips=() kv
@@ -328,6 +372,7 @@ up)     up "${@:2}" ;;
 ask)    ask ;;
 bench)  bench "${2:-}" ;;
 status) status ;;
+probe)  probe "${2:-}" ;;
 down)   down "${2:-}" ;;
-*)      echo "usage: ${0##*/} up [cdi-device] [gpu-share] [knob=value ...] | ask | bench [n] | status | down [purge]" >&2; exit 1 ;;
+*)      echo "usage: ${0##*/} up [cdi-device] [gpu-share] [knob=value ...] | probe [cdi-device] | ask | bench [n] | status | down [purge]" >&2; exit 1 ;;
 esac
