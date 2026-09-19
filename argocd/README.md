@@ -16,6 +16,7 @@ export KUBECONFIG=~/sno-flywheel/auth/kubeconfig
 
 | # | File | Argo app | Target ns | Waits on |
 |---|---|---|---|---|
+| 0 | `bootstrap-operators.yaml` | — (three Subscriptions) | `openshift-operators` | — ; then `oc adm policy add-cluster-role-to-user cluster-admin -z openshift-gitops-argocd-application-controller -n openshift-gitops` once that namespace exists |
 | 1 | `storage-app.yaml` | `storage` | `local-path-storage` | — (default StorageClass `local-path`) |
 | 2 | `operators-app.yaml` | `operators` | `openshift-operators` | 1 |
 | 3 | `operators-config-app.yaml` | `operators-config` | `redhat-ods-operator` | 2 — all CSVs `Succeeded` (`oc get csv -A`) |
@@ -31,6 +32,8 @@ Every app runs `prune: true` (D026 row 5, Phase 4.5 F): the cluster equals `gito
 `oc get applications.argoproj.io -n openshift-gitops` lists exactly one app per `*-app.yaml` here.
 
 ```bash
+oc apply -f argocd/bootstrap-operators.yaml   # GitOps, Cluster Observability, Tempo; wait for the CSVs
+oc adm policy add-cluster-role-to-user cluster-admin -z openshift-gitops-argocd-application-controller -n openshift-gitops
 oc apply -f argocd/storage-app.yaml
 oc apply -f argocd/operators-app.yaml
 oc apply -f argocd/operators-config-app.yaml     # after CSVs are Succeeded
