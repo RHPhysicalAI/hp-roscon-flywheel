@@ -60,6 +60,12 @@ spec:
             tag: "1.3.0"
           auth:
             insecureSkipTlsVerify: true
+        # The chart's setup jobs run `oc` from quay.io/openshift/origin-cli, which has no arm64 build
+        # under any tag; Red Hat's CLI image does.
+        clusterCli:
+          image:
+            image: registry.redhat.io/openshift4/ose-cli-rhel9
+            tag: "v4.22"
         # bootc image building is out of scope (package-mode devices, D024); the worker also
         # needs a privileged SCC and RHSM secrets.
         imageBuilderApi:
