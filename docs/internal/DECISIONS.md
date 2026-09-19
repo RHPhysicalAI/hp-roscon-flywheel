@@ -4526,3 +4526,319 @@ The r2 eval data lives **only** in the standalone MinIO, so the reclaim must pre
 5. Bring the collection loop back (device clock-step after suspend per D132/D063, sim already up,
    `run-coordinator.sh` on the Tekton digest, disk-guard first).
 
+## D139 — Fury pre-flight re-check: Phase 0 amended, no locked decision changed
+
+**Date:** 2026-09-18
+**Context:** `docs/internal/FURY-PLAN.md` was written from a read-only inventory of the real HP ZGX
+Fury earlier the same day. Before the first privileged step, the box was re-inventoried (read-only,
+21:10 UTC) to catch drift — the machine is shared.
+**Decision:** the thirteen locked decisions stand. Phase 0 is amended in six places:
+1. **The blank data disk is addressed by identity, not by name.** The blank 3.7 TB disk and the
+   staged `models` disk are the same Samsung model; `nvme0n1`/`nvme1n1` are enumeration order and may
+   swap across a reboot. Step 2 resolves the blank disk through `/dev/disk/by-id` (by serial) and
+   requires `wipefs -n` to print nothing before `mkfs`. Same class of mistake as D137
+   (a mount that silently missed) — assert the target before the destructive step.
+2. **`kernel-64k-modules-extra` joins the package step.** RHEL 10 ships `xt_mark` in
+   `kernel-modules-extra`; the image has it only for the 4k `211.49.1` kernel, not for the running
+   64k `211.56.1`. tailscaled (iptables-nft mode) already reports its `ts-forward` MARK rule failing,
+   which would break the `10.20.0.0/24` subnet router (decision 7/8). The matching package is in
+   BaseOS. Fallback if it still fails: `TS_DEBUG_FIREWALL_MODE=nftables`. Tracked as unknown 9.
+3. **dnsmasq answers `sno-flywheel.local` authoritatively and serves `api-int`.** The host's resolver
+   is MagicDNS (`/etc/resolv.conf` is Tailscale's); split DNS sends `sno-flywheel.local` back to this
+   host, so a name dnsmasq does not know would loop host → MagicDNS → host. `local=/sno-flywheel.local/`
+   closes it. `api-int.sno-flywheel.local` is added because the SNO node resolves it during install.
+4. **The BMC address is not recorded in git** — the repo is public. The operator holds it.
+5. **`nvidia-container-toolkit` comes from Red Hat, not from NVIDIA's repo.** `1.20.0-1` (the version
+   `device/provision.sh` pins) is in `rhel-10-for-aarch64-supplementary-rpms`, already enabled on the
+   box, alongside the driver and its precompiled kmods. Step 3 installs it from there and adds no
+   third-party repo. Follow-up for Phase 4: `provision.sh` still drops NVIDIA's `.repo` file
+   unconditionally — make it skip that when the pinned version is already installable or installed.
+6. **Modular libvirt daemons, not `libvirtd`.** RHEL 10.2 still ships the monolithic unit, but the
+   modular sockets are the default and the two must not both be enabled. `mig-config.service` orders
+   `Before=virtqemud.service`.
+**Also learned:** the lab uplink's prefix had been recorded wrongly (corrected). `gdm` is already disabled; no suspend attempt since
+20:21:41 UTC, after the masks. Decision 5's 4k fallback is cheap: precompiled `kmod-nvidia-open` is
+installed for both page sizes of both kernel versions, and `dnf-plugin-nvidia` filters kernel updates
+that lack one. Unknown 3 is retired: `flightctl-agent-1.3.0-1.el10.aarch64` and
+`nvidia-container-toolkit-1.20.0-1.aarch64` both exist in their repos. A 2.7 GB USB mass-storage
+gadget (`sda`, RHEL 10.2 BaseOS ISO) is BMC virtual media — left alone.
+**Gotcha:** an unprivileged `dnf list` over a `bash -s` heredoc prompted to import a repo GPG key
+and consumed the rest of the script as its answers (nothing was imported). Give `dnf`/`curl`
+`</dev/null` inside piped scripts, or use `ssh -n` with a quoted command. The known-hosts entry is
+under the node's name, so by-IP SSH needs `-o HostKeyAlias=<that name>` rather than relaxing host-key checks.
+**Consequences:** Phase 0 step 2 cannot hit the `models` disk by name drift; step 6 has a working
+forwarding path to verify rather than a known-broken one.
+
+### D139 addendum — the host's hostname is left unset in Phase 0
+
+Step 1 originally set the hostname to the machine's tailnet name. Checked before running it: nothing in `device/`,
+`tools/host/` or the Fleet reads the host's name; the tailnet name is pinned in Tailscale's prefs
+(a pinned `Hostname`), independent of the OS; no X session or vendor agent is keyed on it. So it is
+cosmetic — and it has two side effects on a machine that is HP's and shared: NetworkManager would
+start sending the name to the lab's DHCP server (`dhcp-send-hostname` is at its default), and with
+`hosts: files dns myhostname` plus no `/etc/hosts` entry the box would resolve its own name through
+MagicDNS first, stalling `sudo` and friends whenever tailscaled is down — exactly during step 6.
+Deferred to just before Phase 4 (where the name becomes visible in the RHEM UI), with HP's agreement
+and an `/etc/hosts` line. Reversible at any time with `hostnamectl set-hostname ""`.
+
+## D140 — The Phase 0 reboot stalled in the initramfs on the BMC's virtual media, not on anything Phase 0 changed
+
+**Date:** 2026-09-18
+**Context:** the step 4 reboot (22:20 UTC) did not come back: no SSH, no tailnet, KVM showing a black
+screen with a cursor, SOL refusing to connect. A Ctrl+Alt+Del from the KVM at 22:38 rebooted it (so the
+OS was alive), the second boot was force-restarted from the BMC at ~22:46, and the third came up at
+22:52 with no intervention at GRUB.
+**Finding:** on the boot that came up, `systemd-analyze` reads 10.7 s kernel + **3 min 43 s initrd** +
+24.7 s userspace. Inside the initramfs, `dracut-initqueue` logs "Timed out while waiting for udev queue
+to empty" at 166 s and only scans LVM (finding root at once) at 232 s. What udev is stuck on is the
+BMC's virtual-media USB disk (`OpenBMC Virtual Media Device`, the RHEL 10.2 installer ISO left attached
+since the install): the kernel resets it 10 s after it attaches and eight times during the boot, with
+an I/O error. The initramfs for this kernel is dated 18:09, before any Phase 0 work, and the 18:45
+boot had already spent ~2 min 20 s before userspace. So the stall predates Phase 0 and its length
+depends on how the BMC serves that image. BMC POST codes confirm the firmware side was identical to
+the day's good boots (ReadyToBoot to ExitBootServices in 4.4 s, which also rules out having booted
+the installer).
+**What Phase 0 added to boot:** everything it changed runs after the root switch, and that whole phase
+took 24.7 s. `mig-config.service` ran, the four MIG devices came back **with the same UUIDs**, `/data`
+and the container-storage bind mounted. The early suspicion of the MIG unit was wrong.
+**Not proven:** why the first boot sat for 17 minutes. journald on this image is volatile
+(`/var/log/journal` does not exist), so the failed boots left no logs.
+**Decision:** no further reboots until the virtual media is ejected (the BMC and the image belong to the machine's owner:
+ask, then eject under Operations -> Virtual media). Make journald persistent so the next incident
+leaves evidence. SOL is unusable ("Connection closed unexpectedly"); the KVM is the console, and
+because the kernel's console is serial-only the KVM shows nothing during boot unless `console=tty0`
+is added at GRUB.
+**Lesson:** on a remote box, read `systemd-analyze` and `journalctl --list-boots` *before* the first
+planned reboot. A two-minute initrd and a one-boot journal were both visible beforehand.
+
+### D140 addendum — the virtual media stays attached for now (operator's call)
+
+D140 said no reboots until the BMC's virtual media is ejected. The operator overrode that the same
+evening: once ejected it cannot be re-attached from outside the lab. So it stays. Consequences accepted: every boot spends minutes in the initramfs
+(3 min 43 s measured; 17+ min seen once, cause unproven), so reboots are kept to the necessary ones,
+given 5-20 minutes before anyone worries, and watched through the KVM with `console=tty0` added at
+GRUB. If it bites a second time in a way that is verified, the OS-side mitigation is to make the
+kernel ignore that one USB storage device, which needs no BMC change. The image itself is 2.74 GiB -
+neither the stock boot image nor the stock DVD;
+`tools/host/fury/copy-vmedia.sh` exists to take a checked copy to `/data/iso/`, but the operator
+chose not to run it: no copy has been made. Revisit only if a boot problem recurs.
+
+## D141 — Fury Phase 0 closed: what was built, and what differs from the plan as written
+
+**Date:** 2026-09-18
+**Context:** Phase 0 of `docs/internal/FURY-PLAN.md` (host preparation) was run by the operator from
+scripts in `tools/host/fury/`, one step at a time, each checked before the next.
+**State of the host:** boots to `multi-user.target`, sleep targets masked, `gdm` and
+`nvidia-fabricmanager` off; hostname left unset (D139 addendum). `/data` is ext4 on the blank 3.7 TB
+NVMe, mounted by label, with rootful container storage bind-mounted onto it. libvirt (modular
+daemons), `nvidia-container-toolkit` 1.20.0 from RHEL Supplementary, `kernel-64k-modules-extra`.
+MIG `9,19,19,19`: `0:0` = 3g.126gb, `0:1`-`0:3` = 1g.31gb; restored at boot by `mig-config.service`;
+MIG UUIDs are identical across a reboot. `fury-net` (routed, `virbr-fury`, host `10.20.0.1`), libvirt's
+`default` network stopped. dnsmasq serves the cluster zone on `lo`, `virbr-fury` and `tailscale0`.
+Tailscale advertises `10.20.0.0/24`; split DNS sends `sno-flywheel.local` to the host.
+**Differences from the plan as first written, all exercised:**
+1. **The CDI spec belongs to the toolkit.** Red Hat's build enables `nvidia-cdi-refresh`, which writes
+   `/var/run/cdi/nvidia.yaml` at boot, and that directory outranks `/etc/cdi`. `mig-config.service`
+   orders itself before it; no `/etc/cdi` file is written. After a manual reslice:
+   `systemctl restart nvidia-cdi-refresh`. The spec carries index names and MIG-UUID names.
+2. **The host resolves through its own dnsmasq** (`/etc/resolv.conf` -> `127.0.0.1`, NetworkManager
+   `rc-manager=unmanaged`, `tailscale set --accept-dns=false` on the Fury only). Cluster names resolve
+   on the host without the tailnet's control plane, and NetworkManager and Tailscale no longer take
+   turns rewriting the file. Decision 8 is unchanged for guests and laptops.
+3. **Guest -> host traffic is filtered by libvirt's `libvirt-to-host` firewalld policy** (reject, with
+   a short allow list that includes dns). Anything a guest must reach on `10.20.0.1` — the Zenoh
+   router, the camera stream (D124), a DCGM exporter — needs its port added to that policy in the
+   phase that introduces it. Inbound to the routed network and guests outbound are already accepted
+   (`libvirt-routed-in` / `-out`), and outbound leaves through the masquerade on the `public` zone.
+4. **Containers reach a MIG slice while still SELinux-confined** (`container_use_devices` off) — shown
+   for NVML only (`nvidia-smi -L`). Whether a CUDA workload also does is Phase 1.1's question, and
+   decides whether the Fleet's `SecurityLabelDisable=true` can go.
+**Also learned:** `.local` works through Tailscale split DNS on macOS. The operator's Mac pins ~17
+`*.apps.sno-flywheel.local` names to the desktop cluster in `/etc/hosts`, which beats DNS; they must
+be commented out to use the Fury cluster by name — one cluster per name at a time (decision 8). The
+tailnet path to the Fury is relayed (about 100 ms), so bulk data should be pulled by the Fury from
+registries, not pushed through the tailnet. Boot hazard and its handling: D140.
+**Unknowns retired:** 3 (aarch64 rpms) and 9 (subnet routing on the 64k kernel).
+
+## D142 — On the Fury, MIG and a working sim are mutually exclusive; measured, with options (decision 1 needs the operator's call)
+
+**Date:** 2026-09-19
+**Context:** Phase 1 on the real machine. The arm64 runtime image, CUDA on a MIG slice, the 64k-page
+kernel, SELinux confinement, the native sim build and the whole ROS 2 + Zenoh + policy stack all work
+(unknowns 1 and 2 retired). The first seeded eval (D020 config, seeds 1000-1004, `act-v2-ft160`) then
+scored **0/5, mean 0.4 cubes** where the desktop scores 92.5 %.
+**Finding:** Gazebo's cameras (ogre2, OpenGL, with voxel global illumination in the upstream world) need a
+graphics API. NVIDIA's MIG guide: "No graphics APIs are supported (for example, OpenGL, Vulkan and so on).
+The exception to this is RTX Pro 6000 Blackwell GPUs…"; `+gfx` profiles are "new in GB20X" and data-centre
+Blackwell has none; MIG mode is per GPU and "without creating GPU instances… CUDA workloads cannot be
+run". The Fury has one NVIDIA GPU, no add-in card (NVIDIA's DGX Station design puts display on a PCIe
+add-in GPU; none is fitted in this unit), and the BMC's ASPEED chip is 2D only. Reproduced on the
+box with a control: same container, same injected NVIDIA graphics libraries — with MIG on, EGL offers
+only Mesa's software device (cameras **1.66 Hz**, one sim ≈ 7 cores); with MIG off, `GL_VENDOR = NVIDIA`
+and both cameras run at **30 fps**, and the same five seeds score **4/5, mean 2.6 cubes**. The render
+rate, not arm64 / 64k pages / the unpinned upstream sim, caused the collapse. Decision 3's "Gazebo on
+CPU" does not hold: software rendering would need ~18x.
+**Measured capacity with MIG off** (`tools/host/fury/22-sim-scale.sh`, isolated sims, each its own network
+namespace and `GZ_PARTITION`): 1 sim 30 fps at real time, GPU ~40 %, 5.2 cores; **2 sims 30 fps each,
+real time, GPU ~68 %**; 4 sims 19 fps each, GPU ~90 %; 6 → 13.6 fps; 8 → 10.7 fps. Total throughput
+saturates around 150-170 camera frames/s, i.e. **two full-rate sims**; beyond that the sims fall behind
+real time (the single-sample RTF reading flips between ~1.0 and ~0.02-0.05 as physics stalls on rendering —
+measure sim-time advance over a window next time). A CUDA job saturating the GPU next to 4 sims costs a
+further ~22 % (19 → 14.8 fps). CPU is not the limit.
+**Options on this hardware:** (a) **two modes** — MIG off for the robot loop (sim + serving + training share
+the GPU as on the desktop), MIG on for a tenancy showcase; switching needs the GPU idle, about a minute
+plus workload restarts. (b) **no MIG**, soft sharing (MPS / time-slicing): everything at once, no hardware
+isolation, and only two full-rate sims. (c) **render the cameras with CUDA instead of OpenGL** so the sim
+side fits inside MIG slices: maintained CUDA-only ray tracers exist on NVIDIA Warp (MuJoCo-Warp's batch
+renderer, Newton's tiled camera); upstream already ships a MuJoCo model of the whole scene and a MuJoCo
+bringup with the same ros2_control controllers and camera topics, so a separate renderer node (scene +
+joint/cube poses in, two images out) could serve Gazebo physics unchanged. Nobody reports Warp rendering
+under MIG — `tools/host/fury/23-warp-probe.sh` tests that gate. Cost of (c): new pixels, so a new teacher;
+bootstrap by running the current policy in GPU-rendered Gazebo (MIG off) while the new renderer draws the
+same episodes, then fine-tuning on the new images. (d) an RTX PRO add-in GPU — not an option for this
+demo.
+**Status:** decision 1 ("MIG on, everything built against slices from day one") cannot stand as written.
+Proposed: run the flywheel phases (1-5) with MIG off — needed under every option, including (c)'s
+bootstrap; keep the MIG layout one command away; decide the demo structure (two modes vs CUDA-rendered
+sims under MIG) once the Warp probe and, if it passes, a MuJoCo-Warp spike have numbers. Pending the
+operator's decision.
+**Also fixed along the way:** `docker/healthcheck.sh` hung forever when it ran before the model version was
+published (`ros2` ignores SIGTERM under rmw_zenoh, so plain `timeout` never returned) — now `timeout -k`.
+The pinned modelcar digest is amd64-only (mounts fine, podman warns). Native sim build: 6 min.
+
+### D142 addendum — CUDA-only camera rendering works inside a MIG slice on the Fury
+
+`tools/host/fury/23-warp-probe.sh` (NVIDIA Warp 1.17 from PyPI, CUDA 12.9 runtime, kernels JIT-compiled
+for `sm_103` in 0.6 s, ray-casting a stand-in tabletop scene for two 640x480 cameras, frames copied back
+to the host): **6,449 frame pairs/s on the whole GPU, 2,096 on a MIG 1g.31gb slice** — against 30
+needed. No public report of Warp rendering under MIG was found beforehand; this is the gate for option
+(c) and it is open. A toy scene with single-hit shading is not the real arm with textures and shadows,
+so the next measurement is the MuJoCo-Warp batch renderer on upstream's MJCF scene
+(`tools/host/fury/mjwarp-spike/`). Switching MIG off and back on took two seconds each way with the GPU
+idle, and the MIG UUIDs came back unchanged.
+**Shape the operator wants kept in view:** MIG stays on and **one slice is the rendering tenant** for a
+fleet of robots (physics on CPU cores, cameras ray-traced with CUDA), next to the LLM, serving and
+training tenants — which would remove mode switching from the demo entirely. The flywheel with MIG off
+and a GPU-rendered Gazebo remains act one and the bootstrap for the new teacher.
+**Meanwhile, natively:** the robot loop is no longer hand-started containers. `fury-mode flywheel|tenants`
+moves the GPU between the two states (the choice persists across reboots through `MIG_LAYOUT`, `none`
+meaning MIG off); sim and policy are quadlets behind `fury-flywheel.target`, the sim refusing to start in
+MIG mode; the recorder is a unit bound to `disk-guard.service` and gated on 1.5 TB free, replacing the
+`pgrep` check, and the guard stops the unit rather than a container systemd would restart.
+
+## D143 — Demo structure on the Fury: two acts on one GPU, host workloads governed through RHEM (operator's direction)
+
+**Date:** 2026-09-19
+**Context:** D142 showed that MIG tenancy and a GPU-rendered Gazebo cannot coexist on the one GB300, and
+that CUDA-only rendering does run inside a MIG slice. The operator asked where OpenShift belongs in the
+picture, since every GPU workload had ended up as a host container outside it.
+**Direction:**
+- **Act 1 — the governed flywheel, MIG off.** One GPU-rendered robot; sim, policy serving and training share
+  the GPU. Host workloads are podman quadlets **delivered and governed by RHEM** from the OpenShift hub (Git →
+  GitOps → Fleet → device, signed images verified on the device) — hand-installed from
+  `tools/host/fury/flywheel/` only until the host is enrolled. Also the bootstrap for a teacher on the new
+  renderer's pixels.
+- **Act 2 — tenancy, MIG on** (`fury-mode tenants`): Red Hat AI Inference Server serving a coding assistant on
+  the 3g slice; **an OpenShift-managed robot fleet** — physics-only sims as pods on the hub (`oc scale`, one
+  network namespace per robot, which also removes the `/run_policy` collision), cameras ray-traced with CUDA
+  by a **rendering tenant** on a 1g slice, each robot paired with a RHEM-managed device; training on a 1g
+  slice; the host device's own policy serving on the last. The fleet is the stretch goal: it needs the
+  renderer node, a host↔VM image path and the new teacher, and the demo must stand without it.
+- **Cheap, on-message additions:** per-slice metrics and an isolation proof in the OpenShift console; the MIG
+  layout as a Fleet-delivered file so reslicing (and the act 1 → act 2 switch) is a governed Git change; the
+  device refusing unsigned images for every tenant; optionally the coding assistant proposing a governed PR.
+- The switch between acts needs the GPU idle and workloads restarted (minutes, with an LLM reload): scripted,
+  rehearsed, narrated or done between sessions — never improvised.
+**Research behind it (2026-09-19, primary sources):** host quadlets under RHEM are the closest thing to a
+supported configuration on this hardware. RHAIIS 3.5 `vllm-cuda-rhel9` is published for arm64 and Red Hat's
+supported-configurations list GB200/GB300 on AArch64 with CUDA 13 (unknown 7 retired as far as documents go;
+RHEL 10 as the host is not named). RHOAI 3.5 supports aarch64 clusters (dashboard, pipelines, KServe, Kubeflow
+Trainer). MicroShift on RHEL 10.2 is Technology Preview with no documented aarch64 GPU or MIG path and no
+official ACM support — not now. Whole-GPU passthrough into the SNO VM is unsupported by Red Hat (GPU assignment
+"only supported on Intel 64 and AMD64") and by NVIDIA (Grace-Blackwell "limited to bare metal"), and this GPU
+reports PCI ID `10de:31c3`, which is not in the `nvgrace-gpu-vfio-pci` table upstream (`31c2` is) — closed.
+RHEL workers were removed in OpenShift 4.19. Bare-metal SNO would mean a rebuild and the GPU Operator's ARM
+table does not list DGX Station.
+**New risk for Phase 2:** RHEL 10's ARM 64 virtualization rules list only RHEL guests as supported and require
+host and guest page size to match; the host runs the 64k kernel, so the SNO guest may need
+`kernelType: 64k-pages` (OpenShift ≥ 4.15). Tracked as unknown 13 — test before building on the VM.
+**Still open:** decision 10 (no arm64 RHTAS), the MuJoCo-Warp spike on the real scene, and how far the
+current policy is from the new pixels.
+
+### D143 addendum — the real scene, ray-traced with CUDA inside a MIG slice: 152 camera pairs a second
+
+`tools/host/fury/24-mjwarp-spike.sh` on slice `0:3` (MIG on): upstream's MuJoCo scene assembled exactly as
+upstream's launch file does it (arm xacro + the SDF world converted by `sdformat_mjcf`, which worked in the
+sim image — Gazebo's Python bindings are there), 58 geoms, 13 meshes, **322,564 faces**, one shadow-casting
+spot light, two 640x480 cameras; MuJoCo-Warp 3.13 batch renderer on Warp 1.17, arm moving every frame, RGB
+copied back to the host as a publisher would need. **152 frame pairs/s with shadows, 178 without** (render
+4.6 ms / 3.1 ms per pair, read-back ~1.6 ms, kinematics + BVH refit ~0.5 ms); first-run kernel compilation
+about 7 s, cached afterwards. That is five robots' cameras at 30 fps from one 1g.31gb slice rendered one
+world at a time — the renderer is a batch renderer, so rendering N worlds per call should do better; not yet
+measured. Unknown 12's first half is retired.
+**The look:** same geometry and framing as Gazebo (the cameras come from the same model) but a visibly
+different image — brighter cyan arm with black servo bodies, white tray, hard-edged shadow, mid-grey sky,
+no global illumination. Expect the current policy to need a fine-tune on these pixels; material colours and
+the light are plain numbers in the MJCF and can be moved toward Gazebo's palette first. Next in this track:
+a renderer node that follows Gazebo's joint and cube poses and publishes the two images on side topics, so
+act 1 records both image sets for the same episodes (the new teacher's dataset), then the current policy
+zero-shot on the new pixels to size the gap.
+
+### D143 addendum 2 — the fleet act is a showcase, not a second flywheel (operator's framing)
+
+The operator's correction: act 1 (MIG off, GPU-rendered Gazebo) **is** the flywheel and uses the existing
+policy as it is. The MIG-mode fleet only has to show robots running and doing the task under governance; no
+flywheel is built from them, and no "new teacher" project is assumed. D143 overstated this by listing a new
+teacher as a requirement before anything was measured. What is actually open is one measurement: whether the
+**existing** policy performs acceptably on the CUDA-rendered pixels, after moving the renderer's colours and
+light toward Gazebo's look (numbers in the MJCF) — the same five-seed eval used elsewhere. If it does, the
+fleet act needs no training at all. If it does not, the choice at that point is between a single offline
+fine-tune, a smaller fleet act, or openly labelled recorded motion — decided then, by the operator. None of it
+blocks act 1, the hub, or the tenancy showcase.
+
+## D144 — Fury Phase 1 closed: the arm64 flywheel pieces run on the host, as services, on the whole GPU
+
+**Date:** 2026-09-19
+**Exit as met:** nine successful episodes recorded by the arm64 stack on the Fury (the operator accepted nine
+for the plan's ten) — sim, policy and recorder running as systemd quadlets, the recorder bound to the disk
+guard, bags under `/data/flywheel/bags`, cameras at ~25-30 fps in the recordings. The first episode of a fresh
+policy container is always a miss: the model is loaded onto the GPU lazily by the first goal.
+**Deviation from the exit as written:** the policy is served from the **whole GPU with MIG off**, not from
+slice `0:1` — the sim cannot render under MIG (D142). Serving from a slice is proven separately (first
+inference ran on `0:1`, SELinux-confined, on the 64k kernel).
+**Retired in this phase:** unknowns 1 (64k pages: stay on the 64k kernel), 2 (native sim build 6 min; rendering
+needs the GPU), 9, 11, 12 (speed); `SecurityLabelDisable=true` is not needed on this host.
+**Carried forward:** the loop's defaults keep fixed cube positions and the learned rest pose (the desktop's
+cube-reset caveat applies) — set deliberately before these bags feed anything; pin the upstream sim source and
+the pip versions before Phase 5; the image's health check fix lands with the next runtime image build;
+stopping the units reported `failed` because ROS ignores SIGTERM — the quadlets now stop with SIGINT.
+
+## D145 — Fury hub: OpenShift 4.22 (RHOAI 3.5 to follow), a 4k-page RHCOS guest on the 64k-page host
+
+**Date:** 2026-09-19
+**Context:** Phase 2. The plan said "OpenShift >= 4.19 aarch64"; the desktop's hub grew from 4.17 to 4.19 and
+runs RHOAI 2.25. Red Hat's RHEL 10 ARM 64 virtualization notes list only RHEL guests as supported and want host
+and guest page sizes to match; the host runs the 64k kernel.
+**Decision:** install **OpenShift 4.22** (`stable-4.22`, 4.22.13 at install time, Kubernetes 1.35) rather than
+4.20. RHOAI 2.25 — what the repo's four RHOAI resources were written for — stops at OpenShift 4.20, so 4.22
+means **RHOAI 3.4/3.5** (supported on 4.19.9-4.22, aarch64: dashboard, AI Pipelines, KServe GA) and a small
+port in Phase 3: the DataScienceCluster / DSCInitialization, the pipelines application, the ModelRegistry (D081's
+OAuth-proxy shape) and the route names the pipeline code and docs refer to. Chosen because it is what a fresh
+build would use today (OpenShift 4.22 + RHOAI 3.5 + RHAIIS 3.5 is one current story), both even releases are
+extended-support releases, and it avoids two upgrade hops on a single node that cannot roll back. Cost accepted:
+a second new variable (RHOAI major version) alongside the new architecture; RHOAI comes late in Phase 3.
+**Guest page size:** the guest runs RHCOS's default **4k** kernel. RHCOS is outside RHEL's supported-guest list at
+any page size, the installer's live image is 4k regardless, and KVM handles the mismatch. Kept out: the memory
+balloon (unreliable when host pages are larger than 4k). Fallback if it misbehaves: a day-2 `master`
+MachineConfig with `kernelType: 64k-pages`.
+**Pre-test (`tools/host/fury/30-vm-pretest.sh`, no pull secret):** the 4.22 live image as a 32 vCPU / 128 GiB
+guest on `fury-net` — RHEL CoreOS **9.8** (so a fresh 4.22 install lands on the RHEL 9 stream, not the preview
+RHCOS 10 the payload also carries), page size 4096 in the guest and in a container, static address, `api` ->
+`10.20.0.10`, no wildcard at the zone apex, quay.io reachable through the host's masquerade, 3.5 GB/s direct
+writes to the qcow2, public NTP reachable. Unknown 5 retired; unknown 13 retired functionally.
+**Install:** agent-based, `tools/host/fury/32-sno-install.sh` in stages, templates in `tools/host/fury/sno/`
+(secret-free; the pull secret and a generated ssh key are appended under `/root/sno-install`, which also holds
+the logs, because the ISO and the installer state carry the pull secret and the last stage prints the kubeadmin
+password). Guest: 32 vCPU, 128 GiB pinned to NUMA node 0 (nodes 1-8 are the GPU driver's cpu-less nodes),
+600 GB thin qcow2, disk-then-ISO boot order so the installer's reboot lands on disk by itself. Storage in
+Phase 3 stays the local-path provisioner — no second disk.

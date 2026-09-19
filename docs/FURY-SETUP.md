@@ -6,7 +6,14 @@ explicitly.
 
 ## The hardware
 
-HP ZGX Fury — Grace Blackwell (GB300), 748 GB unified memory, aarch64, RHEL 10.2.
+HP ZGX Fury — NVIDIA DGX Station GB300 chassis: 72-core Grace (Neoverse-V2), one GB300 GPU,
+aarch64, RHEL 10.2. Memory is two pools joined by NVLink-C2C, not one: about 250 GB of HBM on the GPU
+and 492 GB of LPDDR5X on the CPU. As delivered it is a *workstation* image (GNOME/GDM running) on the
+64 KiB-page kernel (`aarch64+64k`).
+
+> The execution plan for the real machine — GPU partitioned with MIG into four tenants, host
+> preparation, phase-by-phase exit criteria — is [`internal/FURY-PLAN.md`](internal/FURY-PLAN.md).
+> Where the two documents disagree, the plan wins; this guide is corrected as each phase lands.
 
 ## The one thing to understand before anything else: the device *is* the host
 
@@ -47,10 +54,11 @@ the exact commands that differ per beat of the demo.
    (`policy.json`, `cosign.pub`, `rekor.pub`) come from the Fleet automatically on enrollment, not
    from the provisioning script.
 
-3. **Sim + camera bridge + coordinator** run as host **podman** containers built from the arm64
-   images (the same Tekton multi-arch build that already produces the amd64 images used on the
-   desktop). `tools/host/run-coordinator.sh` already supports `ENGINE=podman` and handles the
-   SELinux `:z` relabeling podman needs that Docker doesn't.
+3. **Sim + camera bridge + coordinator** run as host **podman** containers. Only the *runtime* image
+   has an arm64 build (the Tekton multi-arch pipeline builds `docker/Dockerfile.gpu-inference` and
+   nothing else). **The sim image has no arm64 build anywhere** — build it natively on the Fury from
+   `docker/Dockerfile` before this step. `tools/host/run-coordinator.sh` already supports
+   `ENGINE=podman` and handles the SELinux `:z` relabeling podman needs that Docker doesn't.
 
 4. **The device pulls from quay.io directly — no mirror.** Confirm outbound registry access exists
    before enrollment; there's no fallback path built for a disconnected or mirrored registry.
@@ -83,6 +91,40 @@ assumptions to build on:
   image builds and is signed for arm64, but nothing has run it on real Grace Blackwell silicon yet.
 - A from-scratch SNO bring-up applying all bootstrap Applications by hand, back to back, has not
   been rehearsed end to end.
+
+## Found on the real machine
+
+- **The desktop session fights the GPU.** The GNOME greeter asks for suspend after 15 idle minutes;
+  the NVIDIA driver refuses, the attempt fails, consoles freeze and the VPN rebinds. Mask the sleep
+  targets, boot to `multi-user.target`, disable `gdm`. A display server also holds the GPU, which
+  blocks MIG changes.
+- **Eject the BMC's virtual media before any reboot.** An installer ISO left attached shows up as a USB
+  disk that stops answering; the initramfs waits minutes for the device manager to give up on it
+  before it looks for the root volume. Boots took 4 to 17+ minutes until this was understood.
+- **The journal is volatile as delivered** (`/var/log/journal` missing), so a failed boot leaves no
+  logs. Create the directory before the first planned reboot.
+- **The kernel console is serial-only**, so the BMC's KVM shows a blank screen during boot. Add
+  `console=tty0` at GRUB to see boot text there.
+- **Let the toolkit own the CDI spec.** Red Hat's `nvidia-container-toolkit` enables a unit that writes
+  `/var/run/cdi/nvidia.yaml` at boot, and that directory outranks `/etc/cdi`. Create the MIG layout
+  *before* that unit runs; do not hand-write a second spec.
+- **libvirt filters guest-to-host traffic.** A routed libvirt network lets guests out and lets the
+  tailnet in, but its `libvirt-to-host` firewalld policy rejects guests talking to the host except
+  for a short list (dns, dhcp, ssh, icmp). Open each host port a guest needs in that policy.
+- **Give `/etc/resolv.conf` one owner.** NetworkManager and Tailscale both rewrite it. Here the host
+  uses its own dnsmasq, which also serves the cluster names to guests and to the tailnet.
+- **`nvidia-fabricmanager` fails on a single-GPU station** — expected; disable it.
+- **MIG mode does not survive a reboot** on this GPU generation. Re-enable, re-slice and regenerate
+  the CDI spec from a boot-time unit.
+- **Two same-model 3.7 TB disks, one of them pre-staged with data.** Address disks through
+  `/dev/disk/by-id`; `nvmeXn1` names are enumeration order.
+- **The 64k kernel lacks `xt_mark`** until `kernel-64k-modules-extra` is installed; Tailscale's
+  subnet-router rules need it.
+- The aarch64 packages the device needs exist: `flightctl-agent-1.3.0-1.el10`, and
+  `nvidia-container-toolkit-1.20.0-1` — which Red Hat ships in the RHEL 10 Supplementary repo next
+  to the NVIDIA driver, so no NVIDIA package repo is needed on the host.
+- RHEL 10 runs libvirt as modular daemons (`virtqemud`, `virtnetworkd`, …); enable those sockets, not
+  the monolithic `libvirtd`.
 
 ## Known gaps worth planning around
 
