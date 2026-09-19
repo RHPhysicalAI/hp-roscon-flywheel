@@ -1,0 +1,66 @@
+# This project was developed with assistance from AI tools.
+#
+# Somewhere private for the rebuilt images: the cluster's own registry. A platform `none` install leaves
+# it Removed. Apply this, then switch the registry on:
+#
+#   oc apply -f registry.yaml
+#   oc patch configs.imageregistry.operator.openshift.io/cluster --type merge -p \
+#     '{"spec":{"managementState":"Managed","replicas":1,"rolloutStrategy":"Recreate","defaultRoute":true,"storage":{"pvc":{"claim":"image-registry-storage"}}}}'
+#
+# The claim is made here because the operator's own would be ReadWriteMany, which a node-local
+# provisioner refuses. Recreate, because a ReadWriteOnce volume cannot be shared across a rolling update.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: image-registry-storage
+  namespace: openshift-image-registry
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rhtas-arm64
+---
+# the build host pushes as this account, with a short-lived token:
+#   oc -n rhtas-arm64 create token pusher --duration 2h
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pusher
+  namespace: rhtas-arm64
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pusher-image-builder
+  namespace: rhtas-arm64
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:image-builder
+subjects:
+- kind: ServiceAccount
+  name: pusher
+  namespace: rhtas-arm64
+---
+# the operator and everything it creates pull from here
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rhtas-image-pullers
+  namespace: rhtas-arm64
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:image-puller
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:serviceaccounts:trusted-artifact-signer
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:serviceaccounts:openshift-rhtas-operator

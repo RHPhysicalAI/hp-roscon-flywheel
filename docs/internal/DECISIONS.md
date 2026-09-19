@@ -4868,3 +4868,43 @@ is multi-arch (only the upstream quay UI image is amd64-only). **Decision 10 nar
 server images and none are being built, but its clients (`rhtas/cosign-rhel9` and friends) are multi-arch, the
 repo signs with keys so only Rekor + Trillian are exercised, and both a self-build from the `securesign`
 midstream at `rhtas-v1.4.3` and the upstream `rekor` Helm chart are workable — operator's choice pending.
+
+## D147 — Fury Phase 3, first half: the hub's stack is up on arm64; Rekor + Trillian get rebuilt from source
+
+**Date:** 2026-09-19
+**Result:** all eight Argo Applications (`storage`, `operators`, `operators-config`, `minio`, `flywheel`,
+`observability`, `rhem`, `tekton`) are Synced/Healthy on the 4.22.13 arm64 single node, from branch `fury`.
+Operators that reached Succeeded: OpenShift GitOps 1.21.4, Pipelines 1.24.0, Cluster Observability Operator
+1.5.2, Tempo, RHOAI 3.5, RHEM 1.3. From a laptop on the tailnet the RHEM UI, the RHOAI dashboard
+(`rh-ai.apps.<domain>`, Gateway API — it does work on an arm64 single node), the flywheel dashboard, the MinIO
+console and Argo CD all answer; the model-registry REST route answers 401 (auth in front, as intended); the
+MinIO and Kafka NodePorts are open on `10.20.0.10`. The node idles at 7% CPU and 15% memory with all of it
+running. Unknown 4 is retired except for RHTAS.
+**What had to change for arm64 / 4.22:** (1) the bootstrap operators (GitOps, COO, Tempo) are a manifest now,
+`argocd/bootstrap-operators.yaml`, instead of console clicks; (2) RHOAI pinned to `stable-3.5` with the v2
+DataScienceCluster and the `kubeRBACProxy` ModelRegistry (D146's findings, confirmed live); (3) the RHEM chart's
+UI and its setup jobs both default to amd64-only images — `registry.redhat.io/rhem/flightctl-ui-rhel9:1.3.0`
+and `registry.redhat.io/openshift4/ose-cli-rhel9:v4.22` replace them (`quay.io/openshift/origin-cli` is
+amd64-only under every tag; the symptom is `ImagePullBackOff` on the setup jobs and an Argo sync that never
+finishes); (4) the RHTAS Subscription and the `Securesign` CR were removed from GitOps — the operator's bundle
+installs on arm64 but every server image it would start is amd64.
+**Decision (operator's, 2026-09-19): rebuild Rekor + Trillian from Red Hat's midstream source rather than go
+straight to upstream sigstore.** `tools/host/fury/rhtas-arm64/`: native rootless builds on the host from
+`github.com/securesign` at the 1.4.3 release tags (commits pinned), the operator deployed outside OLM with its
+`RELATED_IMAGE_*` defaults pointing at the rebuilt images, standalone `Trillian` + `Rekor` CRs with our own
+signer key (no Fulcio, CT log, TUF or TSA — signing here is key-based). Two of the images sit on
+`registry.redhat.io` RHEL bases and may not be redistributed, so they live in the cluster's own registry,
+switched on for this (RWO claim on the node-local provisioner, `Recreate`, default route; on a single node this
+rolls the API server once — a few minutes of API flapping). The login to `registry.redhat.io` is needed for one
+step only (`build.sh bases`). **Time box: one day.** Past that, or if one image eats more than two hours: the
+upstream `rekor` Helm chart behind the same Service name and Route host, so nothing downstream changes.
+This is a rebuild of the product's source by a different builder — not the product, and not supported; the
+runbook and any demo narration must say so.
+**Inherited, not yet redesigned:** MinIO and the other stateful pieces still use `hostPath` volumes, which needed
+node directories created and labelled by hand (`oc debug node`) — they should move to claims on the node-local
+provisioner that the `storage` app already installs. MinIO carries the development stand-in's credentials for
+parity, which are MinIO's defaults — acceptable on a routed lab network behind a tailnet, to be changed before
+anything else can reach it.
+**Still owed for Phase 3's exit:** Rekor up and its public key pinned (`gitops/tekton/rekor-public-key.yaml`,
+the Fleet's inline `rekor.pub`), a fresh cosign keypair (Fleet's `cosign.pub`), the push/sign/GitHub Secrets,
+one native Tekton build signed into this Rekor, the `rhem/bootstrap` objects, and the rollout batches (unknown 6).

@@ -1,0 +1,66 @@
+# This project was developed with assistance from AI tools.
+#
+# Rekor backed by Trillian and nothing else, for the operator deployed from this directory. The
+# Securesign CR cannot do this (its fulcio, ctlog and tuf blocks are always reconciled, and those
+# images are amd64 only), so the two component CRs are used directly. The operator names what it
+# creates after the component, not the CR: Service rekor-server (port 80), so the in-cluster URL stays
+# http://rekor-server.trusted-artifact-signer.svc, and the Route host below is what it would pick anyway.
+# Both CRs are named `securesign`, the name a Securesign CR of that name would give its children.
+# Do not apply gitops/operators-config/securesign.yaml or the OLM Subscription to the same cluster.
+#
+# Signer key: ours, so the log's public key survives a reinstall and can be the one already pinned in
+# gitops/tekton/rekor-public-key.yaml. Create the Secret before applying (EC P-256, PEM, key `private`;
+# the label makes the operator find it even if the keyRef below is ever lost):
+#   openssl ecparam -name prime256v1 -genkey -noout -out rekor-signer.pem      # keep it out of git
+#   oc -n trusted-artifact-signer create secret generic rekor-signer-key --from-file=private=rekor-signer.pem
+#   oc -n trusted-artifact-signer label secret rekor-signer-key rhtas.redhat.com/rekor.signer.pem=private
+# Without the `signer` block the operator generates rekor-signer-securesign-* once and keeps it (a Secret
+# with no owner, found again by that label), which also survives restarts but not a lost namespace.
+#
+# Several switches are one-way in the CRD (searchUI, backFillRedis, monitoring: false -> true only), so
+# they have to be false in the very first apply. PVCs carry no storageClass: the default class, RWO.
+# Once Ready, copy .status.treeID of the Rekor into spec.treeID so a re-created CR reuses the tree.
+apiVersion: rhtas.redhat.com/v1alpha1
+kind: Trillian
+metadata:
+  name: securesign
+  namespace: trusted-artifact-signer
+spec:
+  database:
+    create: true
+    pvc:
+      size: 5Gi
+      retain: true
+      accessModes: [ReadWriteOnce]
+  monitoring:
+    enabled: false
+---
+apiVersion: rhtas.redhat.com/v1alpha1
+kind: Rekor
+metadata:
+  name: securesign
+  namespace: trusted-artifact-signer
+spec:
+  externalAccess:
+    enabled: true
+    host: rekor-server-trusted-artifact-signer.apps.sno-flywheel.local
+  trillian:
+    address: trillian-logserver.trusted-artifact-signer.svc
+    port: 8091
+  signer:
+    kms: secret
+    keyRef:
+      name: rekor-signer-key
+      key: private
+  searchIndex:
+    create: true             # Redis (trillian-redis image); its data is an emptyDir
+  rekorSearchUI:
+    enabled: false           # no arm64 image
+  backFillRedis:
+    enabled: false           # refills the search index after a Redis restart; needs `build.sh backfill`
+  monitoring:
+    enabled: false
+  pvc:
+    size: 5Gi
+    retain: true
+    accessModes: [ReadWriteOnce]
