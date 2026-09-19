@@ -5115,3 +5115,59 @@ cube-reset caveat, D056/D138) — so the raw ratio overstates the difference, an
 way. The only serving-side change is `ZENOH_ROUTER=10.20.0.1:7447` instead of `127.0.0.1`. Phase 5's collection
 run produces the sample that settles it; if the rate is low there, try the loopback address first.
 
+## D153 — Fury Phase 5, before anything trains: four blockers that are not about the GPU, and a recording bug
+
+**Date:** 2026-09-19
+**How training reaches a GPU (unchanged, and sound here):** the pipeline's first step is a GPU-less pod that
+publishes to Kafka `training-triggers` and waits on `training-results`; a resident process on the host
+(`src/host-runner/host_runner.py`) connects *outbound* to the hub's Kafka and MinIO NodePorts and does assemble,
+fine-tune, paired eval and upload. No ssh, no port the cluster must reach on the host, nothing for the
+`libvirt-to-host` reject policy to block. D022 called the runner a desktop shim "deleted by the Fury port"; with the
+GPU staying on the host (decision 2) it is this machine's architecture. `docs/FURY-SETUP.md`'s "nothing about the
+governed path needs Fury-specific changes" is wrong.
+**What is wrong with the host half here:** `docker` and `--gpus all` hard-coded, `10.0.0.49` defaults, bind mounts
+without `:z`, `~/flywheel-data`, a `nohup` in a login session of a shared account, `~/eval_policy.sh` which was
+never in git, and a loop-park that looks for a container name that was already stale on the stand-in. And **no
+governed run ever exercised the train or eval path**: every recorded run logged "checkpoint exists — skipping".
+**Blockers found and fixed today (all needed under any design):**
+1. *Episodes never left the host.* The sim unit set no `CURATOR_URL`, so the emitter only wrote local JSON — D152's
+   seven records were local files, and the success count on the hub could not move. Added to
+   `tools/host/fury/flywheel/so-arm-sim.container` (`http://10.20.0.10:30802/episode`; the NodePort answers).
+2. *Phantom episodes, and lost real ones.* `episode_emitter.py` armed its 5 s idle timeout with the time of the last
+   command seen *before* the episode started. After a success nothing publishes commands during the reset, so the
+   next episode was ended within a second — a record with 0 cubes, 0.1–0.6 s, 6–32 steps, status `ok` — and the real
+   episode's `end` was then ignored. Measured on the host: 8 of 17 records were phantoms, and 14 kept bags had only 9
+   real records. It made D152's "2 of 7" look like a regression (real episodes: 2 of 3 under RHEM's policy, 5 of 6
+   in the morning; the misses are the known first episode after a policy start), and it would have starved the
+   160 count. Fix: `_start_episode` clears the stamp. Reproduced and verified with ROS stubbed out; needs the sim
+   image rebuilt (six minutes, native). This is *not* the cube-reset caveat of D056/D138, which stays open.
+3. *The trigger pointed at another cluster's pipeline and threw the count away.* `TRAINING_PIPELINE_ID` was the
+   stand-in's id; the consumer zeroed its count even when the run failed to start; and the count lived in memory, so
+   any pod roll during a collection of hours reset it. Now: the pipeline is found by name
+   (`TRAINING_PIPELINE_NAME`), offsets are committed only when a run has started (a restart recounts everything
+   since the last trigger), a failed start keeps the count and retries after five minutes, a malformed record
+   cannot wedge the replay, and with no pipeline configured the count is simply kept. **Left unarmed on this hub**
+   until the host runner exists — a run started now would wait ten hours for it and fail.
+4. *The pipeline had never been uploaded here.* `tools/hub/upload-pipeline.sh` (new pipeline the first time, a new
+   version after that, with a ten-minute token of the account that starts the runs). Uploaded: RHOAI 3.5 took the
+   compiled file as is.
+**Still open before a first run:** the incumbent checkpoint is not in this hub's MinIO
+(`s3://episodes-data/checkpoints/act-v2-ft160/…`; the modelcar's flat `models/act/*` has to be re-tarred under
+`pretrained_model/`); the model-registry client is pinned for RHOAI 2.25's API and has only seen a 401 from 3.5; the
+gate may legitimately refuse a candidate (the incumbent scores 86–92 %), so "one promotion produced" is not assured;
+the stand-in's only training figure ("~25 min for 160 episodes") has no log behind it and implies about 40 steps/s —
+check it before comparing anything.
+**Proposed, pending the operator's decision — the host half as native units:** keep the Kafka/MinIO contract and
+the pipeline untouched; replace the nohup script with a root quadlet `flywheel-runner` from the pinned, signed
+runtime image (it already carries lerobot, torch, the assembler, boto3 and the Kafka client), assemble and train
+in-process on `nvidia.com/gpu=all`, data under `/data/flywheel`; run the paired eval in its **own rig** — a second
+sim with its own Zenoh router in a private network namespace and its own `GZ_PARTITION` (the shape
+`22-sim-scale.sh` already ran; two sims held 30 fps here, D142) — so the governed policy is never stopped and D132's
+collision cannot happen. Rejected: the runner re-pointed as is (cannot stop root units or write `/data`, needs a
+human with sudo at every eval, and is a script in a shell on a machine where everything else is a unit); a MinIO
+object as trigger (no gain, loses the results channel); an RHEM-delivered job per run (flightctl applications are
+services, every run would bump the Fleet's template version and walk the rollout batches in the very file the
+promotion edits). **Verify first:** a five-seed eval in the isolated rig beside the running loop against today's
+4/5, with no goal rejected in production meanwhile; if the scores diverge, fall back to an attended window with
+`flightctl app stop`.
+

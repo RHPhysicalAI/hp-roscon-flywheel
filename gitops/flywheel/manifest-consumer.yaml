@@ -16,41 +16,59 @@ data:
     # the pod already mounts instead of disabling TLS verification (review W-9).
     SERVICE_CA = os.environ.get("SERVICE_CA", "/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt")
     THRESH = int(os.environ.get("TRIGGER_THRESHOLD", "160")); COOLDOWN = int(os.environ.get("TRIGGER_COOLDOWN", "3600"))
-    DSP_URL = os.environ.get("DSP_URL", ""); PIPELINE_ID = os.environ.get("TRAINING_PIPELINE_ID", "")
+    # The pipeline is found by name: its id is different on every cluster it is uploaded to.
+    DSP_URL = os.environ.get("DSP_URL", ""); PIPELINE_NAME = os.environ.get("TRAINING_PIPELINE_NAME", "")
     INCUMBENT = os.environ.get("INCUMBENT", "upstream-act-teacher"); COLLECTOR = os.environ.get("COLLECTOR", INCUMBENT)
     INCUMBENT_CKPT = os.environ.get("INCUMBENT_CHECKPOINT", "hf")  # "hf" = upstream teacher; else s3://... tarball
     def token():
         return open("/var/run/secrets/kubernetes.io/serviceaccount/token").read().strip()
-    def latest_version_id():
+    def get(path):
         ctx = ssl.create_default_context(cafile=SERVICE_CA)
-        req = urllib.request.Request(f"{DSP_URL}/apis/v2beta1/pipelines/{PIPELINE_ID}/versions?sort_by=created_at%20desc&page_size=1",
-                                     headers={"Authorization": f"Bearer {token()}"})
-        with urllib.request.urlopen(req, context=ctx, timeout=30) as r: return json.load(r)["pipeline_versions"][0]["pipeline_version_id"]
+        req = urllib.request.Request(f"{DSP_URL}{path}", headers={"Authorization": f"Bearer {token()}"})
+        with urllib.request.urlopen(req, context=ctx, timeout=30) as r: return json.load(r)
+    def pipeline_id():
+        ids = [x["pipeline_id"] for x in get("/apis/v2beta1/pipelines?page_size=100").get("pipelines", []) if x.get("display_name") == PIPELINE_NAME]
+        if len(ids) != 1: raise RuntimeError(f"{len(ids)} pipelines named {PIPELINE_NAME!r} on {DSP_URL} (tools/hub/upload-pipeline.sh uploads it)")
+        return ids[0]
+    def latest_version_id(pid):
+        return get(f"/apis/v2beta1/pipelines/{pid}/versions?sort_by=created_at%20desc&page_size=1")["pipeline_versions"][0]["pipeline_version_id"]
     def start_run(n):
-        cand = f"{COLLECTOR}-ft{n}-{time.strftime('%Y%m%d%H%M')}"
-        body = {"display_name": f"promote-{cand}", "pipeline_version_reference": {"pipeline_id": PIPELINE_ID, "pipeline_version_id": latest_version_id()},
+        cand = f"{COLLECTOR}-ft{n}-{time.strftime('%Y%m%d%H%M')}"; pid = pipeline_id()
+        body = {"display_name": f"promote-{cand}", "pipeline_version_reference": {"pipeline_id": pid, "pipeline_version_id": latest_version_id(pid)},
                 "runtime_config": {"parameters": {"candidate": cand, "incumbent": INCUMBENT, "collector": COLLECTOR, "incumbent_checkpoint": INCUMBENT_CKPT}}}
         req = urllib.request.Request(f"{DSP_URL}/apis/v2beta1/runs", data=json.dumps(body).encode(),
                                      headers={"Authorization": f"Bearer {token()}", "Content-Type": "application/json"}, method="POST")
         ctx = ssl.create_default_context(cafile=SERVICE_CA)
         with urllib.request.urlopen(req, context=ctx, timeout=30) as r: print("[consumer] started run:", r.status, cand, flush=True)
+    def decode(v):
+        try: return json.loads(v.decode())
+        except Exception: return {}   # a malformed record must not wedge a consumer that replays from its last commit
     def main():
-        c = KafkaConsumer("episode-manifests", bootstrap_servers=BOOT, group_id="manifest-consumer", auto_offset_reset="latest",
-                          value_deserializer=lambda v: json.loads(v.decode()))
+        # A collection takes hours, so the count has to survive this pod. Offsets are committed only once a
+        # run has been started: after a restart every manifest since the last trigger is read and counted
+        # again. For the same reason a run that fails to start keeps the count and is tried again later, and
+        # with no pipeline configured the count is kept until one is.
+        c = KafkaConsumer("episode-manifests", bootstrap_servers=BOOT, group_id="manifest-consumer", auto_offset_reset="earliest",
+                          enable_auto_commit=False, value_deserializer=decode)
         p = KafkaProducer(bootstrap_servers=BOOT, value_serializer=lambda v: json.dumps(v).encode())
-        pending, last = 0, 0.0
-        print(f"[consumer] threshold={THRESH} cooldown={COOLDOWN}s pipeline={'set' if PIPELINE_ID else 'UNSET (log only)'}", flush=True)
+        pending, last, retry_at, told = 0, 0.0, 0.0, False
+        armed = bool(PIPELINE_NAME and DSP_URL)
+        print(f"[consumer] threshold={THRESH} cooldown={COOLDOWN}s pipeline={PIPELINE_NAME if armed else 'UNSET (counting only)'}", flush=True)
         for m in c:
             if m.value.get("model_version") != COLLECTOR: continue
             pending += 1
             print(f"[consumer] pending={pending}/{THRESH} collector={COLLECTOR}", flush=True)
-            if pending >= THRESH and time.time() - last > COOLDOWN:
-                evt = {"event": "training-trigger", "pending": pending, "collector": COLLECTOR, "ts": time.time()}
-                p.send("training-events", value=evt); p.flush(); print("[consumer]", evt, flush=True)
-                if PIPELINE_ID and DSP_URL:
-                    try: start_run(pending)
-                    except Exception as e: print("[consumer] run start failed:", e, flush=True)
-                pending, last = 0, time.time()
+            now = time.time()
+            if pending < THRESH or now - last <= COOLDOWN or now < retry_at: continue
+            if not armed:
+                if not told: print("[consumer] threshold reached, no pipeline configured: the count is kept", flush=True); told = True
+                continue
+            evt = {"event": "training-trigger", "pending": pending, "collector": COLLECTOR, "ts": now}
+            try: start_run(pending)
+            except Exception as e:
+                retry_at = now + 300; print("[consumer] run start failed, count kept, next try in 5 min:", e, flush=True); continue
+            p.send("training-events", value=evt); p.flush(); print("[consumer]", evt, flush=True)
+            c.commit(); pending, last = 0, now
     while True:
         try: main()
         except Exception as e: print("[consumer] crashed, restarting:", e, flush=True); time.sleep(10)
@@ -77,7 +95,7 @@ spec:
             # consumer.py is mounted from a ConfigMap and read once at process start (like
             # dashboard.yaml's DASHBOARD_CODE_REV, D097) — bump this alongside code changes so
             # Argo rolls the pod instead of leaving the old code running against a new ConfigMap.
-            - {name: CONSUMER_CODE_REV, value: "2026-09-09-service-ca"}
+            - {name: CONSUMER_CODE_REV, value: "2026-09-19-durable-count"}
             - {name: KAFKA_BOOTSTRAP, value: "edge-kafka.flywheel.svc:9092"}
             - {name: TRIGGER_THRESHOLD, value: "160"}
             - {name: TRIGGER_COOLDOWN, value: "3600"}
@@ -86,7 +104,9 @@ spec:
             - {name: COLLECTOR, value: "act-v2-ft160"}
             - {name: INCUMBENT_CHECKPOINT, value: "s3://episodes-data/checkpoints/act-v2-ft160/pretrained_model.tar.gz"}
             - {name: DSP_URL, value: "https://ds-pipeline-dspa.flywheel.svc:8443"}
-            - {name: TRAINING_PIPELINE_ID, value: "99ec0aab-51fb-412e-bd2f-47bc6a0d3e3d"}
+            # Deliberately not set yet on this hub: the host runner that does the training is not in place, and a
+            # run started now would wait ten hours for it and fail. The count is kept meanwhile (see main()).
+            # Arm it with:  - {name: TRAINING_PIPELINE_NAME, value: "act-flywheel-promotion"}
           volumeMounts:
             - {name: code, mountPath: /code}
           resources:
