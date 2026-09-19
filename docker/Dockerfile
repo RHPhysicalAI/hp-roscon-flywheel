@@ -34,7 +34,12 @@ RUN apt-get update \
 RUN mkdir -p /ws_pai/src
 WORKDIR /ws_pai
 
-RUN git clone --depth 1 https://github.com/ros-physical-ai/demos src/demos
+# Pinned by commit (the one the running sim image was built from); pai.repos at this commit pins
+# every other repository by commit as well. An unpinned clone broke the runtime image once.
+ARG DEMOS_REF=4d3564cd6bb5f1ee4bcdd39b73a333471b77cb4a
+RUN git init -q src/demos \
+  && git -C src/demos fetch -q --depth 1 https://github.com/ros-physical-ai/demos "${DEMOS_REF}" \
+  && git -C src/demos checkout -q FETCH_HEAD
 
 # ---- External dependencies ----
 RUN vcs import src < src/demos/pai.repos --recursive
