@@ -5071,3 +5071,36 @@ Hugging Face delivered 34 MB/s where quay managed 2–11: the uplink is not the 
 root, no Python, resumable, every file verified (sha256 for the LFS files, git blob id for the rest); tested on
 the host with three small files including a corrupted one.
 
+## D152 — Fury Phase 4: the host is an RHEM-managed device; the Fleet's policy serves on the whole GPU
+
+**Date:** 2026-09-19
+**How it ran:** the hub half from a laptop with the existing `flightctl` login (enrollment config made with
+`flightctl certificate request --signer=flightctl.io/enrollment --output=embedded`, copied to the host 0600,
+never displayed, local copies removed; approval by CLI), the host half as two operator commands (stop the
+hand-installed policy, `40-device-provision.sh agent-config.yaml`). One pending request, its name matching the one
+the script printed, approved with `fleet=act-inference site=fury gpu=nvidia arch=arm64 policy_device=cuda
+zenoh_router=10.20.0.1 zenoh_port=7447 alias=fury-host pull_default=insecureAcceptAnything`; no `gpu_device`
+(MIG off) and no `role`.
+**Result:** device `Online`, owner `Fleet/act-inference`, `UpToDate` within 20 s of approval; applications
+`Healthy`, `act-inference` `Running 1/1`, no restarts, under a minute after that (both images were already in
+local storage, and both verified under the new trust root — the agent pulls under the `policy.json` it has just
+written). On the host: `act-inference-128875-act-inference.service` and its `…-flightctl-quadlet-app.target`
+active, the hand-installed `act-inference.service` gone; the rendered unit carries the smoke-tested runtime digest,
+the co-signed modelcar, `AddDevice=nvidia.com/gpu=all`, `StopSignal=SIGINT`, and `After=`/`PartOf=so-arm-sim.service`
+**left un-namespaced by the agent**, as intended; `/etc/act-inference/env` has `ZENOH_ROUTER=10.20.0.1:7447` and
+`POLICY_DEVICE=cuda` with no thread caps; `/etc/containers/policy.json` is the Fleet's with default
+`insecureAcceptAnything` (the label at work) and the two `quay.io/jary` repositories plus the Red Hat registries
+enumerated; the distro file is kept as `policy.json.rhel-default`; `cosign.pub` and `rekor.pub` are in
+`/etc/pki/containers`. The policy published `act-v2-ft160`.
+**Checked live (D150's list):** the agent's `Driver=image` volume with the amd64-only modelcar works on arm64;
+a newly approved device received the template at once — so unknown 6's real proof is still the first template
+change (Phase 5). **Noise to tidy:** the agent logs `Failed to collect Disk usage for path: /sysroot` every
+cycle — it assumes an image-mode host; a package-mode host has no `/sysroot`. Harmless; a resource-monitor path in
+the agent config would quiet it. **Still to check:** SELinux denials from the agent's first render
+(`ausearch -m avc`, needs root), the app-stop override across a reboot, RHEM's view of a by-hand stop.
+**Also today:** the act 2 model is on the machine — `RedHatAI/Qwen3-Coder-Next-NVFP4` at revision `27a8f16f`, 26
+files, 45 GB, every file verified, in `/data/models` (`60-model-fetch.sh`); the serving image pull
+(`rhaii/vllm-cuda-rhel9` 3.5.1 by digest) was started alongside.
+**Exit criterion:** met except for its last clause — episodes recorded with this policy as the only one on the
+graph, stamped with the Fleet's model version. That needs the recorder started by the operator.
+
