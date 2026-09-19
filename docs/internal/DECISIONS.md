@@ -4961,3 +4961,33 @@ kubeadmin token: `Repository/hp-roscon-flywheel` Accessible, `ResourceSync/rhem-
 Accessible and Synced from `fury`, `Fleet/act-inference` owned by the sync and Valid — so the hub renders the
 Fleet with this hub's keys and digests and the retargeted batches. Exit criterion met: a runtime image and a
 modelcar signed under the hub's own trust root, Rekor indexes 1, 2 and 3 recorded, RHEM UI up.
+
+## D149 — The first natively built runtime image could not start: upstream moved under an unpinned clone
+
+**Date:** 2026-09-19
+**Found by:** the GPU smoke of `act-inference-e0716d0` on the host (`13-first-inference.sh` with the new digest).
+The policy container connected to the sim, wrote its contract, then died:
+`FileNotFoundError: /ws_pai/install/rosetta/share/rosetta/params/rosetta_client.yaml`. The script sat in its
+"waiting for the model version" loop because the version is never published by a dead container.
+**Cause:** both Dockerfiles cloned `ros-physical-ai/demos` at HEAD. On 2026-09-16 upstream bumped to rosetta
+0.2.0 (`4d3564c`, "Bump to rosetta 0.2.0"), which renames the client the entrypoint launches
+(`rosetta_client_launch.py` → `policy_runner_launch.py`, `params/rosetta_client.yaml` →
+`params/policy_runner.yaml`). The last good image (`act-inference-ea513fa`, built 2026-09-09) was built when HEAD
+was `80dc00c`, whose `pai.repos` pins rosetta `fb3860c` — the old names. Nothing about arm64 or this machine.
+**Fix:** both Dockerfiles fetch upstream by commit (`ARG DEMOS_REF`): the runtime image at `80dc00c` (what the
+last good image was built from), the sim image at `4d3564c` (what the running, proven sim image on this host was
+built from; the sim does not run the rosetta client, and this exact pairing scored 4/5 here — D142). `pai.repos`
+pins every other repository by commit, so the whole workspace is now reproducible. The runtime Dockerfile also
+asserts after `colcon build` that the two files the entrypoint launches by name exist, so the next upstream
+rename fails the build instead of a device. Porting the entrypoint, health check and coordinator to rosetta
+0.2.0 is a separate piece of work and is not needed for this demo.
+**What this says about the pipeline:** it built, pushed, signed and verified an image that cannot start, and
+the Fleet was re-pinned to it (D148) before anything had run it. No device was enrolled, so nothing received
+it — but the order was wrong. **Rule from here: an image digest goes into the Fleet only after that digest has
+served on a GPU.** The trust chain proves who built an image, not that it works; a start-up smoke step in the
+Pipeline (run the entrypoint far enough to import and find its files, no GPU needed) would close the gap and is
+worth adding before Phase 5's promotions depend on this path.
+**State:** rebuild `runtime-image-7mdrb` started from `c2560cf`; until its digest has passed the smoke and is
+pinned, `gitops/rhem/fleet-act-inference.yaml` on `fury` names an image that cannot start. The host keeps
+serving from the previous image under the hand-installed unit.
+
