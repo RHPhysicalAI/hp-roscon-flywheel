@@ -5238,3 +5238,28 @@ switch while a training or an eval is running.
 trigger stays unarmed until the runner is installed, the incumbent is seeded and the registry step has been checked
 against RHOAI 3.5 (FURY-PLAN, Phase 5).
 
+## D156 — Act 2's coding assistant is a host service that `fury-mode` owns; RHEM is shown on the fleet tenant
+
+**Date:** 2026-09-19
+**Decision (operator's):** the assistant runs as the plan's Phase 6 says — a quadlet on the host — started by
+`fury-mode tenants` on slice `0:0` and stopped for every mode switch. It is not delivered through RHEM.
+**Why:** RHEM earns its place where versions roll out: signed promotion, canary batches, health gates. The robot
+policy uses all of that; the assistant is a static tenant and would use none of it. Nothing else on the machine
+except the promoted policy is RHEM-managed either (sim, recorder, runner and eval rig are host units from git), a
+device belongs to exactly one Fleet and flightctl has no conditional applications (so every other device would
+carry a placeholder), and the live mode switch is simpler with a unit the host starts itself. RHEM's management of
+many devices is demonstrated on its own tenant in act 2 — the CUDA-rendered scaled fleet on one of the slices —
+without coupling it to the assistant. An RHEM-delivered variant was drafted before this was decided and is kept on
+branch `fury-assistant`, unmerged, in case the "one control plane, two workloads" beat is wanted later; merging it
+into `fury` would be a rollout to the enrolled host.
+**Built (not yet run):** `tools/host/fury/flywheel/llm-assistant.container` (+ `llm-cache.volume`): the image and
+flags measured in D154 on `nvidia.com/gpu=0:0`, `--gpu-memory-utilization 0.90`, model read-only and offline, one
+named volume for every compile cache, loopback only with no API key (a laptop uses an ssh tunnel; opening it to a
+network is `--host` plus a firewalld rule for that network, an operator's decision), health by a Python one-liner
+with a 20-minute start period, and `ExecCondition=` on the slice's CDI name — a non-zero condition skips the start
+and leaves the unit inactive, neither failed nor restarted, so a boot or a stray start in flywheel mode does
+nothing (a failed `ExecStartPre=` under `Restart=always` would loop for ever). `fury-mode` stops the unit in
+`drain()` and starts it, non-blocking, once the four slices exist; `63-assistant-install.sh` installs the unit and
+the new `fury-mode` and seeds the cache volume from the smoke test's. First run: the next time the flywheel can be
+paused for an hour.
+

@@ -285,6 +285,8 @@ from the registry view to the RHEM catalog to the device, by clicking, with no t
 
 ### Phase 6 — Tenant T1: large-model inference on RHAIIS
 
+> **Status 2026-09-19 (D154, D156).** The model serves on this GPU with tool calling (about 140 tokens/s single stream, MIG off, beside the flywheel). The host service for tenants mode is built and not yet run (`63-assistant-install.sh`, `flywheel/llm-assistant.container`, started by `fury-mode tenants` on slice `0:0`). Still to do: the run on the slice, exposure beyond loopback, the isolation test (step 4).
+
 1. Verify RHAIIS has an aarch64 image: `skopeo inspect --raw docker://registry.redhat.io/rhaii/vllm-cuda-rhel9:<tag> | jq '.manifests[].platform'` (**the namespace is `rhaii/` from 3.4 on**; `rhaiis/` stops at 3.3 — catalog, 2026-09-19. Newest arm64: `3.5.1`, manifest list `sha256:c056e61672b6aea489ad5dde0bd2f8497230f5333e87f7cf6c494eba3bfdc808`; `3.4.4` is the release line the model card was validated on). If not, fallback is upstream vLLM aarch64 (`nvcr.io/nvidia/vllm:<tag>`) — note the story changes from "RHAIIS" to "vLLM on RHEL".
 2. Mount the `models` disk **after asking what's on it** (or use `/data/models`); pull the model to it.
 3. Quadlet on the host: `AddDevice=nvidia.com/gpu=0:0`, `--gpu-memory-utilization` sized to 126 GB, no `CUDA_VISIBLE_DEVICES`. Expose on a route or a NodePort-style host port reachable over the tailnet; a minimal chat UI (any OpenAI-compatible client) for the booth.

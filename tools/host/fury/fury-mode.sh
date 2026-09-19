@@ -4,6 +4,7 @@
 #   fury-mode flywheel   MIG off. The sim renders its cameras on the GPU (OpenGL only exists without MIG)
 #                        and shares it with policy serving and training, the way the desktop did.
 #   fury-mode tenants    MIG on, 3g + 1g + 1g + 1g. Isolated slices for compute tenants; no graphics.
+#                        Starts the coding assistant on the large slice if its unit is installed.
 #   fury-mode status
 #
 # The GPU has to be idle to change MIG mode, so a switch stops the robot loop first. The choice is
@@ -19,6 +20,7 @@ set -uo pipefail
 
 cfg=/etc/sysconfig/mig-config
 loop=(flywheel-runner.service act-coordinator.service act-inference.service so-arm-sim.service)   # act-inference.service: before enrolment only
+assistant=llm-assistant.service          # act 2's tenant on slice 0:0 - a host unit of ours, stopped for every switch
 policy='act-inference-*-act-inference.service'                             # after: <app id>-<quadlet>, named by the agent
 die() { echo "fury-mode: $*" >&2; exit 1; }
 mig() { nvidia-smi -i 0 --query-gpu=mig.mode.current --format=csv,noheader; }
@@ -39,7 +41,7 @@ then run this again. Hub unreachable: sudo systemctl stop '${policy%-act-inferen
     sudo systemctl stop flywheel-runner.service flywheel-eval.service"
     fi
     systemctl disable --now fury-flywheel.target 2>/dev/null
-    systemctl stop "${loop[@]}" 2>/dev/null
+    systemctl stop "${loop[@]}" "$assistant" 2>/dev/null
     local busy; busy=$(nvidia-smi --query-compute-apps=pid,name --format=csv,noheader)
     [[ -z $busy ]] || die "the gpu is still in use, stop this first: $busy"
 }
@@ -47,7 +49,7 @@ then run this again. Hub unreachable: sudo systemctl stop '${policy%-act-inferen
 status() {
     echo "mig mode:  $(mig)    configured layout: $(sed -n 's/^MIG_LAYOUT=//p' "$cfg" 2>/dev/null)"
     nvidia-smi -L | sed 's/ (UUID.*//'
-    for u in fury-flywheel.target "${loop[@]}" disk-guard.service flightctl-agent.service; do
+    for u in fury-flywheel.target "${loop[@]}" "$assistant" disk-guard.service flightctl-agent.service; do
         printf '%-28s %s\n' "$u" "$(systemctl is-active "$u" 2>/dev/null)"
     done
     printf '%-28s %s\n' "policy (rhem-managed)" "$(policy_state)"
@@ -72,6 +74,11 @@ tenants)
     systemctl restart nvidia-cdi-refresh.service
     n=$(nvidia-ctk cdi list 2>/dev/null | grep -c 'nvidia.com/gpu=0:[0-9]' || true)
     [[ $n -eq 4 ]]                             || die "wanted 4 slices in the cdi spec, found $n"
+    if systemctl cat "$assistant" >/dev/null 2>&1; then
+        # --no-block: the model loads for minutes, and the unit reports itself through its health check
+        systemctl start --no-block "$assistant"
+        echo "the coding assistant is starting on slice 0:0 - minutes, not seconds: journalctl -fu ${assistant%.service}"
+    fi
     status
     ;;
 status) status ;;

@@ -1,0 +1,6 @@
+# This project was developed with assistance from AI tools.
+#
+# Compiled kernels, torch.compile output and CUDA graphs of the coding assistant. A plain named volume, so it
+# outlives the container: the first start pays for it once.
+[Volume]
+VolumeName=llm-cache
