@@ -70,7 +70,9 @@ host_ip=127.0.0.1       # with host networking vLLM finds "its" address by routi
                         #   process needs only loopback, uplink or not (vllm/utils/network_utils.py get_ip). Empty: vLLM decides.
 debug_blocking=no       # yes: CUDA_LAUNCH_BLOCKING=1 and no compile/graphs. A CUDA error is otherwise reported at some
                         #   later call; this makes the traceback name the kernel that really failed. Slow: diagnosis only.
-extra_env=              # NAME=VALUE[,NAME=VALUE] handed to the container as is, for a backend that only has an env switch
+extra_env=              # NAME=VALUE[,NAME=VALUE] handed to the container as is, for a backend that only has an env switch.
+                        #   NVFP4 linear layers: vLLM tries FlashInferCuteDsl, FlashInferCutlass, Cutlass, Marlin, ... in that
+                        #   order and skips any class named in VLLM_DISABLED_KERNELS (vllm/model_executor/kernels/linear/__init__.py)
 ready_timeout=3600      # seconds. A cold FlashInfer JIT took 26 min for this model on a 20-core GB10 (vllm issue 48031).
 # =======================================================================================================================
 
@@ -158,7 +160,8 @@ $(nvidia-ctk cdi list 2>/dev/null | grep 'nvidia.com/' | sed 's/^/    /')
     [[ -n $host_ip ]] && run+=(-e "VLLM_HOST_IP=$host_ip")
     [[ $debug_blocking == yes ]] && run+=(-e CUDA_LAUNCH_BLOCKING=1)
     if [[ -n $extra_env ]]; then
-        while IFS= read -r -d , kv; do [[ -n $kv ]] && run+=(-e "$kv"); done <<<"$extra_env,"
+        # a comma only separates two variables when a NAME= follows it: a value may itself be a comma list
+        while IFS= read -r kv; do [[ -n $kv ]] && run+=(-e "$kv"); done < <(sed -E 's/,([A-Za-z_][A-Za-z0-9_]*=)/\n\1/g' <<<"$extra_env")
     fi
     if [[ $selinux == disable ]]; then run+=(-v "$model:$mnt:ro"); else run+=(-v "$model:$mnt:ro,z"); fi
     [[ -n $cache_vol ]] && run+=(-v "$cache_vol:/tmp")
