@@ -18,7 +18,7 @@ set -uo pipefail
 [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
 
 cfg=/etc/sysconfig/mig-config
-loop=(act-coordinator.service act-inference.service so-arm-sim.service)   # act-inference.service: before enrolment only
+loop=(flywheel-runner.service act-coordinator.service act-inference.service so-arm-sim.service)   # act-inference.service: before enrolment only
 policy='act-inference-*-act-inference.service'                             # after: <app id>-<quadlet>, named by the agent
 die() { echo "fury-mode: $*" >&2; exit 1; }
 mig() { nvidia-smi -i 0 --query-gpu=mig.mode.current --format=csv,noheader; }
@@ -33,6 +33,11 @@ drain() {
     flightctl app stop device/<name> --name act-inference --yes
 then run this again. Hub unreachable: sudo systemctl stop '${policy%-act-inference.service}-flightctl-quadlet-app.target'" ;;
     esac
+    # hours of work would go with the stop below: make the operator end a run on purpose
+    if pgrep -f 'lerobot-train|assemble_dataset' >/dev/null || podman pod exists eval-rig 2>/dev/null; then
+        die "a training run or an eval is in progress (journalctl -u flywheel-runner -n 5). Wait for it, or end it yourself:
+    sudo systemctl stop flywheel-runner.service flywheel-eval.service"
+    fi
     systemctl disable --now fury-flywheel.target 2>/dev/null
     systemctl stop "${loop[@]}" 2>/dev/null
     local busy; busy=$(nvidia-smi --query-compute-apps=pid,name --format=csv,noheader)

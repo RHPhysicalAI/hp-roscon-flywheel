@@ -26,7 +26,16 @@ Steps per run:
   4. report    — paired fixed/broken/net + exact sign test (ladder_report logic) -> eval_report.json
   5. publish   — upload artifacts, emit training-results
 
-Runs detached on the host:  nohup python3 host_runner.py >> ~/host-runner.log 2>&1 &
+Two ways to run it, chosen by environment (nothing set = the desktop):
+  RUNNER_MODE=docker     every stage is a `docker run` of ACT_IMAGE, data under ~/flywheel-data.
+                         Detached on the host:  nohup python3 host_runner.py >> ~/host-runner.log 2>&1 &
+  RUNNER_MODE=inprocess  the runner itself runs inside the runtime image (a root quadlet, GPU through CDI),
+                         so a stage is a plain `bash -lc` and FLYWHEEL_DATA is the data mount.
+  EVAL_MODE=script       the eval is ~/eval_policy.sh, with the collection loop parked around it.
+  EVAL_MODE=request      the eval belongs to a separate host service with its own rig: the runner writes
+                         <data>/eval/requests/<mv>.json, the service answers with <mv>.done next to it and
+                         the record in <data>/eval/<mv>.json. Paths in that contract are host paths
+                         (HOST_DATA_ROOT is where the host keeps what the runner sees as FLYWHEEL_DATA).
 """
 from __future__ import annotations
 
@@ -35,6 +44,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -48,17 +58,28 @@ import boto3
 from kafka import KafkaConsumer, KafkaProducer
 
 HOME = Path.home()
-FLY = HOME / "flywheel-data"
+RUNNER_MODE = os.environ.get("RUNNER_MODE", "docker")
+EVAL_MODE = os.environ.get("EVAL_MODE", "script")
+FLY = Path(os.environ.get("FLYWHEEL_DATA") or HOME / "flywheel-data").expanduser()
+HOST_DATA_ROOT = os.environ.get("HOST_DATA_ROOT", "")
+EVAL_TIMEOUT_S = float(os.environ.get("EVAL_TIMEOUT_S", "21600"))
+EVAL_POLL_S = float(os.environ.get("EVAL_POLL_S", "15"))
+# a run takes hours: at the client's default of five minutes the group drops the runner mid-run and
+# the same trigger is delivered again
+KAFKA_MAX_POLL_INTERVAL_MS = int(os.environ.get("KAFKA_MAX_POLL_INTERVAL_MS", "43200000"))
 MINIO = os.environ.get("MINIO_ENDPOINT", "http://10.0.0.49:30900")
 KAFKA = os.environ.get("KAFKA_BOOTSTRAP", "10.0.0.49:30903")
 S3KEY, S3SEC = os.environ.get("MINIO_ACCESS_KEY"), os.environ.get("MINIO_SECRET_KEY")
 if not (S3KEY and S3SEC):
-    sys.exit("host_runner: MINIO_ACCESS_KEY and MINIO_SECRET_KEY must be set (source ~/.minio-env); refusing to run")
+    sys.exit("host_runner: MINIO_ACCESS_KEY and MINIO_SECRET_KEY must be set (source ~/.minio-env; under the "
+             "quadlet they come from /etc/flywheel-runner/env); refusing to run")
 BUCKET = os.environ.get("ARTIFACT_BUCKET", "episodes-data")
 IMAGE = os.environ.get("ACT_IMAGE", "act-inference:latest")
-TEACHER_HF = ("/root/.cache/huggingface/hub/models--francocipollone--"
-              "rospai_act_sim_arm101_place_cubes_on_tray/snapshots/4c2bdba206dccc382dbf80d48e15b3d754102df6")
+TEACHER_HF = os.environ.get("TEACHER_PATH") or (
+    "/root/.cache/huggingface/hub/models--francocipollone--"
+    "rospai_act_sim_arm101_place_cubes_on_tray/snapshots/4c2bdba206dccc382dbf80d48e15b3d754102df6")
 CONTRACT = "$(ros2 pkg prefix pai_data_collection)/share/pai_data_collection/config/rosetta/so_arm101.yaml"
+ROS_SETUP = "source /opt/ros/$ROS_DISTRO/setup.bash; source /ws_pai/install/setup.bash; "
 
 
 def s3():
@@ -79,22 +100,38 @@ def sh(cmd, **kw):
     return subprocess.run(cmd, shell=isinstance(cmd, str), check=True, **kw)
 
 
-def in_image(script, gpus=False, extra=()):
-    """Run a bash snippet inside the act-inference image with the standard mounts."""
+def build_stage_cmd(script: str, *, mode: str, image: str, fly, home, gpus: bool = False,
+                    extra: tuple = ()) -> list[str]:
+    """The argv for one stage: a container of the image per stage (docker), or a shell in this one (inprocess)."""
+    if mode == "inprocess":
+        return ["bash", "-lc", ROS_SETUP + script]
+    if mode != "docker":
+        raise ValueError(f"RUNNER_MODE={mode!r} rejected: must be docker or inprocess")
     cmd = ["docker", "run", "--rm", "--network", "host", "--entrypoint", "bash", "--shm-size=2g",
-           "-v", f"{HOME}/.cache/huggingface:/root/.cache/huggingface",
-           "-v", f"{FLY}:/flywheel", "-e", "MINIO_ACCESS_KEY", "-e", "MINIO_SECRET_KEY", *extra]
+           "-v", f"{home}/.cache/huggingface:/root/.cache/huggingface",
+           "-v", f"{fly}:/flywheel", "-e", "MINIO_ACCESS_KEY", "-e", "MINIO_SECRET_KEY", *extra]
     if gpus:
         cmd += ["--gpus", "all"]
-    cmd += [IMAGE, "-lc", "source /opt/ros/$ROS_DISTRO/setup.bash; source /ws_pai/install/setup.bash; " + script]
-    return sh(cmd)
+    cmd += [image, "-lc", ROS_SETUP + script]
+    return cmd
+
+
+def in_image(script, gpus=False, extra=()):
+    """Run a bash snippet with the image's ROS environment and the standard mounts."""
+    return sh(build_stage_cmd(script, mode=RUNNER_MODE, image=IMAGE, fly=FLY, home=HOME, gpus=gpus, extra=extra))
+
+
+def data_root() -> str:
+    """The data root as a stage script sees it: the /flywheel mount in docker mode, FLY itself in-process."""
+    return "/flywheel" if RUNNER_MODE == "docker" else shlex.quote(str(FLY))
 
 
 # ---------------------------------------------------------------- stages
 
 def assemble(collector: str, repo_id: str) -> str:
+    root = data_root()
     in_image(f"python3 /ws_pai/assemble_dataset.py --from-minio --model-version {collector} "
-             f"--bags-root /flywheel/bags --contract \"{CONTRACT}\" --root /flywheel/datasets "
+             f"--bags-root {root}/bags --contract \"{CONTRACT}\" --root {root}/datasets "
              f"--repo-id {repo_id} --vcodec h264 --push-dataset")
     info = json.load(open(FLY / "datasets" / repo_id / "meta" / "info.json"))
     log(f"assembled {repo_id}: {info['total_episodes']} episodes, {info['total_frames']} frames")
@@ -111,39 +148,128 @@ def resolve_incumbent(spec: str, name: str) -> str:
         dest.mkdir(parents=True, exist_ok=True)
         buf = io.BytesIO(); s3().download_fileobj(bucket, key, buf); buf.seek(0)
         with tarfile.open(fileobj=buf, mode="r:gz") as t:
-            t.extractall(dest)
+            t.extractall(dest, filter="data")  # the tarball comes from MinIO and this runs as root: no links out, no devices
         return str(dest / "pretrained_model")
     return spec  # a host path
+
+
+def incumbent_policy_path(incumbent_path: str, *, mode: str, teacher: str) -> tuple[str, tuple]:
+    """What lerobot-train loads the incumbent from, and the extra mount a per-stage container needs for it."""
+    if incumbent_path == "HF":
+        return teacher, ()
+    if mode == "docker":
+        return "/incumbent", ("-v", f"{incumbent_path}:/incumbent:ro")
+    if mode == "inprocess":
+        return incumbent_path, ()
+    raise ValueError(f"RUNNER_MODE={mode!r} rejected: must be docker or inprocess")
 
 
 def train(candidate: str, repo_id: str, incumbent_path: str, k: float) -> Path:
     info = json.load(open(FLY / "datasets" / repo_id / "meta" / "info.json"))
     steps = round(k * info["total_frames"])
-    pol = TEACHER_HF if incumbent_path == "HF" else "/incumbent"
-    extra = () if incumbent_path == "HF" else ("-v", f"{incumbent_path}:/incumbent:ro")
-    in_image(f"lerobot-train --policy.path={pol} --dataset.repo_id={repo_id} "
-             f"--dataset.root=/flywheel/datasets/{repo_id} --dataset.video_backend=pyav "
-             f"--policy.device=cuda --policy.push_to_hub=false --output_dir=/flywheel/train/{candidate} "
+    pol, extra = incumbent_policy_path(incumbent_path, mode=RUNNER_MODE, teacher=TEACHER_HF)
+    root = data_root()
+    # quoted: in-process the incumbent may be a path taken from the trigger, and this string is a shell script
+    in_image(f"lerobot-train --policy.path={shlex.quote(pol)} --dataset.repo_id={repo_id} "
+             f"--dataset.root={root}/datasets/{repo_id} --dataset.video_backend=pyav "
+             f"--policy.device=cuda --policy.push_to_hub=false --output_dir={root}/train/{candidate} "
              f"--steps={steps} --save_freq={steps} --log_freq=1000 2>&1 | tr '\\r' '\\n' | grep -E 'loss:|End of training|rror'",
              gpus=True, extra=extra)
     # lerobot writes the checkpoint as root with mode 0600; make it readable to the host user so
     # it can be tarred/uploaded and packaged (the eval mounts it into a root container regardless).
-    sh(["docker", "run", "--rm", "-v", f"{FLY}:/flywheel", "--entrypoint", "sh", IMAGE, "-c",
-        f"chmod -R a+rX /flywheel/train/{candidate}"])
+    if RUNNER_MODE == "inprocess":
+        sh(["chmod", "-R", "a+rX", str(FLY / "train" / candidate)])
+    else:
+        sh(["docker", "run", "--rm", "-v", f"{FLY}:/flywheel", "--entrypoint", "sh", IMAGE, "-c",
+            f"chmod -R a+rX /flywheel/train/{candidate}"])
     ck = FLY / "train" / candidate / "checkpoints" / "last" / "pretrained_model"
     assert (ck / "model.safetensors").exists(), "no checkpoint produced"
     log(f"trained {candidate}: {steps} steps (k={k})")
     return ck
 
 
+def _rebase(path: str, src, dst) -> str:
+    try:
+        return str(Path(dst) / Path(path).relative_to(src))
+    except ValueError:
+        return path
+
+
+def to_host_path(path: str, *, fly, host_root: str) -> str:
+    """Map a path under fly to where the host keeps it; anything else ("HF", "modelcar", other paths) is unchanged."""
+    return _rebase(path, fly, host_root) if host_root else path
+
+
+def from_host_path(path: str, *, fly, host_root: str) -> str:
+    """The inverse of to_host_path: a host path under host_root, as this process sees it under fly."""
+    return _rebase(path, host_root, fly) if host_root else path
+
+
+def eval_paths(fly, mv: str) -> tuple:
+    """(request, done, result) of the eval file contract for one model version."""
+    requests = Path(fly) / "eval" / "requests"
+    return requests / f"{mv}.json", requests / f"{mv}.done", Path(fly) / "eval" / f"{mv}.json"
+
+
+def write_eval_request(fly, mv: str, checkpoint: str, seed_base: int, n: int) -> Path:
+    """Ask the eval service for n seeded episodes: stale answers go first, the request appears in one rename."""
+    mv = _require_safe("model_version", mv)
+    if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= 500:
+        raise ValueError(f"n={n!r} rejected: must be an integer from 1 to 500")
+    if isinstance(seed_base, bool) or not isinstance(seed_base, int) or seed_base < 0:
+        raise ValueError(f"seed_base={seed_base!r} rejected: must be an integer >= 0")
+    req, done, _ = eval_paths(fly, mv)
+    req.parent.mkdir(parents=True, exist_ok=True)
+    for stale in (done, req.with_name(req.name + ".taken")):
+        stale.unlink(missing_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=req.parent, prefix=f".{mv}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump({"model_version": mv, "checkpoint": checkpoint, "seed_base": seed_base, "n": n}, f)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, req)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+    return req
+
+
+def wait_eval_done(fly, mv: str, *, timeout_s: float, poll_s: float, sleep=time.sleep, now=time.monotonic) -> dict:
+    """Wait for the eval service's <mv>.done and return the record it reports."""
+    _, done, result = eval_paths(fly, mv)
+    deadline = now() + timeout_s
+    while not done.exists():
+        if now() >= deadline:
+            raise TimeoutError(f"eval {mv}: no {done.name} after {timeout_s:.0f} s - is the eval service running?")
+        sleep(poll_s)
+    try:
+        d = json.loads(done.read_text())
+        status = d["status"]
+    except (ValueError, KeyError, TypeError) as e:
+        raise RuntimeError(f"eval {mv}: unreadable {done.name} ({type(e).__name__}: {e})") from e
+    if status == "failed":
+        raise RuntimeError(f"eval {mv} failed: {d.get('error') or 'no error given'}")
+    if status != "ok":
+        raise RuntimeError(f"eval {mv}: unknown status {status!r} in {done.name}")
+    if d.get("result"):
+        reported = Path(from_host_path(str(d["result"]), fly=fly, host_root=HOST_DATA_ROOT))
+        if reported.exists():
+            result = reported
+    return json.load(open(result))
+
+
 def evaluate(mv: str, ckpt: str, seed_base: int, n: int) -> dict:
-    """Run the D020 harness (eval_policy.sh) unless a record for these seeds already exists."""
+    """Run the D020 harness (eval_policy.sh, or the eval service) unless a record for these seeds already exists."""
     out = FLY / "eval" / f"{mv}.json"
     if out.exists():
         d = json.load(open(out))
         c = d.get("eval_config", {})
         if c.get("seed_base") == seed_base and c.get("episodes") == n:
             log(f"eval {mv}: reusing existing record"); return d
+    if EVAL_MODE == "request":
+        req = write_eval_request(FLY, mv, to_host_path(ckpt, fly=FLY, host_root=HOST_DATA_ROOT), seed_base, n)
+        log(f"eval {mv}: requested ({req}), waiting up to {EVAL_TIMEOUT_S:.0f} s")
+        return wait_eval_done(FLY, mv, timeout_s=EVAL_TIMEOUT_S, poll_s=EVAL_POLL_S)
     sh(["bash", str(HOME / "eval_policy.sh"), mv, ckpt, str(seed_base), str(n)])
     return json.load(open(out))
 
@@ -189,6 +315,8 @@ def loop_park():
     """Stop the collection loop for the eval (it and the eval both drive /run_policy). Remembers
     whether it was running so restore doesn't start a loop the operator had parked (e.g. for disk)."""
     global _LOOP_WAS_RUNNING
+    if EVAL_MODE == "request":
+        log("eval runs in its own rig — the collection loop is left alone"); return
     r = subprocess.run(["docker", "ps", "-q", "-f", "name=^act-inference$"], capture_output=True, text=True)
     _LOOP_WAS_RUNNING = bool(r.stdout.strip())
     if _LOOP_WAS_RUNNING:
@@ -196,6 +324,8 @@ def loop_park():
 
 
 def loop_restore():
+    if EVAL_MODE == "request":
+        log("eval ran in its own rig — no collection loop to restore"); return
     if _LOOP_WAS_RUNNING:
         subprocess.run(["docker", "start", "act-inference"], capture_output=True)
     else:
@@ -260,9 +390,15 @@ def handle(t: dict, producer: KafkaProducer):
 
 
 def main():
-    log(f"listening on {KAFKA} training-triggers")
+    # a typo here would otherwise surface hours into a run, at the first stage that reads it
+    if RUNNER_MODE not in ("docker", "inprocess"):
+        sys.exit(f"host_runner: RUNNER_MODE={RUNNER_MODE!r} - set it to docker or inprocess; refusing to run")
+    if EVAL_MODE not in ("script", "request"):
+        sys.exit(f"host_runner: EVAL_MODE={EVAL_MODE!r} - set it to script or request; refusing to run")
+    log(f"listening on {KAFKA} training-triggers (stages: {RUNNER_MODE}, eval: {EVAL_MODE}, data: {FLY})")
     consumer = KafkaConsumer("training-triggers", bootstrap_servers=KAFKA, group_id="host-runner",
                              auto_offset_reset="latest", enable_auto_commit=True,
+                             max_poll_interval_ms=KAFKA_MAX_POLL_INTERVAL_MS,
                              value_deserializer=lambda v: json.loads(v.decode()))
     producer = KafkaProducer(bootstrap_servers=KAFKA, value_serializer=lambda v: json.dumps(v).encode())
     for msg in consumer:

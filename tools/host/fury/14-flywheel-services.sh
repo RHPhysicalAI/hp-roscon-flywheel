@@ -29,7 +29,9 @@ if [[ -s /etc/flightctl/config.yaml ]]; then
     install -m 0644 "$here"/flywheel/so-arm-sim.container "$here"/flywheel/act-coordinator.container /etc/containers/systemd/
     echo "enrolled device: act-inference.container left out, the policy comes from RHEM"
 else
-    install -m 0644 "$here"/flywheel/*.container        /etc/containers/systemd/
+    # by name, not *.container: the training runner in the same directory is 50-runner-install.sh's
+    install -m 0644 "$here"/flywheel/so-arm-sim.container "$here"/flywheel/act-inference.container \
+                    "$here"/flywheel/act-coordinator.container /etc/containers/systemd/
 fi
 install -m 0644 "$here/flywheel/disk-guard.service"     /etc/systemd/system/
 install -m 0644 "$here/flywheel/fury-flywheel.target"   /etc/systemd/system/
