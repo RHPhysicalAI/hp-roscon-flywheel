@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SO-ARM Policy Evaluation</title>
+  <link rel="stylesheet" href="styles.css?v=32">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>SO-ARM Policy Evaluation</h1>
+      <div class="subtitle">Observed success rates &middot; read-only &middot; not a statistical proof of improvement</div>
+    </div>
+    <div class="header-actions">
+      <span class="chip" id="source-chip"><span class="dot"></span> <span id="source-label">--</span></span>
+      <span class="chip" id="loaded-chip">Loaded --</span>
+      <a class="backlink" id="backlink" href="#" target="_blank" rel="noopener">&larr; Back to Live Flywheel</a>
+    </div>
+  </header>
+
+  <main>
+    <div class="notice">
+      <strong>Primary metric</strong>: success rate (all three cubes on the tray, <code>task_success</code>),
+      including rejected episodes in the denominator when curator verdicts exist.
+      <strong>Secondary metric</strong>: smoothness among successful episodes only &mdash; failed episodes often
+      barely move, which would make a worse policy look smoother.
+      Wilson confidence intervals are shown; they describe uncertainty in the observed rate, not proof that one
+      policy is statistically better than another.
+    </div>
+
+    <div class="section-heading">
+      <h2>Success comparison</h2>
+      <p>All three cubes placed &middot; injected failures excluded</p>
+      <span class="right" id="origin-label"></span>
+    </div>
+    <div id="status-line" class="no-data">Connecting to dashboard…</div>
+    <section class="toolbar" id="version-picker" aria-label="Policy comparison"></section>
+    <div id="version-cards" class="card-grid"></div>
+    <div id="empty-state" class="no-data" style="display:none">
+      No episode records loaded. Mount a directory of episode JSON files at <code>/records</code>
+      (<code>RECORDS_DIR</code>), or run in live mode to read from Kafka + MinIO.
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Episode evidence</h3>
+        <p>Raw rows behind the aggregates below &mdash; use these to verify exactly what was counted</p>
+      </div>
+      <div class="table-note" id="evidence-note" aria-live="polite"></div>
+      <div class="evidence-table-wrap">
+        <div class="evidence-groups" id="evidence-groups"></div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Partial placement</h3>
+          <p>Each row is 100% of that policy&rsquo;s episodes, by peak cubes on the tray</p>
+        </div>
+        <div class="panel-body" id="cubes-table"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Smoothness of successes</h3>
+          <p>Lower avg_smoothness = smoother motion. Failed episodes are excluded. Same bins for every policy.</p>
+        </div>
+        <div class="panel-body"><svg id="smoothness-chart" class="chart" viewBox="0 0 720 300"></svg></div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Learning curve</h3>
+          <p>Success rate vs. curated fine-tune episodes. Baseline is the version tagged with 0.</p>
+        </div>
+        <div class="panel-body"><svg id="learning-curve" class="chart" viewBox="0 0 720 260"></svg></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h3>Data integrity</h3></div>
+        <div class="panel-body integrity" id="integrity-checks"></div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <span>Read-only &middot; no writes to Kafka, MinIO, or the sim</span>
+    <span id="footer-counts"></span>
+  </footer>
+
+  <script src="dashboard.js?v=32"></script>
+</body>
+</html>

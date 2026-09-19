@@ -1,0 +1,400 @@
+:root {
+  color-scheme: light;
+  --surface: #ffffff;
+  /* Matches the Live Flywheel dashboard's page background (sampled
+     #f5f6f8) so navigating between the two via the nav link doesn't have
+     a visible background-color seam. */
+  --page: #f5f6f8;
+  --border: #bab8ac;
+  --border-strong: #8f8d80;
+  --text: #0b0b0b;
+  --text-2: #52514e;
+  --text-muted: #898781;
+  --good: #0ca30c;
+  --good-surface: #eef8ee;
+  --warning: #fab219;
+  --critical: #d03b3b;
+  --info: #2a78d6;
+  --info-surface: #eef5fd;
+  --series-1: #2a78d6; /* blue   -- first version (baseline) */
+  --series-2: #eb6834; /* orange -- second version */
+  --series-3: #1baf7a; /* aqua   -- third version */
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --surface: #202020;
+    --page: #0d0d0d;
+    --border: #464642;
+    --border-strong: #5c5c56;
+    --text: #ffffff;
+    --text-2: #c3c2b7;
+    --text-muted: #898781;
+    --good: #0ca30c;
+    --good-surface: #152015;
+    --warning: #fab219;
+    --critical: #e66767;
+    --info: #3987e5;
+    --info-surface: #151d28;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--page);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 26px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+header h1 { font-size: 18px; margin: 0; }
+header .subtitle { color: var(--text-muted); font-size: 12px; }
+.header-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  padding: 5px 10px; font-size: 11px; font-weight: 600; color: var(--text-2);
+}
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.chip.live {
+  color: var(--good);
+  border-color: var(--good);
+  background: var(--good-surface);
+}
+a.backlink { font-size: 12px; color: var(--series-1); text-decoration: none; }
+a.backlink:hover { text-decoration: underline; }
+
+main { max-width: 1400px; margin: 0 auto; padding: 20px 24px 48px; }
+
+.notice {
+  border: 1px solid var(--border-strong); border-left: 4px solid var(--info);
+  background: var(--info-surface); padding: 10px 14px; border-radius: 4px;
+  margin-bottom: 16px; font-size: 12px; color: var(--text-2);
+}
+
+.section-heading { display: flex; align-items: baseline; gap: 10px; margin: 28px 0 10px; flex-wrap: wrap; }
+.section-heading h2 { margin: 0; font-size: 16px; }
+.section-heading p { margin: 0; color: var(--text-muted); font-size: 12px; }
+.section-heading .right { margin-left: auto; color: var(--text-muted); font-size: 11px; }
+
+.toolbar {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 14px 16px; display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 14px; margin-bottom: 14px;
+}
+.toolbar .field label {
+  display: block; color: var(--text-muted); font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px;
+}
+.toolbar select {
+  width: 100%; min-height: 36px; border: 1px solid var(--border-strong);
+  border-radius: 3px; padding: 8px 10px; background: var(--surface);
+  color: var(--text); font-weight: 600; font-size: 13px;
+}
+@media (max-width: 700px) {
+  .toolbar { grid-template-columns: 1fr; }
+}
+
+.card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.model-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-top: 4px solid var(--series); border-radius: 6px; padding: 14px 16px;
+}
+.model-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; flex-wrap: wrap; }
+.series-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--series); flex-shrink: 0; }
+.model-meta { color: var(--text-muted); font-size: 11px; margin: 4px 0 12px 18px; }
+.model-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; color: var(--text); }
+.badge {
+  display: inline-flex; padding: 3px 7px; border-radius: 10px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.badge.baseline { background: #e7f1fa; color: #004b95; }
+.badge.finetuned { background: #eefbea; color: #1e4f18; }
+.badge.untagged { background: #f3ecff; color: #4d2c91; }
+@media (prefers-color-scheme: dark) {
+  .badge.baseline { background: #16324d; color: #8cb8e8; }
+  .badge.finetuned { background: #16351a; color: #8bcf7f; }
+  .badge.untagged { background: #2a2140; color: #c4b0f0; }
+}
+.rate-row { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.rate { font-size: 32px; font-weight: 700; letter-spacing: -0.03em; }
+.fraction { color: var(--text-muted); font-size: 12px; padding-bottom: 3px; }
+.delta { font-size: 13px; font-weight: 700; padding-bottom: 4px; margin-left: auto; }
+.delta.up { color: var(--good); }
+.delta.down { color: var(--critical); }
+.delta.same { color: var(--text-muted); }
+.bar-track { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; margin: 10px 0 6px; }
+.bar-fill { height: 100%; background: var(--series); }
+.ci-text { color: var(--text-muted); font-size: 11px; line-height: 1.45; max-width: 42em; }
+.mini-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px;
+}
+.mini-grid span { display: block; color: var(--text-muted); font-size: 10px; }
+.mini-grid strong { display: block; font-size: 14px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.no-data { color: var(--text-muted); font-size: 12px; padding: 8px 0; }
+
+/* Uniform columns on every row, on purpose: Learning curve (row 2 left)
+   and Smoothness distribution (row 1 right) both have a bottom-axis
+   caption using the same SVG viewBox width + font-size units, so matching
+   their rendered size requires matching pixel width. A per-row reversed
+   ratio can hit that for one diagonal pair, but then row 1 and row 2 use
+   opposite splits and the grid stops lining up column-to-column. Same
+   ratio everywhere is the only way to get both matched text *and* an
+   aligned grid at once. */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 14px;
+  align-items: stretch;
+}
+.two-col > .panel {
+  margin-top: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.two-col .panel-body { flex: 1; }
+@media (max-width: 900px) {
+  .two-col { grid-template-columns: 1fr; }
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-top: 14px;
+  /* Lifts cards off the page via depth, not just a border line -- easier
+     to tell panels apart from the background at a glance. */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.panel-head {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  /* Reserve space for a subtitle so cards without one (e.g. Data integrity)
+     still line up with chart cards that have a second line in the header. */
+  min-height: 3.6rem;
+}
+.panel-head h3 { margin: 0; font-size: 13px; }
+.panel-head p { margin: 3px 0 0; color: var(--text-muted); font-size: 11px; }
+.panel-body { padding: 12px 16px 16px; }
+
+.legend { display: flex; gap: 16px; margin-top: 6px; font-size: 11px; color: var(--text-2); }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+
+/* Capped + scrollable as a safety net if a future check list grows again;
+   with today's 6 checks this shouldn't engage -- sizing below is tuned to
+   fill the panel's actual height (set by its taller chart sibling) rather
+   than leaving whitespace under a short, cramped list. */
+.integrity {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-auto-rows: 1fr;
+  gap: 10px;
+  height: 100%;
+}
+@media (max-width: 900px) {
+  .integrity { grid-template-columns: 1fr; grid-template-rows: auto; height: auto; }
+}
+.check { border: 1px solid var(--border); border-radius: 6px; padding: 9px 11px; }
+.two-col .check { height: 100%; }
+.check-title { display: flex; gap: 6px; align-items: center; font-weight: 600; font-size: 12px; }
+.check-title .good { color: var(--good); }
+.check-title .warning { color: var(--warning); }
+.check p { margin: 4px 0 0 19px; color: var(--text-2); font-size: 11px; line-height: 1.4; }
+
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th {
+  text-align: left; background: var(--page); color: var(--text-muted);
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+}
+td { padding: 8px 12px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+td.success { color: var(--good); font-weight: 600; }
+td.failed { color: var(--critical); font-weight: 600; }
+
+.placement-table .placement-policy { font-weight: 600; white-space: nowrap; }
+.placement-table .placement-policy .series-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle;
+}
+.placement-table .placement-n { font-weight: 400; color: var(--text-muted); font-size: 11px; }
+.placement-table th .col-hint { font-weight: 400; text-transform: none; letter-spacing: 0; opacity: 0.85; }
+.placement-table td.placement-success { color: var(--good); font-weight: 700; }
+.placement-table td.placement-miss { color: var(--text-2); }
+.table-note {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 8px 16px 12px;
+  margin-bottom: 4px;
+}
+
+.evidence-table-wrap {
+  overflow: auto;
+  scrollbar-gutter: stable;
+  /* Deliberately keep the compact preview height -- versions are collapsed
+     accordions now, so this mostly bounds how many *expanded* groups show
+     before the viewer has to scroll. */
+  max-height: 20rem;
+  border-top: 1px solid var(--border);
+  padding: 0 16px;
+}
+
+/* One collapsible <details> per selected version -- avoids scrolling past
+   one policy's hundreds of episodes to reach the next policy's. Version /
+   FT ep. live in the summary line instead of as their own table columns,
+   since FT ep. is a fixed per-version attribute (config/versions.yaml), not
+   something that varies row to row. */
+.evidence-group { border-bottom: 1px solid var(--border); }
+.evidence-group:last-child { border-bottom: none; }
+.evidence-group-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 4px;
+  font-size: 12px;
+  /* Sticks above the table's own sticky <thead> (see .evidence-group thead
+     th below) so the header you'd click to collapse a group never scrolls
+     out of view, no matter how far down its rows you've scrolled. */
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface);
+}
+.evidence-group-summary::-webkit-details-marker { display: none; }
+.evidence-group-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-2);
+  transition: transform 0.15s ease;
+}
+.evidence-group-chevron::before { content: '\25B6'; }
+.evidence-group[open] > .evidence-group-summary .evidence-group-chevron { transform: rotate(90deg); color: var(--text); }
+.evidence-group-summary:hover .evidence-group-chevron { color: var(--text); }
+.evidence-group-version { font-weight: 600; }
+.evidence-group-meta { display: inline-flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 11px; }
+.evidence-group-body { padding: 0 0 12px; }
+.evidence-group-note {
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 8px 4px 4px;
+}
+.load-more-btn {
+  font: inherit;
+  color: var(--info);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.load-more-btn:disabled { color: var(--text-muted); cursor: default; text-decoration: none; }
+
+.evidence-table { margin: 0; table-layout: fixed; width: 100%; }
+.evidence-group thead th {
+  position: sticky;
+  /* Matches .evidence-group-summary's measured rendered height (badge pill
+     + padding, naturally sized -- not a guessed value) so the column header
+     docks directly under the sticky group header with no gap or overlap. */
+  top: 38px;
+  z-index: 1;
+  background: var(--surface);
+}
+
+/* The colgroup makes these widths unambiguous under table-layout: fixed.
+   Columns: Episode, Result, Cubes, Smoothness, Steps, Duration. */
+.evidence-table col.evidence-episode { width: 18%; }
+.evidence-table col.evidence-result { width: 18%; }
+.evidence-table col.evidence-cubes { width: 11%; }
+.evidence-table col.evidence-smoothness { width: 20%; }
+.evidence-table col.evidence-steps { width: 11%; }
+.evidence-table col.evidence-duration { width: 22%; }
+
+/* Column dividers -- makes the padding around short values (Cubes, Steps,
+   Smoothness, ...) read as deliberate column separation instead of an
+   unexplained gap when the card is much wider than the content needs. */
+.evidence-table th:not(:first-child),
+.evidence-table td:not(:first-child) {
+  border-left: 1px solid var(--border);
+}
+
+/* Only data cells are forced onto one line -- headers (esp. "Smoothness
+   ↓=smoother") are allowed to wrap so a long label doesn't force its
+   column wider than the short values it actually holds. */
+.evidence-table td:nth-child(1),
+.evidence-table td:nth-child(2),
+.evidence-table td:nth-child(3),
+.evidence-table td:nth-child(4),
+.evidence-table td:nth-child(5),
+.evidence-table td:nth-child(6) {
+  white-space: nowrap;
+}
+.evidence-table th:nth-child(1),
+.evidence-table td:nth-child(1) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+.evidence-table th:nth-child(2),
+.evidence-table td:nth-child(2) {
+  text-align: center;
+}
+.evidence-table th:nth-child(3),
+.evidence-table td:nth-child(3),
+.evidence-table th:nth-child(4),
+.evidence-table td:nth-child(4),
+.evidence-table th:nth-child(5),
+.evidence-table td:nth-child(5),
+.evidence-table th:nth-child(6),
+.evidence-table td:nth-child(6) {
+  text-align: right;
+}
+.evidence-table th .col-hint,
+.evidence-table td .col-hint {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-left: 0.35em;
+}
+
+.chart { width: 100%; height: auto; display: block; }
+/* Baseline for axis ticks/gridline numbers -- secondary ink, not muted:
+   a CSS rule always beats an SVG element's inline fill="..." attribute
+   (the opposite of most HTML styling), so this rule was silently
+   overriding every attempt to emphasize a label with fill="var(--text)"
+   inline. Use the .label class below for anything that needs to stand out. */
+.chart text { fill: var(--text-2); font-size: 11px; }
+.chart .label { fill: var(--text); font-weight: 600; font-size: 13px; }
+.chart .meta { fill: var(--text-2); font-size: 12px; }
+/* Bottom-axis captions share one class so they render at the same size in
+   every chart column (not the default 11px tick size, which looked too
+   small on the smoothness panel's longer label). */
+.chart .caption { fill: var(--text-2); font-size: 13px; }
+.chart .axis { stroke: var(--border-strong); }
+.chart .grid { stroke: var(--border); }
+
+footer {
+  max-width: 1400px; margin: 0 auto; padding: 8px 24px 24px;
+  display: flex; justify-content: space-between; color: var(--text-muted); font-size: 11px;
+}
