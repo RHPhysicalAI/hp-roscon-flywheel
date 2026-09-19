@@ -11,7 +11,8 @@
 #   docker run --rm -v /var/lib/episodes:/data/episodes soarm-flywheel:latest
 
 ARG DISTRO=kilted
-FROM ros:${DISTRO}
+# fully qualified: podman/buildah refuse to guess a registry for a short name without a TTY
+FROM docker.io/library/ros:${DISTRO}
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-c"]
