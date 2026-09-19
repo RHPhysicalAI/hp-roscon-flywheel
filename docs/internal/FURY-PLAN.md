@@ -223,6 +223,8 @@ learned in `DECISIONS.md` as you go.
 
 ### Phase 3 — Hub bootstrap on the `fury` branch
 
+> **Closed 2026-09-19 (D147, D148).** Eight Argo Applications Synced/Healthy on arm64; Rekor + Trillian rebuilt from source; fresh cosign key; first native build signed (16 min 47 s); Fleet flipped to the new trust root; `rhem/bootstrap` applied. Differences from the steps below: RHTAS is not installed through OLM, the modelcar was co-signed rather than re-packaged, and the first build is arm64-only.
+
 1. `git checkout -b fury desktop-gpu-split`. Re-point `targetRevision` in `argocd/*-app.yaml` (7 files) and `rhem/bootstrap/resourcesync*.yaml` (2 files) to `fury`.
 2. Fury values in tracked files: `gitops/flywheel/edge-kafka.yaml` advertised listener → `10.20.0.10:30903`; dashboard `CAMERA_HOST` → the Fury host's `fury-net` address `10.20.0.1` (env, D124); Fleet template (see 4).
 3. Follow `argocd/README.md` bootstrap table in order (10 apps) with the 8 hand-created Secrets first. **Fresh cosign keypair** on the Fury; its `cosign.pub` goes into the Fleet's inline trust files. Securesign creates fresh Rekor/Fulcio — after it's up, copy the new Rekor public key into `gitops/tekton/rekor-public-key.yaml` and the Fleet's inline `rekor.pub`.

@@ -4955,3 +4955,9 @@ under the old root only — once enrollment writes the new `policy.json` on the 
 it. Order: smoke the new image on the GPU (`13-first-inference.sh` now takes an image argument), move the host
 units to it, remove the hand-installed `act-inference` unit, then enroll. The demo runbook's stand-in-versus-Fury
 table still describes the old batch order; it gets rewritten with the rest of the runbook's Fury pass.
+
+**Addendum (2026-09-19): Phase 3 closed.** The four `rhem/bootstrap` objects were applied by the operator with a
+kubeadmin token: `Repository/hp-roscon-flywheel` Accessible, `ResourceSync/rhem-fleets` and `rhem-catalog`
+Accessible and Synced from `fury`, `Fleet/act-inference` owned by the sync and Valid — so the hub renders the
+Fleet with this hub's keys and digests and the retargeted batches. Exit criterion met: a runtime image and a
+modelcar signed under the hub's own trust root, Rekor indexes 1, 2 and 3 recorded, RHEM UI up.
