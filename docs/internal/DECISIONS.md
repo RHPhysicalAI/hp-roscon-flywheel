@@ -5171,3 +5171,16 @@ promotion edits). **Verify first:** a five-seed eval in the isolated rig beside 
 4/5, with no goal rejected in production meanwhile; if the scores diverge, fall back to an attended window with
 `flightctl app stop`.
 
+**Addendum (2026-09-19, evening): collection is live end to end on the Fury.** After the sim image was rebuilt with
+the emitter fix (image 19:44 UTC, sim restarted 19:48) and the unit got its `CURATOR_URL`: twelve episodes closed in
+about nine minutes, the shortest 1,211 steps — **no phantom records**, including after seven successes in a row,
+which is exactly where they used to appear. Eight of the twelve were full successes (the first was the usual miss
+after a policy restart; three placed two of three cubes). Every success was received by the hub's curator, scored
+`PASS`, and counted by the manifest consumer: `pending=8/160`. With the address set the emitter posts to the hub and
+no longer writes `/data/flywheel/episodes/raw` (that directory only fills when a POST fails). At this rate — about
+46 s an episode, roughly 55 successes an hour — the threshold is some three hours away; the trigger stays unarmed
+until the host runner exists (`TRAINING_PIPELINE_NAME`). Separate bug met on the way: `14-flywheel-services.sh`
+stopped the systemd-run sim while "removing hand-started leftovers", then died on the already-removed container
+before `daemon-reload`; it now reloads first and leaves alone any container that carries a `PODMAN_SYSTEMD_UNIT`
+label. Still open: the sim does not exit on SIGINT within its stop timeout and gets killed.
+
