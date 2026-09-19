@@ -263,8 +263,25 @@ What the flywheel uses, and what Phase 5 has to show working on RHOAI 3.5 rather
 - **Not used, deliberately:** RHOAI model serving (KServe) — the cluster VM has no GPU (decision 2), so the policy
   is served on the device through RHEM and the act 2 model by Red Hat AI Inference on the host; workbenches, Ray /
   Training Operator / Kueue (training runs on the host GPU, orchestrated by the pipeline), TrustyAI, Feast.
-  If the story needs more of RHOAI on stage, the candidates that fit this machine are a workbench for the eval
-  report, and the registry-to-catalog link (the RHEM catalog item is already generated from the registry entry).
+  Two more RHOAI pieces were added to the plan by the operator on 2026-09-19 - Phase 5b below.
+
+### Phase 5b — More of RHOAI on stage (added 2026-09-19)
+
+After Phase 5 has produced one promotion, because both pieces read what a promotion writes.
+
+1. **A workbench that opens the eval report.** `workbenches` goes to Managed in the DataScienceCluster; one small
+   notebook image (CPU only - the cluster VM has no GPU, and nothing here needs one) with a notebook that reads
+   `s3://episodes-data/eval/<run_id>/eval_report.json` and the two per-policy records from the hub's MinIO and
+   shows the paired result: success rates, fixed / broken / net, the sign test, per-seed table. The data
+   connection is the existing `hub-credentials` Secret. It is the human's view of the gate before the merge.
+2. **The registry-to-catalog link as a beat.** The pipeline already registers the candidate in the Model Registry
+   and generates the RHEM catalog item from that entry; on stage it is shown as one line of lineage: registry
+   version (dataset, eval report, image digest, Rekor index) -> catalog item -> the Fleet's pinned digest -> the
+   device's verified pull. Work: confirm the registry step on RHOAI 3.5 (Phase 5), make sure the catalog item
+   carries a link back to the registry version, and write the beat into the runbook.
+
+**Exit:** the eval report of a real run open in a workbench from the RHOAI dashboard; one promoted version followed
+from the registry view to the RHEM catalog to the device, by clicking, with no terminal.
 
 ### Phase 6 — Tenant T1: large-model inference on RHAIIS
 
