@@ -5214,3 +5214,27 @@ a warm restart to measure what the kept caches save, the governed form (a quadle
 exposure beyond loopback, and the isolation test (training on another slice while it serves). Unknown 7 stays
 "retired on paper" for the product image and is retired in practice for serving this model on this GPU.
 
+## D155 — The isolated eval rig is verified beside the running loop; the host half of training is ready to install
+
+**Date:** 2026-09-19
+**Test (D153's "verify first"):** `51-eval-rig.sh run verify-rig modelcar 5 1000` while production collected and an
+LLM server sat idle on the same GPU. The rig's sim rendered on the GPU at a full 30 fps (301 and 304 frames in 10 s);
+cube poses crossed from the sim to the runtime image over gazebo transport (3 of 3) — the first time `GZ_PARTITION`
+has been exercised across containers; the rig's graph had exactly one `/run_policy` server; no goal was rejected in
+the rig or in production; production scored 6 of 9 in those six minutes, no worse than before. The pod was removed.
+**Score: 3/5, mean 2.4 cubes, against the seeded smoke's 4/5, mean 2.6 (D149 addendum) — and seed by seed four of
+the five agree exactly:** seed 1000 places one cube in both (the first episode of a cold policy), 1001 / 1003 / 1004
+place three with step counts within 8 %, only seed 1002 differs (2 against 3). One cube on one seed is inside the
+policy's run-to-run variation, and a paired evaluation puts both policies through the same rig. The design holds:
+the governed policy is never stopped for an evaluation, and D132's collision cannot occur.
+**Built and tested off the machine, now on it and not yet run:** the runner in container mode
+(`RUNNER_MODE=inprocess`, `EVAL_MODE=request`; 76 tests written blind from the spec by a separate agent pass),
+`flywheel-runner.container` as part of `fury-flywheel.target`, `flywheel-eval.path` / `.service`,
+`50-runner-install.sh` (asks for the two MinIO keys on the terminal; they never reach a log),
+`52-seed-incumbent.sh` (re-packs the pinned modelcar's `models/act` as the incumbent tarball in the hub's MinIO and
+creates `episodes-data`, which otherwise only appears with the assembler's first push). `fury-mode` refuses to
+switch while a training or an eval is running.
+**State of the collection:** 111 of 160 successes on the hub two hours after it started, about 50 an hour; the
+trigger stays unarmed until the runner is installed, the incumbent is seeded and the registry step has been checked
+against RHOAI 3.5 (FURY-PLAN, Phase 5).
+
