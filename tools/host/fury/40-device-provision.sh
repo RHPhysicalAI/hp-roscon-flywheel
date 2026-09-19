@@ -8,7 +8,7 @@
 #
 # <agent-config.yaml> is made on a laptop that is logged in to this hub with flightctl, then copied here
 # (41-device-enroll.md has the whole sequence):
-#     flightctl certificate request --signer=enrollment --expiration=365d --output=embedded \
+#     flightctl certificate request --signer=flightctl.io/enrollment --expiration=365d --output=embedded \
 #         --name fury-host --output-dir "$d" > "$d/agent-config.yaml"
 # It carries the enrollment client key: it is installed root-only, never printed, and the copy handed to
 # this script is shredded. Needs fleet-act-inference.yaml (gitops/rhem/) next to this script.

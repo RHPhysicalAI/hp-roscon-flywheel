@@ -44,7 +44,7 @@ throwaway directory. The config carries the enrollment client key: it goes to th
 ```
 FURY=user@host
 d=$(mktemp -d)
-flightctl certificate request --signer=enrollment --expiration=365d --output=embedded --name fury-host --output-dir $d > $d/agent-config.yaml
+flightctl certificate request --signer=flightctl.io/enrollment --expiration=365d --output=embedded --name fury-host --output-dir $d > $d/agent-config.yaml
 chmod 600 $d/agent-config.yaml
 grep -c client-key-data $d/agent-config.yaml
 scp $d/agent-config.yaml $FURY:flywheel-setup/agent-config.yaml
