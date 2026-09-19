@@ -6,9 +6,11 @@
 #   ./50-runner-install.sh                     the checkout is ~<sudo user>/hp-roscon-flywheel
 #   sudo SRC=/path/to/checkout ./50-runner-install.sh
 #
-# Installs only: nothing is started. The first run asks on the terminal for the two MinIO keys and writes
-# them to /etc/flywheel-runner/env (root, 0600). They are never echoed, never reach ./log/, and an
-# existing file is left alone - to change a key, edit that file as root and restart the runner.
+# Installs only: nothing is started. The first run writes the two MinIO keys to /etc/flywheel-runner/env
+# (root, 0600). It takes them from the hub itself - Secret flywheel/hub-credentials, the one the cluster's own
+# consumers of this MinIO use, read with root's kubeconfig for the hub - and only asks on the terminal when
+# the hub cannot be asked. Either way they are never echoed and never reach ./log/, and an existing file is
+# left alone: to change a key, edit that file as root and restart the runner.
 #
 # This project was developed with assistance from AI tools.
 set -euo pipefail
@@ -32,7 +34,6 @@ trap '[[ -z $qd ]] || { rm -f "$qd/flywheel-runner.container"; rmdir "$qd"; }; [
 grep -q '^RUNNER_MODE = ' "$runner" || die "$runner predates the in-process runner (no RUNNER_MODE) - update the checkout at $src"
 [[ -d /data/flywheel ]]             || die "no /data/flywheel - ./02-data-disk.sh and ./14-flywheel-services.sh first"
 [[ -x /usr/libexec/podman/quadlet ]] || die "no /usr/libexec/podman/quadlet - ./03-packages.sh first"
-[[ -s $envf || -t 0 ]]              || die "$envf is missing and stdin is not a terminal. Run this from a terminal: it asks for the two MinIO keys"
 if command -v python3 >/dev/null; then
     # parse only: compiling would leave a root-owned __pycache__ in the checkout
     python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$runner" || die "$runner does not parse - nothing installed"
@@ -49,14 +50,31 @@ grep '^ExecStart=' <<<"$gen" | sed 's/^/quadlet: /' || true
 # ---- the two MinIO keys, before anything is installed: a unit without them would only restart in a loop.
 # Asked for on the terminal itself and written straight to the file: the tee above only sees this script's
 # stdout and stderr, and nothing below puts a value on either.
+# one source of truth: the Secret the hub's own pods read. Nothing is printed, not even on failure.
+from_hub() {
+    local kc=/root/fury-sno.kubeconfig oc=
+    for oc in /usr/local/bin/oc /root/sno-install/bin/oc; do [[ -x $oc ]] && break; done
+    [[ -x $oc && -s $kc ]] || return 1
+    ak=$("$oc" --kubeconfig "$kc" --request-timeout=20s -n flywheel get secret hub-credentials -o jsonpath='{.data.s3-access-key}' 2>/dev/null | base64 -d 2>/dev/null) || return 1
+    sk=$("$oc" --kubeconfig "$kc" --request-timeout=20s -n flywheel get secret hub-credentials -o jsonpath='{.data.s3-secret-key}' 2>/dev/null | base64 -d 2>/dev/null) || return 1
+    [[ -n $ak && -n $sk ]]
+}
+
+ak='' sk=''
 if [[ -s $envf ]]; then
     echo "$envf exists - left alone"
 else
-    sleep 0.3       # the prompts bypass the tee: let it print what is still on its way first
-    printf 'MinIO access key (not shown): ' > /dev/tty
-    IFS= read -rs ak; echo > /dev/tty
-    printf 'MinIO secret key (not shown): ' > /dev/tty
-    IFS= read -rs sk; echo > /dev/tty
+    if from_hub; then
+        echo "took the two MinIO keys from Secret flywheel/hub-credentials on the hub (not shown)"
+    else
+        [[ -t 0 ]] || die "the hub's Secret could not be read and stdin is not a terminal: run this from a terminal, it then asks for the two MinIO keys"
+        echo "could not read Secret flywheel/hub-credentials with root's kubeconfig - asking instead"
+        sleep 0.3       # the prompts bypass the tee: let it print what is still on its way first
+        printf 'MinIO access key (not shown): ' > /dev/tty
+        IFS= read -rs ak; echo > /dev/tty
+        printf 'MinIO secret key (not shown): ' > /dev/tty
+        IFS= read -rs sk; echo > /dev/tty
+    fi
     [[ -n $ak && -n $sk ]]            || die "an empty key - nothing written, run this again"
     [[ $ak$sk != *[[:space:]]* ]]     || die "whitespace in a key - nothing written, run this again"
     install -d -m 0700 -o root -g root /etc/flywheel-runner
