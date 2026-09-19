@@ -76,7 +76,7 @@ attempt fails, consoles freeze briefly and tailscaled rebinds. Fixed in Phase 0 
 | 4 | **No other machines.** Fleet scaling = VMs on the Fury; no desktop cross-site rollout | Rollout batch 1 (`site=desktop`) must be retargeted to Fury-local canary devices |
 | 5 | **Kernel: stay on 64k unless the arm64 runtime image or CUDA fails on it** (Phase 1 proves it before anything is built on top) | Switching = `dnf install kernel` (4k) + reboot; BMC available |
 | 6 | **Storage:** `nvme1n1` → `/data` (ext4): rootful container storage, libvirt images, flywheel data | Root is 70 GB; the coordinator refuses to start under 100 GB free |
-| 7 | **VM network `10.20.0.0/24`** (libvirt `fury-net`, routed, gateway `10.20.0.1`); SNO static `10.20.0.10`; fleet VMs `10.20.0.21+` | Never `10.0.0.0/24` — the desktop advertises it to the tailnet and Olga's contract pins `10.0.0.49` |
+| 7 | **VM network `10.20.0.0/24`** (libvirt `fury-net`, routed, gateway `10.20.0.1`); SNO static `10.20.0.10`; fleet VMs `10.20.0.21+` | Never `10.0.0.0/24` — the desktop advertises it to the tailnet and the evaluation dashboard's contract pins `10.0.0.49` |
 | 8 | **Cluster stays `sno-flywheel.local`**; DNS via **dnsmasq on the host**, served to VMs and to the tailnet via Tailscale split DNS | Keeps ~a dozen hardcoded names valid; no `/etc/hosts` on laptops |
 | 9 | **Git branch `fury`** off `desktop-gpu-split`; the 9 Argo/ResourceSync files re-pointed to it | Fury IPs never land on the desktop's branch |
 | 10 | **Fresh trust root on the Fury; re-sign everything there** (fresh cosign key, fresh Rekor/Fulcio, native arm64 Tekton build, one fresh promotion). **BLOCKER — needs the operator's call before Phase 3:** RHTAS ships **no arm64 images** through 1.4.3, operator included (verified 2026-09-18; brim `notes/rhtas-and-rhem-ui-no-arm64-images.md`), so `gitops/operators-config/securesign.yaml` cannot deploy on the aarch64 SNO. Options: (a) **upstream Sigstore (Rekor + Fulcio + CT log) in the Fury cluster** — consistent with "no other machines," costs the "Red Hat Trusted Artifact Signer" product name in the demo narrative (say "Sigstore, the upstream of RHTAS"); (b) keep RHTAS on the desktop x86 SNO as the central signing/Rekor service over the tailnet — violates decision 4; (c) sign with cosign keys only, no transparency log — weakens the trust story the negative tests prove. Raise a product ask to the RHTAS team either way | The desktop's Rekor key is embedded in the Fleet's `rekor.pub`; pinned images would fail verification on any fresh trust root |
@@ -105,6 +105,62 @@ slice via CDI and leave `CUDA_VISIBLE_DEVICES` unset. PyTorch (host runner) acce
 
 Each phase has an exit criterion. Do not start the next phase on a red exit. Record what was
 learned in `DECISIONS.md` as you go.
+
+**Two GPU modes (D142), which the locked table and the tenant map above predate.** Gazebo cannot render on the
+GPU while MIG is on, so the box runs in one of two modes, switched by `fury-mode` on the host
+(`tools/hub/fury-switch.sh` from a laptop; the mode survives a reboot): **flywheel** — MIG off, the sim, the
+policy, training and the eval rig share the whole GPU; **tenants** — MIG on (`9,19,19,19`), the assistant on
+`0:0`, the other slices for the fleet tenant and sweeps. Where a phase below says "slice `0:1`" or "slice `0:2`"
+for the flywheel, read "the whole GPU in flywheel mode".
+
+### Ledger — built or staged ahead of its phase (added 2026-09-19)
+
+Work was stacked while long runs were in flight. Every row is something that exists and is **not yet used**, or
+is known to be needed and **not yet built**. A row leaves this table only when its phase note says it ran. Check
+this table when closing any phase, and before Phase 10.
+
+| # | Thing | Where | State | Phase | Next action |
+|---|---|---|---|---|---|
+| L1 | Staged teacher → v2 promotion: both checkpoints, the 161-episode dataset and the 360-seed paired evaluation put where the runner reuses them, so a governed run takes minutes | `tools/host/fury/53-stage-promotion.sh`; inputs under `/data/models/import-dev` | script and inputs in place, **not run** (refuses while a training or an eval is in progress) | 5 | run it once the runs in flight have ended |
+| L2 | Teacher modelcar packaged and signed on the Fury, so the Fleet can start at the teacher and the rollout shown is teacher → v2 | — | **not built** | 5 | package + sign with the Fury's key; re-pin the Fleet (`MODEL_VERSION=upstream-act-teacher`) only after it has served on the GPU (D149 rule) |
+| L3 | The act 1 run itself: `INCUMBENT=upstream-act-teacher COLLECTOR=upstream-act-teacher INCUMBENT_CHECKPOINT=s3://episodes-data/checkpoints/upstream-act-teacher/pretrained_model.tar.gz tools/hub/start-promotion-run.sh act-v2-ft160 0.25 360` | `tools/hub/start-promotion-run.sh` | ready, needs L1 + L2 | 5 | run → gate PASS → PR → merge → rollout; measure merge → serving; the manifest consumer's `INCUMBENT*` env follows the promoted model afterwards |
+| L4 | Promotion reset: put the hub and the device back to "teacher serving, no v2" so the beat can be rehearsed and re-shown | — | **not built** | 5, 10 | script: Fleet pin, the PR / its merge, the registry version, the catalog item, the consumer's count and env |
+| L5 | Collection scene: the Fury's coordinator unit runs the image-default scene (fixed cubes, 25 s episodes), not the project's collection scene (randomized medium cube, 60 s, arm reset — D020) | `tools/host/fury/flywheel/act-coordinator.container` | **known wrong** | 5 | set the scene env in the unit before any episode collected here is trained on for a result that matters |
+| L6 | The manifest consumer is **armed**: 160 curated successes start a pipeline run on their own | `gitops/flywheel/manifest-consumer.yaml` | live | 5, 10 | know it when the recorder runs; L4 has to reset its count |
+| L7 | One unattended full loop on the Fury (collect → train → eval → gate → PR), overnight | runner, eval rig and units are built (D153, D155) | possible once L5 is fixed | 5 | queue for a night; its record is the Fury promotion record |
+| L8 | GB300 training numbers (B3): GPU utilisation / memory / power log and the trainer's step timings from the first fine-tune on this GPU | host: `~/gpu-*.csv` (tmux `gpulog`), `journalctl -u flywheel-runner` | capturing | 5 | write up in `docs/eval-records/`; stop the logger |
+| L9 | Assistant as a host service that `fury-mode tenants` starts on slice `0:0` (D156) | `tools/host/fury/63-assistant-install.sh`, `flywheel/llm-assistant.container`, `flywheel/llm-cache.volume`, `fury-mode.sh` | built, **not installed** | 6 | install → `fury-switch.sh tenants` → `61-rhaiis-smoke.sh ask` and `bench` on the slice → `fury-switch.sh flywheel` |
+| L10 | The assistant delivered through RHEM — the option D156 did not take | branch `fury-assistant` | parked. **Merging it into `fury` is a rollout to the enrolled host** | — | drop it, or keep as reference, once Phase 7's shape is decided |
+| L11 | Model weights and the serving image, already on the host | `/data/models`, root's container storage | in place | 6, 8b | nothing; 8b relies on them |
+| L12 | GPU metrics: DCGM exporter on the host, a metrics stack on the hub, Perses datasource and a per-tenant dashboard | `tools/host/fury/70-dcgm.sh`, `flywheel/dcgm-exporter.container`, `gitops/observability/{monitoring-stack,fury-gpu-scrape,prometheus-datasource,gpu-tenants-dashboard}.yaml` | drafted, **uncommitted, not run** (notes: `70-dcgm.md`) | 8 | review → commit → run. DCGM holds the driver open without being a compute process, so `fury-mode` has to stop it around every switch — that change to `fury-mode.sh` is drafted and **not applied**; the host then needs `14-flywheel-services.sh` again. Unproven until run: profiling metrics on this GPU and driver, power / temperature per slice, SELinux-confined with `SYS_ADMIN` |
+| L13 | The cluster's internal registry, enabled with storage and a route | hub | up, unused | 8b | the cosign-attachment spike |
+| L14 | One-command mode switch for the operator, around the RHEM app stop/start | `tools/hub/fury-switch.sh` | built | 6, 10 | into the runbook; nothing at demo time should need raw `flightctl` / `oc` |
+| L15 | The evaluation dashboard (separate repository); the hub already has its read-only MinIO user | `gitops/minio/` | reviewed, shape proposed, **nothing built** | 5c | settle the shape with the operator and the dashboard's author; then image, one manifest, the conversion sidecar, the link |
+
+**Carried forward — small, easy to lose.** Each is also an inbox item.
+- *Correctness traps:* an interrupted training leaves `train/<candidate>` behind, and the runner treats a
+  checkpoint that is already there as "skip training" — clear it or make the runner tell a finished checkpoint from
+  a partial one; the cube-reset caveat of the paired eval (D056 / D138) is still open.
+- *Speed:* the dataset build is single-threaded (about 38 s per episode, so more than an hour and a half for 160)
+  — parallelise it; the runtime image is one 4.2 GiB layer, so every rollout pulls all of it — split the layers;
+  a pipeline start-up smoke step, so a broken run fails in a minute and not after the dataset build.
+- *Units:* the sim and the coordinator ignore SIGINT, so a stop ends in a kill and the unit shows `failed`; the
+  agent logs `/sysroot` noise on a non-ostree host.
+- *Fleet template:* `SecurityLabelDisable=true` is still set although CUDA ran SELinux-confined; the modelcar is
+  an amd64-only data image (it works; L2 should come out platform-neutral or arm64).
+- *Upstream:* the demos repository moved to rosetta 0.2; both Dockerfiles pin the commit before it (D149). Port
+  when there is time, not before the show.
+- *Live checks never made:* does the per-device app stop survive a reboot; what RHEM shows when the app is
+  stopped by hand.
+- *Hub hygiene:* MinIO from `hostPath` to a PVC and its credentials rotated; the pull secret kept on the host for
+  Phase 6 is shredded when Phase 6 closes.
+- *Asks of the machine's owner:* passwordless sudo, what the `models` disk is for, eject the virtual-media ISO,
+  fresh credentials for the machine once bring-up is over.
+- *Access for the show:* the booth group on the tailnet and the presenter's path in (and Phase 8b's wired path);
+  a laptop still carrying `/etc/hosts` pins for the development cluster reaches the wrong hub by name.
+- *Documents:* `docs/FURY-SETUP.md` corrections (its "nothing about the governed path needs Fury-specific
+  changes" is wrong — the arm64 signing stack, the device scripts and the training runner all did); the
+  `DEMO_RUNBOOK.md` Fury pass, every procedure labelled one-time bring-up or demo-time; re-record beats 5 / 6.
 
 ### Phase 0 — Host preparation (all privileged)
 
@@ -246,6 +302,8 @@ learned in `DECISIONS.md` as you go.
 
 ### Phase 5 — The flywheel end to end on the Fury
 
+> **Status 2026-09-19 (D153, D155).** Built and running: live collection into the hub's curator, the armed manifest consumer, the host runner as a native unit (dataset build and fine-tune in-process on the whole GPU), the paired eval in an isolated rig, the pipeline uploaded and its registry step's API path checked. A few-hundred-step rehearsal run and the first threshold-triggered run are in flight; the triggered run trains on episodes from the wrong scene (L5), so it counts for mechanics and for GB300 numbers (L8), not for a promotion. **The promotion shown in act 1 is teacher → v2, staged from the project's existing checkpoints, dataset and 360-seed paired evaluation (L1–L4);** a loop collected and trained end to end here is L7. Order: L1 → L2 → L3 → L4, L5 before L7.
+
 Collection → 160-success threshold → pipeline (assemble → fine-tune on slice `0:2` → paired eval → package → sign → register → PR) → human merge → RHEM rollout → device verifies signature + Rekor → serving. Measure merge→serving. Record the run as the Fury promotion record in `docs/eval-records/`. This run is also **B3 (GB300 training numbers)** — capture epoch time and batch size vs the desktop's.
 
 **Exit:** one promotion produced, signed and rolled out entirely on the Fury; the record written.
@@ -283,9 +341,50 @@ After Phase 5 has produced one promotion, because both pieces read what a promot
 **Exit:** the eval report of a real run open in a workbench from the RHOAI dashboard; one promoted version followed
 from the registry view to the RHEM catalog to the device, by clicking, with no terminal.
 
+### Phase 5c — The evaluation dashboard on the Fury (added 2026-09-19)
+
+A separate repository holds a dashboard that compares model versions from per-episode records: success rate with
+a confidence interval, cubes placed, smoothness, a learning curve. On the development system it ran on a laptop,
+read MinIO and Kafka through the NodePorts from its own buckets, and the 360-seed paired evaluation was converted
+by hand into its record schema (D138). Its integration document asks only for a link from our dashboard; it is
+guidance, not a contract. **Reviewed 2026-09-19; nothing built; the shape below is a proposal to settle with the
+operator and the dashboard's author.**
+
+What the review found (its code was read and run against our records):
+- One small Flask container, no database, read-only, nothing fetched from the internet at run time, builds on
+  arm64 as it is. No image is published and it has no manifests: we build and deploy it.
+- Our **live** curated and rejected records fit its schema unchanged.
+- It **cannot read the pipeline's evaluation records** (no per-episode id or model version, the `eval-` label is
+  dropped on purpose, `steps` / `duration_s` are flat) and it never reads `eval_report.json` — so it shows two
+  unpaired rates, rounded (82 % / 93 %), and not the paired result the gate, the PR and the registry carry
+  (fixed 57, broken 19, net +38). A conversion step is needed for the act 1 comparison.
+- Its Kafka path fetches from whichever bucket a manifest names, not from the buckets it is configured with: an
+  instance pointed at separate comparison buckets still takes in live passes under the same model label, and the
+  rates drift. Separate buckets isolate writers, not this reader.
+- Episodes with a failed cube count (`cubes_placed: null`) count as policy failures there; our curator keeps
+  them apart on purpose.
+- The hub's read-only MinIO user is in namespace `minio` and its policy covers the two live buckets only.
+
+Proposed shape: **in the cluster, by GitOps, from an arm64 image built here** (one file under `gitops/flywheel/`,
+no laptop, no NodePort, no tailnet at demo time), as two instances of the one image — a **comparison** instance in
+files mode, fed by a small sidecar that turns the two per-policy records the act 1 run uploads
+(`s3://episodes-data/eval/<run_id>/`) into its schema, and a **live** instance on the native buckets and Kafka.
+Files mode has no Kafka path, so the comparison cannot drift. Asked of the dashboard's author, in order of value:
+a bucket filter on (or a switch for) the Kafka path; reading the pipeline's evaluation records natively; a panel
+from `eval_report.json` (fixed / broken / net / p / verdict); sensor-fault episodes kept out of the denominator;
+one decimal on the rates. If those land, the sidecar is deleted. On our side: the link in our dashboard (its
+address from an env var, hidden when unset), the read-only policy extended in git, and the resources named after
+a person renamed to role names. Open, for a human: whether we may build and ship an image of a repository that
+declares no terms.
+
+**Exit:** the dashboard, reachable from the booth, shows the teacher-vs-v2 comparison the act 1 promotion is
+gated on, and live episodes from the loop on this machine.
+
 ### Phase 6 — Tenant T1: large-model inference on RHAIIS
 
 > **Status 2026-09-19 (D154, D156).** The model serves on this GPU with tool calling (about 140 tokens/s single stream, MIG off, beside the flywheel). The host service for tenants mode is built and not yet run (`63-assistant-install.sh`, `flywheel/llm-assistant.container`, started by `fury-mode tenants` on slice `0:0`). Still to do: the run on the slice, exposure beyond loopback, the isolation test (step 4).
+
+Next, in order (needs the flywheel paused for about an hour; ledger L9): install the service → switch to tenants → `ask` and `bench` on slice `0:0`, which gives the number to quote for the slice → switch back. Then: how the assistant is reached from the booth (it listens on loopback today) and with which client; the isolation test; shred the pull secret. **For the runbook:** a cold start of the model takes about six minutes, and `fury-mode tenants` starts it without waiting — switch that long before act 2 needs an answer.
 
 1. Verify RHAIIS has an aarch64 image: `skopeo inspect --raw docker://registry.redhat.io/rhaii/vllm-cuda-rhel9:<tag> | jq '.manifests[].platform'` (**the namespace is `rhaii/` from 3.4 on**; `rhaiis/` stops at 3.3 — catalog, 2026-09-19. Newest arm64: `3.5.1`, manifest list `sha256:c056e61672b6aea489ad5dde0bd2f8497230f5333e87f7cf6c494eba3bfdc808`; `3.4.4` is the release line the model card was validated on). If not, fallback is upstream vLLM aarch64 (`nvcr.io/nvidia/vllm:<tag>`) — note the story changes from "RHAIIS" to "vLLM on RHEL".
 2. Mount the `models` disk **after asking what's on it** (or use `/data/models`); pull the model to it.
@@ -296,6 +395,8 @@ from the registry view to the RHEM catalog to the device, by clicking, with no t
 
 ### Phase 7 — Fleet scaling on the box
 
+> **Shape not decided (2026-09-19).** The operator's direction: the fleet is where RHEM management is shown in act 2, as a CUDA-based scaled fleet on one of the tenant slices, kept separate from the assistant (which is why the assistant is a plain host service, D156). Candidates: the CPU-policy VMs below; a fleet whose cameras are rendered with CUDA on one slice (Warp / MuJoCo-Warp ran in a 1g slice — unknowns 11 and 12; the policy's gap to those pixels is open); a simulated large fleet in the RHEM UI. Underneath all of them: every policy server offers the same `/run_policy` name (D132), so more than one served policy on one ROS graph needs namespacing or separate routers. To decide before building; record as a D-entry. Still needed from a human either way: the RHEL 10 aarch64 guest image.
+
 - RHEL 10 aarch64 KVM guest image (human downloads from access.redhat.com) + cloud-init; N=4–6 VMs, 6 vCPU / 12 GiB each on `fury-net` (`10.20.0.21+`), registered via activation key.
 - `device/enroll.sh` each with `site=fury gpu=none policy_device=cpu`, one of them `role=canary`. They run the CPU branch (184 ms p95 proven on the desktop).
 - One promotion rolls canary → fleet; RHEM UI shows the fan-out; each device's own signature/Rekor verification.
@@ -303,6 +404,8 @@ from the registry view to the RHEM catalog to the device, by clicking, with no t
 **Exit:** N+1 devices Healthy in one Fleet; a rollout observed batch by batch.
 
 ### Phase 8 — Making the tenants visible
+
+> **Status 2026-09-19.** An arm64 DCGM exporter image exists (`nvcr.io/nvidia/k8s/dcgm-exporter:4.5.2-4.8.1-ubi9`). The hub has Perses but no Prometheus to scrape with, so the draft adds a Cluster Observability Operator `MonitoringStack`. The host unit, the install script, the scrape config, the datasource and the dashboard are drafted and not yet run (ledger L12).
 
 - **DCGM exporter** on the host (verify an aarch64/sbsa image; run with `--device nvidia.com/gpu=all`, port 9400), scraped by the SNO Prometheus/COO stack, Perses panel: per-MIG-instance utilization and memory. `nvidia-smi` in a terminal is the fallback.
 - **T4:** 2–3 concurrent ACT training/eval jobs on `0:3` (MPS on top of MIG if they contend) — the "parallel sweeps" beat.
@@ -329,6 +432,7 @@ What the running demo reaches today, and where each goes:
 | GitHub (API) | the promotion PR (`PyGithub`) and the merge click | a provider switch in `open_promotion_pr`; the PR is merged in the local UI |
 | GitHub releases | `cosign` and `crane`, downloaded at **every** pipeline run (Tekton Task and KFP) | baked into the task/component images |
 | PyPI | six of seven KFP components `pip install` at start | baked into the component image |
+| PyPI | *(found 2026-09-19)* four long-running hub pods `pip install` at every start: `rejected-mirror` (a CronJob — every run), `sync-agent`, `manifest-consumer` and the flywheel dashboard. Offline, a restarted pod never comes back, and with `rejected-mirror` down no reject reaches MinIO, so every rate computed from the buckets reads too high | a small image with those packages, built here and pinned by digest |
 | pytorch.org / Hugging Face | possibly backbone weights at training start (unverified) | pre-seeded cache, offline switches set; found by the first offline training run |
 | Hugging Face, `registry.redhat.io` | the act 2 model and the serving image | fetched ahead (`tools/host/fury/60-model-fetch.sh`; the image by digest) |
 | Tailscale control plane / relay | the presenting laptop's path to the machine | a direct LAN path: the host's dnsmasq and the `10.20.0.0/24` route offered on a wired interface |
@@ -345,6 +449,8 @@ Stop T3/T4 tenants, `nvidia-smi mig -dci -dgi`, `-cgi 9,14,19 -C` (3g + 2g + 1g)
 
 Full run of the booth narrative on the Fury: flywheel beats, tenant view, fleet rollout, LLM. Capture recordings from the Fury for the contingency kit.
 
+Entry conditions added 2026-09-19: the ledger in section 4 is empty or every remaining row is a deliberate "not for the show"; the promotion beat has been reset and re-run at least once (L4); the runbook's demo-time steps use only the wrapped commands (L14) and carry the measured waits (mode switch, the assistant's cold start, a rollout's pull); rehearsed in self-contained mode if Phase 8b closed.
+
 ---
 
 ## 5. Unknowns to retire early (in the order they bite)
@@ -356,7 +462,7 @@ Full run of the booth narrative on the Fury: flywheel beats, tenant view, fleet 
 5. ~~KVM/UEFI aarch64 guest on Grace (Phase 2).~~ **Retired 2026-09-19 (D146):** a 32 vCPU / 128 GiB UEFI guest with a 4k-page kernel runs on the 64k-page host; the hub installed in one pass.
 6. ~~Empty/retargeted rollout batches (Phase 3.4).~~ **Retired on paper 2026-09-19 (D148):** the Fleet's batches are `role=canary` (limit 1), then `site=fury`, then flightctl's implicit last batch; its documentation expects batches that match nothing, and the development stand-in ran with one for weeks. Proof on this hub: the first enrolled device meets an empty canary batch (Phase 4).
 7. ~~RHAIIS aarch64 image (Phase 6.1).~~ **Retired on paper 2026-09-19:** RHAIIS 3.5 `rhaii/vllm-cuda-rhel9` (not `rhaiis/`, which stops at 3.3) is published for arm64 and GB300/AArch64/CUDA 13 is in Red Hat's supported configurations (D143). Proof is pulling and serving it in Phase 6.
-8. DCGM exporter aarch64 (Phase 8).
+8. DCGM exporter aarch64 (Phase 8). **Half retired 2026-09-19:** an arm64 image is published (`nvcr.io/nvidia/k8s/dcgm-exporter:4.5.2-4.8.1-ubi9`); proof is per-slice metrics from this GPU in tenants mode.
 9. ~~*(added by the 21:10 re-check)* Tailscale subnet routing on the 64k kernel once `xt_mark` is loadable (Phase 0.6).~~ **Retired 2026-09-18:** with `kernel-64k-modules-extra` the `ts-forward` MARK rule installs; `10.20.0.0/24` is advertised and approved, a stand-in guest at `10.20.0.99` on `virbr-fury` answered pings from a laptop, and the laptop resolves the cluster names through split DNS.
 10. *(2026-09-19, D142)* **Gazebo cannot render on the GPU while MIG is on, and on CPU it is too slow for the policy.** With MIG off: two full-rate sims. Open: the demo structure (two GPU modes vs CUDA-rendered cameras under MIG).
 11. ~~*(2026-09-19)* Does NVIDIA Warp (CUDA-only ray casting) run inside a MIG slice on this box.~~ **Retired 2026-09-19:** yes — 2,096 two-camera 640x480 frame pairs/s on a 1g.31gb slice (6,449 on the whole GPU), toy scene; D142 addendum.
