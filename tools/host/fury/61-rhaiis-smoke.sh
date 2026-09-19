@@ -3,13 +3,15 @@
 # RedHatAI/Qwen3-Coder-Next-NVFP4 on this silicon at all - aarch64, 64k pages, sm_103, one MIG slice.
 # A hand-started container, not the governed quadlet: loopback only, nothing survives `down`.
 #
-#   ./61-rhaiis-smoke.sh up [cdi-device] [gpu-share]
+#   ./61-rhaiis-smoke.sh up [cdi-device] [gpu-share] [knob=value ...]
 #                                          default nvidia.com/gpu=0:0 (the 3g slice, tenants mode). Starts the server
 #                                          detached, follows the load, returns once /health answers. Ctrl-C only
 #                                          stops the watching; the container carries on.
 #                                          With MIG off, beside the running flywheel:  up nvidia.com/gpu=all 0.5
 #                                          (half of the GPU, about what the 3g slice offers; the default share is
 #                                          meant for a slice this server has to itself)
+#                                          Any judgement call below can be flipped for one run without editing:
+#                                            up nvidia.com/gpu=all 0.5 moe_backend=flashinfer_cutlass gdn_backend=triton
 #   ./61-rhaiis-smoke.sh ask               one chat completion and one tool call; tokens/s            (no root)
 #   ./61-rhaiis-smoke.sh bench [n]         n streamed requests of 256 tokens, one after another (default 5):
 #                                          time to first token, tokens/s                              (no root)
@@ -66,6 +68,9 @@ cache_vol=rhaiis-smoke-cache    # named volume over /tmp, where the image keeps 
                         #   and every `up` pays the kernel JIT again.
 host_ip=127.0.0.1       # with host networking vLLM finds "its" address by routing a socket towards 8.8.8.8; one GPU in one
                         #   process needs only loopback, uplink or not (vllm/utils/network_utils.py get_ip). Empty: vLLM decides.
+debug_blocking=no       # yes: CUDA_LAUNCH_BLOCKING=1 and no compile/graphs. A CUDA error is otherwise reported at some
+                        #   later call; this makes the traceback name the kernel that really failed. Slow: diagnosis only.
+extra_env=              # NAME=VALUE[,NAME=VALUE] handed to the container as is, for a backend that only has an env switch
 ready_timeout=3600      # seconds. A cold FlashInfer JIT took 26 min for this model on a 20-core GB10 (vllm issue 48031).
 # =======================================================================================================================
 
@@ -102,14 +107,25 @@ model_id() {
     [[ -n $id ]] || die "nothing answers on $url - is it up?  $0 status"
 }
 
+knobs=' max_len gpu_util max_seqs kv_dtype tool_parser enforce_eager moe_backend attn_backend gdn_backend load_format
+        clear_jemalloc selinux explicit_entry cache_vol host_ip ready_timeout debug_blocking extra_env '
+
 up() {
-    local dev=${1:-nvidia.com/gpu=0:0} mode state next t0 shards run pre=()
+    local dev=nvidia.com/gpu=0:0 mode state next t0 shards run pre=() a k v flips=() kv
     need podman nvidia-smi nvidia-ctk curl jq ss runuser
-    if [[ -n ${2:-} ]]; then
-        [[ $2 =~ ^0\.[0-9]+$ ]] || die "the gpu share is a fraction such as 0.5, not '$2'"
-        gpu_util=$2
-    fi
+    for a in "$@"; do
+        [[ -n $a ]] || continue
+        k=${a%%=*} v=${a#*=}
+        if [[ $a == nvidia.com/* ]]; then dev=$a
+        elif [[ $a =~ ^0\.[0-9]+$ ]]; then gpu_util=$a; flips+=("gpu_util=$a")
+        elif [[ $a == *=* && $knobs == *[[:space:]]"$k"[[:space:]]* && $v =~ ^[A-Za-z0-9_.:/,=-]*$ ]]; then
+            printf -v "$k" '%s' "$v"; flips+=("$a")
+        else die "'$a' is neither a CDI device, a gpu share such as 0.5, nor one of the knobs:$knobs"
+        fi
+    done
+    if [[ $debug_blocking == yes ]]; then enforce_eager=yes; fi
     date -u
+    echo "flipped for this run: ${flips[*]:-nothing}"
     mode=$(mig)
     echo "mig mode: $mode    requested device: $dev"
     cdi_has "$dev" || die "$dev is not a CDI device on this host right now. What there is:
@@ -140,6 +156,10 @@ $(nvidia-ctk cdi list 2>/dev/null | grep 'nvidia.com/' | sed 's/^/    /')
     run=(podman run -d --name "$name" --pull=never --network host --device "$dev" --shm-size=4g "${pre[@]}"
          -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e VLLM_NO_USAGE_STATS=1 -e DO_NOT_TRACK=1)
     [[ -n $host_ip ]] && run+=(-e "VLLM_HOST_IP=$host_ip")
+    [[ $debug_blocking == yes ]] && run+=(-e CUDA_LAUNCH_BLOCKING=1)
+    if [[ -n $extra_env ]]; then
+        while IFS= read -r -d , kv; do [[ -n $kv ]] && run+=(-e "$kv"); done <<<"$extra_env,"
+    fi
     if [[ $selinux == disable ]]; then run+=(-v "$model:$mnt:ro"); else run+=(-v "$model:$mnt:ro,z"); fi
     [[ -n $cache_vol ]] && run+=(-v "$cache_vol:/tmp")
     [[ $explicit_entry == yes ]] && run+=(--entrypoint python3)
@@ -297,10 +317,10 @@ down() {
 }
 
 case ${1:-} in
-up)     up "${2:-}" "${3:-}" ;;
+up)     up "${@:2}" ;;
 ask)    ask ;;
 bench)  bench "${2:-}" ;;
 status) status ;;
 down)   down "${2:-}" ;;
-*)      echo "usage: ${0##*/} up [cdi-device] [gpu-share] | ask | bench [n] | status | down [purge]" >&2; exit 1 ;;
+*)      echo "usage: ${0##*/} up [cdi-device] [gpu-share] [knob=value ...] | ask | bench [n] | status | down [purge]" >&2; exit 1 ;;
 esac
