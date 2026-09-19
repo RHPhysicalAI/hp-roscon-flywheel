@@ -53,6 +53,9 @@ tool_parser=qwen3_coder # model card. qwen3_xml is the other name registered for
 enforce_eager=no        # yes: no torch.compile, no CUDA graphs. Slower, but two subsystems fewer in a failing start.
 moe_backend=auto        # NVFP4 experts. auto tries flashinfer_trtllm first on sm_10x; then flashinfer_cutlass, cutlass,
                         #   marlin, emulation (vllm/model_executor/layers/fused_moe/oracle/nvfp4.py).
+linear_backend=auto     # NVFP4 linear layers (--linear-backend). auto tries flashinfer_cutedsl, flashinfer_cutlass, cutlass,
+                        #   marlin ... (vllm/model_executor/kernels/linear/__init__.py). cutlass and marlin are vLLM's own
+                        #   compiled kernels and need nothing from FlashInfer.
 attn_backend=auto       # auto puts FLASHINFER first on sm_10x; then FLASH_ATTN, TRITON_ATTN (vllm/platforms/cuda.py).
 gdn_backend=auto        # linear-attention prefill. auto is FlashInfer's JIT-compiled kernel on Blackwell with CUDA 13;
                         #   triton skips that JIT (vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py).
@@ -109,7 +112,7 @@ model_id() {
     [[ -n $id ]] || die "nothing answers on $url - is it up?  $0 status"
 }
 
-knobs=' max_len gpu_util max_seqs kv_dtype tool_parser enforce_eager moe_backend attn_backend gdn_backend load_format
+knobs=' max_len gpu_util max_seqs kv_dtype tool_parser enforce_eager moe_backend linear_backend attn_backend gdn_backend load_format
         clear_jemalloc selinux explicit_entry cache_vol host_ip ready_timeout debug_blocking extra_env '
 
 up() {
@@ -174,6 +177,7 @@ $(nvidia-ctk cdi list 2>/dev/null | grep 'nvidia.com/' | sed 's/^/    /')
           --enable-auto-tool-choice --tool-call-parser "$tool_parser")
     [[ $enforce_eager == yes ]]  && run+=(--enforce-eager)
     [[ $moe_backend != auto ]]   && run+=(--moe-backend "$moe_backend")
+    [[ $linear_backend != auto ]] && run+=(--linear-backend "$linear_backend")
     [[ $attn_backend != auto ]]  && run+=(--attention-backend "$attn_backend")
     [[ $gdn_backend != auto ]]   && run+=(--gdn-prefill-backend "$gdn_backend")
     [[ $load_format != auto ]]   && run+=(--load-format "$load_format")
