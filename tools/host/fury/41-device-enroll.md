@@ -224,7 +224,174 @@ leaves a hand-stopped target alone, but RHEM will show the application in error 
 The same stop is what makes a local eval safe: never a second `/run_policy` on this host while the device
 serves (D132) — stop the application first, start it again afterwards.
 
-## 8. If something is off
+`tools/hub/fury-switch.sh tenants | flywheel | status` does all of this from the laptop in one command, and
+handles the assistant of section 8 the same way.
+
+## 8. Later: serving the assistant from the large slice (`llm_gpu_device`)
+
+**Draft — not yet run.** The Fleet's second application, `llm-assistant`, is the governed form of what
+`61-rhaiis-smoke.sh` started by hand (D154): the same server flags, on the 3g slice, in tenants mode only. The
+design, what is assumed and the test plan for the first run are in `62-assistant-notes.md`; this section is the
+operator's sequence. Every device of the Fleet gets the application. A device without the `llm_gpu_device` label
+renders a placeholder that exits at once and pulls nothing new; the label turns it into the server.
+
+The order matters: the application has to be stopped by default before the label arrives, and the smoke
+container has to be gone — it uses the same port and the same GPU. `$DEV` and `$FURY` are the device name and
+the ssh target from sections 4 and 2; the laptop blocks run from the root of this repository.
+
+Laptop — the Fleet carries the application, then stop it fleet-wide. This is a default for every device now in
+the Fleet and every device that joins later; a later start on one device overrides it for that device.
+
+```
+flightctl get fleet/act-inference -o json | jq -r '.spec.template.spec.applications[].name'
+flightctl app stop fleet/act-inference --name llm-assistant --yes
+flightctl get device/$DEV -o json | jq -r '.status.applications[] | [.name, .status, .ready] | @tsv'
+```
+
+Expect both names, then `llm-assistant` `Stopped` beside `act-inference` `Running`. The policy is not restarted
+by any of this.
+
+Laptop — into tenants mode. Without the label the switch stops the policy, turns MIG on and starts nothing:
+
+```
+FURY_SSH=$FURY tools/hub/fury-switch.sh tenants
+```
+
+Host — what the assistant needs, and the UUID of the 3g slice. It is the `MIG 3g.126gb  Device  0:` line; the
+same name appears in the CDI list. The UUIDs survive mode switches and reboots (D141), so this is read once.
+
+```
+cd ~/flywheel-setup
+./61-rhaiis-smoke.sh down
+sudo podman image exists docker.io/vllm/vllm-openai@sha256:251eba5cc7c12fed0b75da22a9240e582b1c9e39f6fbc064f86781b963bd814f && echo image present
+ls /data/models/RedHatAI/Qwen3-Coder-Next-NVFP4/config.json
+sudo ss -Hltn 'sport = :8000'
+nvidia-smi -L
+nvidia-ctk cdi list | grep MIG-
+```
+
+Expect `image present`, the config file, nothing listening on 8000, and four `MIG-` names.
+
+Laptop — add the label. Edit the first line, paste the rest:
+
+```
+LLM_GPU_DEVICE=MIG-00000000-0000-0000-0000-000000000000
+d=$(mktemp -d)
+flightctl get device/$DEV -o json | jq --arg v $LLM_GPU_DEVICE 'del(.status) | .metadata.labels.llm_gpu_device = $v' > $d/device.json
+flightctl apply -f $d/device.json
+rm -f $d/device.json
+rmdir $d
+flightctl get device/$DEV --rendered | grep -e 'Image=docker.io' -e 'AddDevice=nvidia.com/gpu=MIG' -e ExecCondition=
+flightctl get device/$DEV -o json | jq -r '.status.updated.status, (.status.applications[] | [.name, .status, .ready] | @tsv)'
+```
+
+What to expect: the device re-renders, the agent removes the placeholder and installs the real unit, starts it and
+stops it again at once because the default is stopped. Within a minute or two: `UpToDate`, `llm-assistant`
+`Stopped`. No model is loaded. On the host the unit is `llm-assistant-300457-llm-assistant.service` and it is
+inactive. From here on both switch directions handle the assistant.
+
+Laptop — start it. The switch can be run again while already in tenants mode; it stops both applications,
+re-applies the MIG layout and starts the assistant, then waits and prints a line every 30 s:
+
+```
+FURY_SSH=$FURY tools/hub/fury-switch.sh tenants
+```
+
+Host, in a second terminal — the load as it happens. A cold start was measured at 5 min 46 s; the first start
+on an empty cache volume may take longer, and the health check allows 20 minutes before it counts failures.
+
+```
+sudo journalctl -fu llm-assistant-300457-llm-assistant.service
+```
+
+Host — open the port. The server listens on every address of the machine, port 8000; firewalld decides who
+reaches it. A laptop on the tailnet arrives on `tailscale0`, whichever of the host's addresses it uses:
+
+```
+Z=$(sudo firewall-cmd --get-zone-of-interface=tailscale0)
+[[ $Z == "no zone" || -z $Z ]] && Z=$(sudo firewall-cmd --get-default-zone)
+echo $Z
+sudo firewall-cmd --zone=$Z --list-all
+```
+
+If that zone's target is `ACCEPT` (the `trusted` zone), nothing has to be opened. Otherwise open the port for
+tailnet source addresses only — the zone may also hold the uplink:
+
+```
+sudo firewall-cmd --permanent --zone=$Z --add-rich-rule='rule family="ipv4" source address="100.64.0.0/10" port port="8000" protocol="tcp" accept'
+sudo firewall-cmd --reload
+sudo firewall-cmd --zone=$Z --list-rich-rules
+```
+
+Only if something on the VM network (a pod on the cluster, a fleet VM) has to reach the assistant at
+`10.20.0.1:8000`: guest-to-host traffic is filtered by libvirt's policy, the way `06-network.sh` opened DNS.
+
+```
+sudo firewall-cmd --permanent --policy=libvirt-to-host --add-port=8000/tcp
+sudo firewall-cmd --reload
+sudo firewall-cmd --info-policy=libvirt-to-host
+```
+
+Laptop — verify. `10.20.0.1` is the host on the routed network; its tailnet address works as well.
+
+```
+H=10.20.0.1
+curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://$H:8000/health
+curl -s http://$H:8000/v1/models | jq -r '.data[] | [.id, .max_model_len] | @tsv'
+curl -s http://$H:8000/v1/chat/completions -H 'Content-Type: application/json' -d '{"model": "qwen3-coder-next", "max_tokens": 200, "messages": [{"role": "user", "content": "Write a Python function that clamps a joint angle to its limits. Code only."}]}' | jq -r '.choices[0].message.content, .usage'
+```
+
+Expect `200`, then `qwen3-coder-next  131072`, then code and a usage record. With an API key configured, `/health`
+answers as before and the two `/v1` calls need `-H "Authorization: Bearer $KEY"`.
+
+Laptop — the RHEM side:
+
+```
+flightctl get device/$DEV -o json | jq '{device: .status.summary.status, updated: .status.updated.status, applications: .status.applicationsSummary.status, apps: [.status.applications[] | {name, status, ready, restarts}]}'
+FURY_SSH=$FURY tools/hub/fury-switch.sh status
+```
+
+Expect `llm-assistant` `Running` `1/1` and `act-inference` `Stopped`, applications `Healthy`. While the model
+loads the application is `Running` `0/1` and the summary `Degraded`; that is the health check's start period,
+not a fault.
+
+Host — what the agent made of it:
+
+```
+sudo podman ps --format '{{.Names}}  {{.Status}}'
+sudo grep -h -e Image= -e AddDevice= -e ExecCondition= /etc/containers/systemd/llm-assistant/*.container
+sudo podman volume ls --filter name=llm-assistant
+nvidia-smi
+```
+
+Expect `llm-assistant-300457-llm-assistant` `Up … (healthy)`, the label's UUID in `AddDevice=` and
+`ExecCondition=`, the volume `llm-assistant-300457-llm-cache`, and the server's processes on the 3g instance only.
+
+Back to act 1 — the assistant is stopped through RHEM, then MIG goes off and the policy comes back:
+
+```
+FURY_SSH=$FURY tools/hub/fury-switch.sh flywheel
+```
+
+If the hub is down, the local equivalent of the stop is
+`sudo systemctl stop llm-assistant-300457-flightctl-quadlet-app.target`, as for the policy in section 7.
+
+Taking it away again: remove the label, and the application falls back to the placeholder. The cache volume
+stays — remove it by hand if the space is wanted, or after changing the server image.
+
+```
+d=$(mktemp -d)
+flightctl get device/$DEV -o json | jq 'del(.status) | del(.metadata.labels.llm_gpu_device)' > $d/device.json
+flightctl apply -f $d/device.json
+rm -f $d/device.json
+rmdir $d
+```
+
+```
+sudo podman volume rm llm-assistant-300457-llm-cache
+```
+
+## 9. If something is off
 
 - Nothing pending in step 4: `sudo journalctl -u flightctl-agent -n 50 --no-pager` on the host. `x509` errors
   mean the config was made against the other cluster — fix the laptop's name resolution, then on the host
@@ -238,3 +405,11 @@ serves (D132) — stop the application first, start it again afterwards.
 - `rejected by policy` on a pull from somewhere else (nvcr.io, docker.io): the device lost its `pull_default`
   label and rendered the fail-closed default. Put the label back (section 6 shows a label edit). For a single
   deliberate pull: `sudo podman pull --signature-policy /etc/containers/policy.json.rhel-default …`.
+- `llm-assistant` stays `Unknown` after a start and its unit is inactive, with `is not there (MIG off): not starting`
+  in `sudo journalctl -u llm-assistant-300457-llm-assistant.service`: the unit's `ExecCondition=` did not find the
+  label's slice in `nvidia-ctk cdi list` — the machine is in flywheel mode, or the UUID in the label is not the 3g
+  slice's. Nothing retries a skipped start; after fixing the cause, `flightctl app restart device/$DEV --name llm-assistant --yes`.
+- `llm-assistant` never becomes healthy and `restarts` climbs: the journal of that unit has the server's own
+  error. After five starts within an hour the unit stays `failed` (`start-limit-hit`); `flightctl app stop` and
+  then `app start` clears that, because the agent resets the unit on every stop.
+- The laptop's `curl` times out while `curl -s http://127.0.0.1:8000/health` on the host answers: firewalld, section 8.

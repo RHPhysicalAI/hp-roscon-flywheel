@@ -20,9 +20,11 @@ set -uo pipefail
 cfg=/etc/sysconfig/mig-config
 loop=(flywheel-runner.service act-coordinator.service act-inference.service so-arm-sim.service)   # act-inference.service: before enrolment only
 policy='act-inference-*-act-inference.service'                             # after: <app id>-<quadlet>, named by the agent
+assistant='llm-assistant-*-llm-assistant.service'                          # act 2's coding assistant, the Fleet's second application
 die() { echo "fury-mode: $*" >&2; exit 1; }
 mig() { nvidia-smi -i 0 --query-gpu=mig.mode.current --format=csv,noheader; }
-policy_state() { systemctl list-units --all --no-legend --plain "$policy" | awk '{print $3 "/" $4}'; }
+unit_state() { systemctl list-units --all --no-legend --plain "$1" | awk '{print $3 "/" $4}'; }
+policy_state() { unit_state "$policy"; }
 
 drain() {
     # first, so that a refusal leaves the sim and the recorder running. A loaded but idle policy holds
@@ -32,6 +34,13 @@ drain() {
         *) die "the RHEM-managed policy is up and holds the gpu. From the laptop:
     flightctl app stop device/<name> --name act-inference --yes
 then run this again. Hub unreachable: sudo systemctl stop '${policy%-act-inference.service}-flightctl-quadlet-app.target'" ;;
+    esac
+    # the same for the assistant: it has its slice from the moment the container starts, before CUDA lists a process
+    case $(unit_state "$assistant") in
+        ''|inactive/*|failed/*) ;;
+        *) die "the RHEM-managed assistant is up and holds the gpu. From the laptop:
+    flightctl app stop device/<name> --name llm-assistant --yes
+then run this again (tools/hub/fury-switch.sh does both). Hub unreachable: sudo systemctl stop '${assistant%-llm-assistant.service}-flightctl-quadlet-app.target'" ;;
     esac
     # hours of work would go with the stop below: make the operator end a run on purpose
     if pgrep -f 'lerobot-train|assemble_dataset' >/dev/null || podman pod exists eval-rig 2>/dev/null; then
@@ -51,6 +60,7 @@ status() {
         printf '%-28s %s\n' "$u" "$(systemctl is-active "$u" 2>/dev/null)"
     done
     printf '%-28s %s\n' "policy (rhem-managed)" "$(policy_state)"
+    printf '%-28s %s\n' "assistant (rhem-managed)" "$(unit_state "$assistant")"
     echo "bags: $(find /data/flywheel/bags -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)   /data free: $(df -h --output=avail /data | tail -1 | tr -d ' ')"
 }
 

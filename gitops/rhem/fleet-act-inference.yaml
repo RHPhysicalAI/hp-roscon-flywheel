@@ -35,6 +35,9 @@
 #                                                 value is not a policy type and podman then refuses every pull.
 #   zenoh_router     10.0.0.48       <fury-ip>    ZENOH_ROUTER=<router>:<port> (two labels: ':' is not a
 #   zenoh_port       7447            7447         legal label-value character, D033)
+#   llm_gpu_device   (unset)         MIG-<uuid>   the second application, llm-assistant. Set: the coding assistant's quadlet
+#                                                 with this CDI device as its GPU (the 3g slice, by MIG-<uuid> for the same
+#                                                 reason as gpu_device). Unset: a placeholder that exits at once.
 #
 # Placeholders are only legal where flightctl renders them (docs/user/using/managing-fleets.md
 # "Defining Device Templates"): inline config content/path, inline application content/path, env var
@@ -74,6 +77,30 @@
 # MODEL_VERSION in envVars. Rollback is `git revert` — the previous image is still in local storage.
 # ACTIONS_PER_CHUNK / CHUNK_SIZE_THRESHOLD are the same on both boxes (one code path); see D0xx for
 # the GPU-parity choice and the 30/0.95 baseline caveat.
+#
+# Second application, llm-assistant (D143 act 2, D154; DRAFT, not yet run as a quadlet — tools/host/fury/62-assistant-notes.md):
+# a vLLM OpenAI-compatible server for the coding model on one MIG slice of the GPU host, with the flags
+# tools/host/fury/61-rhaiis-smoke.sh served it with.
+#   Where the condition lives. flightctl renders every application of a template for every device of the Fleet —
+#   there is no per-application condition (internal/tasks/fleet_rollout.go, v1.3.0) — and a device belongs to
+#   one Fleet. So the condition is inside the quadlet file: its whole content is one if/else on llm_gpu_device.
+#   The agent pulls every Image= it finds in a rendered quadlet before anything starts, whatever the unit's own
+#   conditions say (provider/quadlet.go collectOCITargets), so the unlabelled branch does not name the server
+#   image at all: it names the runtime image of the first application (in storage already, signed, inside the
+#   default-reject policy) and exits at once. An application needs at least one .container with an Image=.
+#   The if/else/end tags sit on comment lines: the API also parses the UNRENDERED text as a unit file, where a
+#   bare tag line inside a section is a parse error; on a comment line the unit parser skips it and the template
+#   engine still acts on it. That parse reads the first [Container] it meets, which is the real one.
+#   Lifecycle. The assistant and the policy never run together: MIG cannot change while either holds the GPU.
+#   tools/hub/fury-switch.sh stops one and starts the other around fury-mode, with flightctl app stop|start
+#   (per-device overrides that survive rollouts). desiredState is read-only in the API and cannot be written
+#   here; "stopped until the first switch" is one command once this file has synced — a fleet-wide default
+#   that a later device-level start overrides:   flightctl app stop fleet/act-inference --name llm-assistant --yes
+#   The agent starts a newly installed application and then stops it when its desiredState is stopped; that
+#   moment, and any start with MIG off, is what ExecCondition= in the unit keeps quiet.
+#   Caches. An application update is remove-then-add. On removal the agent deletes image-driver and tmpfs volumes
+#   and leaves a plain local named volume alone (lifecycle/quadlet.go removeEphemeralVolumes), so llm-cache.volume
+#   (torch.compile, Triton and FlashInfer caches) outlives updates and the removal of the application itself.
 #
 # Schema note: v1beta1 config providers are a plain oneOf distinguished by shape (`inline` / `gitRef` /
 # `secretRef` / `httpRef`); the `configType:` key some 1.3.0 doc examples still show is not in the
@@ -197,6 +224,30 @@ spec:
                 TORCH_NUM_THREADS=8
                 {{ end }}# The episode emitter (curator POST to http://10.0.0.49:30802/episode) runs in the sim container on the
                 # host, not here; it reads /flywheel/model_version from this container's publisher. No CURATOR_URL needed.
+        # Read by EnvironmentFile= in the llm-assistant quadlet, which fails to start without the file. As delivered
+        # here it sets nothing: the server answers without an API key.
+        - name: llm-assistant-env
+          inline:
+            - path: /etc/llm-assistant/env
+              mode: 0644
+              content: |
+                # Rendered by RHEM (Fleet act-inference); read by EnvironmentFile= in the llm-assistant quadlet.
+                # No VLLM_API_KEY is set: the server answers without authentication.
+        # UNTESTED — an API key without putting it in git: REPLACE the llm-assistant-env entry above with the one
+        # below (two providers writing one path is not defined). Secret llm-assistant-env in the hub's flightctl
+        # namespace has ONE key, named env, whose value is the line VLLM_API_KEY=<key>; flightctl writes each key
+        # of a Secret as <mountPath>/<key>, so that is /etc/llm-assistant/env again. vLLM reads VLLM_API_KEY when
+        # --api-key is not given (vllm/entrypoints/openai/api_server.py, v0.24.0), so the key is on no command
+        # line either; /health stays open, /v1/* wants "Authorization: Bearer <key>". Before merging: the Secret
+        # exists and the flightctl-worker service account may get it — a render that cannot read it fails for every
+        # device of this Fleet. The file lands on every device of the Fleet, always mode 0644 (flightctl 1.3 has no
+        # mode setting for a Secret), and in the rendered spec. Commands, RBAC and the per-device variant:
+        # tools/host/fury/62-assistant-notes.md
+        # - name: llm-assistant-env
+        #   secretRef:
+        #     name: llm-assistant-env
+        #     namespace: flightctl
+        #     mountPath: /etc/llm-assistant
       applications:
         - name: act-inference
           appType: quadlet
@@ -260,3 +311,103 @@ spec:
                 # PartOf= via a drop-in; [Install] follows the flightctl quadlet examples and is otherwise inert.
                 [Install]
                 WantedBy=default.target
+        # DRAFT — the coding assistant of act 2 (header: "Second application"). On the device the agent names the
+        # pieces llm-assistant-300457-…: unit llm-assistant-300457-llm-assistant.service, container and target
+        # likewise, volume llm-assistant-300457-llm-cache (300457 = first six digits of crc32("llm-assistant")).
+        - name: llm-assistant
+          appType: quadlet
+          inline:
+            - path: llm-cache.volume
+              content: |
+                [Volume]
+                # A plain local volume: no Image=, no tmpfs. The agent's clean-up leaves those in place, so the compiled
+                # kernels survive an update of this application. They belong to one build of the server: after
+                # changing Image= below, remove the volume by hand once (62-assistant-notes.md).
+                VolumeName=llm-cache
+            - path: llm-assistant.container
+              content: |
+                # {{ if ne (getOrDefault .metadata.labels "llm_gpu_device" "") "" }}
+                [Unit]
+                Description=Coding assistant, vLLM on one MIG slice (RHEM-managed, Fleet act-inference)
+                # the slice exists once the MIG layout is applied and the CDI spec rewritten; inert where those units are absent
+                After=mig-config.service nvidia-cdi-refresh.service
+                # a start that dies early costs little, one that dies late a 44 GiB load: five starts an hour, then stay
+                # down. flightctl app stop resets the count (the agent runs reset-failed on every stop).
+                StartLimitIntervalSec=1h
+                StartLimitBurst=5
+
+                [Container]
+                # which build of vLLM serves is this one line
+                Image=docker.io/vllm/vllm-openai@sha256:251eba5cc7c12fed0b75da22a9240e582b1c9e39f6fbc064f86781b963bd814f
+                ContainerName=llm-assistant
+                Network=host
+                AddDevice=nvidia.com/gpu={{ getOrDefault .metadata.labels "llm_gpu_device" "unset" }}
+                ShmSize=4g
+                # 60-model-fetch.sh put it there; :z relabels once for a directory shared between container instances
+                Volume=/data/models/RedHatAI/Qwen3-Coder-Next-NVFP4:/models/Qwen3-Coder-Next-NVFP4:ro,z
+                # all three caches live under /tmp, which is the volume
+                Volume=llm-cache.volume:/tmp
+                Environment=FLASHINFER_WORKSPACE_BASE=/tmp
+                Environment=VLLM_CACHE_ROOT=/tmp/vllm
+                Environment=TRITON_CACHE_DIR=/tmp/triton
+                # offline, no telemetry; one GPU in one process needs only loopback between its own parts
+                Environment=HF_HUB_OFFLINE=1
+                Environment=TRANSFORMERS_OFFLINE=1
+                Environment=VLLM_NO_USAGE_STATS=1
+                Environment=DO_NOT_TRACK=1
+                Environment=VLLM_HOST_IP=127.0.0.1
+                # set to empty on purpose, as in the smoke test (64k-page kernel)
+                Environment=LD_PRELOAD=
+                # optional VLLM_API_KEY; config llm-assistant-env above always writes the file
+                EnvironmentFile=/etc/llm-assistant/env
+                # The API server module, named explicitly, so that Image= is the only line a change of build touches.
+                # Flags as served by 61-rhaiis-smoke.sh (D154): context 131072, tool calling with the qwen3_coder
+                # parser, --linear-backend cutlass, --gdn-prefill-backend triton, no FlashInfer autotune at start.
+                # --gpu-memory-utilization is a share of the slice, not of the GPU. --host 0.0.0.0 with Network=host
+                # listens on every address of the machine: who reaches port 8000 is firewalld's decision
+                # (41-device-enroll.md, section 8). One line: the agent rewrites this file, and a line per key survives that.
+                Entrypoint=python3
+                Exec=-m vllm.entrypoints.openai.api_server --model /models/Qwen3-Coder-Next-NVFP4 --served-model-name qwen3-coder-next --host 0.0.0.0 --port 8000 --tensor-parallel-size 1 --max-model-len 131072 --gpu-memory-utilization 0.90 --max-num-seqs 8 --kv-cache-dtype auto --enable-auto-tool-choice --tool-call-parser qwen3_coder --linear-backend cutlass --gdn-prefill-backend triton --no-enable-flashinfer-autotune
+                # python is in any vLLM image by definition; curl and a shell need not be (JSON form: no shell involved)
+                HealthCmd=["python3","-c","import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status == 200 else 1)"]
+                # measured cold start 5 min 46 s (D154); a first start on an empty cache volume compiles more
+                HealthStartPeriod=20m
+                HealthInterval=30s
+                HealthTimeout=10s
+                HealthRetries=3
+                HealthOnFailure=kill
+                # vLLM shuts down on SIGTERM (the default signal); give it time to let go of the GPU before SIGKILL
+                StopTimeout=60
+
+                [Service]
+                # With MIG off the slice does not exist. ExecCondition= exiting 1-254 is a skip: the unit ends inactive, not
+                # failed, and Restart=always never restarts a skipped start (systemd service.c: result exec-condition). An
+                # ExecStartPre= could not do this: RestartPreventExitStatus= looks at the main process only, and a failed
+                # ExecStartPre= is restarted forever. After a skip nothing retries: the next start is flightctl app start.
+                ExecCondition=/bin/sh -c 'nvidia-ctk cdi list 2>/dev/null | tr -d "[:blank:]" | grep -qxF "nvidia.com/gpu={{ getOrDefault .metadata.labels "llm_gpu_device" "unset" }}" || { echo "CDI device nvidia.com/gpu={{ getOrDefault .metadata.labels "llm_gpu_device" "unset" }} is not there (MIG off): not starting"; exit 1; }'
+                SuccessExitStatus=143
+                Restart=always
+                RestartSec=30
+                # Started means the container runs (Notify= is left at its default): the agent's blocking systemctl start
+                # returns in seconds and the 20 minutes of loading belong to the health check, not to this timeout.
+                TimeoutStartSec=300
+                # above StopTimeout=, so that podman's own stop is not cut short
+                TimeoutStopSec=120
+
+                [Install]
+                WantedBy=default.target
+                # {{ else }}
+                [Unit]
+                Description=Coding assistant: not served here (the device has no llm_gpu_device label)
+
+                [Container]
+                # Keep equal to the Image= of act-inference above: in storage already, so nothing is pulled for this.
+                Image=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837
+                ContainerName=llm-assistant
+                Network=none
+                Entrypoint=/bin/true
+                HealthCmd=none
+
+                [Install]
+                WantedBy=default.target
+                # {{ end }}
