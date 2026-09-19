@@ -107,7 +107,12 @@ finish)
     rm -f "$iso" "$cluster/agent.aarch64.iso"
     virsh autostart "$name"
     # a host reboot takes minutes here: let the guest shut down cleanly first
-    sed -i -e 's/^#\?ON_SHUTDOWN=.*/ON_SHUTDOWN=shutdown/' -e 's/^#\?SHUTDOWN_TIMEOUT=.*/SHUTDOWN_TIMEOUT=300/' /etc/sysconfig/libvirt-guests
+    # RHEL 10 ships no /etc/sysconfig/libvirt-guests; the unit reads it if it exists
+    cfg=/etc/sysconfig/libvirt-guests
+    touch "$cfg"
+    for kv in ON_SHUTDOWN=shutdown SHUTDOWN_TIMEOUT=300; do
+        if grep -q "^#\?${kv%%=*}=" "$cfg"; then sed -i "s/^#\?${kv%%=*}=.*/$kv/" "$cfg"; else echo "$kv" >> "$cfg"; fi
+    done
     systemctl enable --now libvirt-guests.service
     install -m 0600 "$KUBECONFIG" /root/fury-sno.kubeconfig
     oc debug node/master-0 -q -- chroot /host sh -c 'grep PRETTY_NAME /etc/os-release; getconf PAGESIZE' 2>/dev/null || true

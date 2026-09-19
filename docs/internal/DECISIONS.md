@@ -4842,3 +4842,29 @@ the logs, because the ISO and the installer state carry the pull secret and the 
 password). Guest: 32 vCPU, 128 GiB pinned to NUMA node 0 (nodes 1-8 are the GPU driver's cpu-less nodes),
 600 GB thin qcow2, disk-then-ISO boot order so the installer's reboot lands on disk by itself. Storage in
 Phase 3 stays the local-path provisioner — no second disk.
+
+## D146 — Fury Phase 2 closed: the hub is up (OpenShift 4.22.13, arm64, single node, KVM guest)
+
+**Date:** 2026-09-19
+**Result:** `tools/host/fury/32-sno-install.sh` (fetch, image, vm, wait, finish) installed the hub in one pass —
+about 28 minutes from starting the guest to the console answering. Node `master-0` Ready at `10.20.0.10`,
+Kubernetes 1.35.6, RHEL CoreOS 9.8 on the default 4k-page kernel under the 64k-page host, CRI-O 1.35, every
+cluster operator available and not degraded. From a laptop on the tailnet: the API answers on
+`api.sno-flywheel.local` through split DNS and the subnet route, and the console route returns 200. The agent
+ISO (which carries the pull secret) was ejected and deleted; the guest autostarts; kubeconfig and the installer
+state stay under `/root/sno-install`, root-only. Unknown 5 is retired in full.
+**Snags:** RHEL 10 ships no `/etc/sysconfig/libvirt-guests`, so the last stage's `sed` aborted it after the
+eject/delete/autostart steps — the script now creates the file (`ON_SHUTDOWN=shutdown`, `SHUTDOWN_TIMEOUT=300`,
+because host boots take minutes — D140). A laptop whose `/etc/hosts` still pins the cluster's app names to the
+development stand-in will land on the wrong cluster; the two share a domain, so only one is reachable by name
+at a time.
+**Findings that shape Phase 3 (research, 2026-09-19):** on the 4.22 catalog the RHOAI Subscription's
+`channel: stable` still resolves to 2.25 — it must say `stable-3.5`; the v2 DataScienceCluster renames
+`datasciencepipelines` to `aipipelines` and drops `modelmeshserving`/`codeflare`; the ModelRegistry moves from
+`oauthProxy` to `kubeRBACProxy` with the REST path, Service and Route host unchanged; the dashboard moves to
+`rh-ai.apps.<domain>` behind the Gateway API (Service Mesh 3 via the Ingress Operator — unproven on an arm64
+single node). **Decision 10b is resolved:** Red Hat's product image `registry.redhat.io/rhem/flightctl-ui-rhel9:1.3.0`
+is multi-arch (only the upstream quay UI image is amd64-only). **Decision 10 narrows:** RHTAS still has no arm64
+server images and none are being built, but its clients (`rhtas/cosign-rhel9` and friends) are multi-arch, the
+repo signs with keys so only Rekor + Trillian are exercised, and both a self-build from the `securesign`
+midstream at `rhtas-v1.4.3` and the upstream `rekor` Helm chart are workable — operator's choice pending.

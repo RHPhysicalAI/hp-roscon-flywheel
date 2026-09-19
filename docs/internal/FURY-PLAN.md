@@ -219,6 +219,8 @@ learned in `DECISIONS.md` as you go.
 
 **Exit:** `oc get nodes` Ready from a laptop over Tailscale; console at `console-openshift-console.apps.sno-flywheel.local`.
 
+**Phase 2 closed 2026-09-19 (D145, D146):** OpenShift 4.22.13 arm64, single node, 4k-page guest; API and console reachable from a laptop over the tailnet.
+
 ### Phase 3 — Hub bootstrap on the `fury` branch
 
 1. `git checkout -b fury desktop-gpu-split`. Re-point `targetRevision` in `argocd/*-app.yaml` (7 files) and `rhem/bootstrap/resourcesync*.yaml` (2 files) to `fury`.
