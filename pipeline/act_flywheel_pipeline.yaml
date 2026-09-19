@@ -17,7 +17,7 @@
 #    fleet_file: str [Default: 'gitops/rhem/fleet-act-inference.yaml']
 #    fleet_ui_url: str [Default: 'https://ui.flightctl.apps.sno-flywheel.local/devicemanagement/fleets/act-inference']
 #    github_repo: str [Default: 'RHPhysicalAI/hp-roscon-flywheel']
-#    gitops_branch: str [Default: 'desktop-gpu-split']
+#    gitops_branch: str [Default: 'fury']
 #    incumbent: str [Default: 'upstream-act-teacher']
 #    incumbent_checkpoint: str [Default: 'hf']
 #    kafka_bootstrap: str [Default: 'edge-kafka.flywheel.svc:9092']
@@ -1003,7 +1003,7 @@ root:
         isOptional: true
         parameterType: STRING
       gitops_branch:
-        defaultValue: desktop-gpu-split
+        defaultValue: fury
         isOptional: true
         parameterType: STRING
       incumbent:

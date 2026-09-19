@@ -151,7 +151,7 @@ says otherwise.
 | **RHEM UI** — Catalog (v1alpha1) | same | `https://ui.flightctl.apps.sno-flywheel.local/catalog` → `physical-ai-models` → `soarm-act` |
 | `flightctl` CLI | **desktop**, `~/.local/bin/flightctl`, through a `while true` port-forward loop on 3443 (`~/flightctl-pf.log`) | every `flightctl` line below runs over `ssh -n jary@10.0.0.48 '…'` |
 | Model Registry REST | SNO route (OAuth proxy; needs a bearer token) | `https://flywheel-rest.apps.sno-flywheel.local/api/model_registry/v1alpha3/…` — the Beat 6 curl below |
-| **RHOAI dashboard** (D134) — DSP run graph (Beat 3), Model Registry UI (Beat 6) | SNO route (OpenShift OAuth) | `https://rhods-dashboard-redhat-ods-applications.apps.sno-flywheel.local` → *Data Science Pipelines* / *Model Registry*, project **flywheel** |
+| **RHOAI dashboard** (D134) — DSP run graph (Beat 3), Model Registry UI (Beat 6) | SNO route (OpenShift OAuth) | `https://rhods-dashboard-redhat-ods-applications.apps.sno-flywheel.local` (on RHOAI 3.x: `https://rh-ai.apps.sno-flywheel.local`) → *Data Science Pipelines* / *Model Registry*, project **flywheel** |
 | Argo CD | SNO route | `https://openshift-gitops-server-openshift-gitops.apps.sno-flywheel.local` |
 
 Constants: host `jary@10.0.0.48` (always `ssh -n` for one-liners; `ssh … 'bash -s' <<'EOF'` for
@@ -335,7 +335,8 @@ EOF
 
 **Graphical run view (D134):** the RHOAI dashboard is enabled again, so the run DAG, per-step
 status/logs and artifacts are visible at the **RHOAI dashboard** →
-`https://rhods-dashboard-redhat-ods-applications.apps.sno-flywheel.local` (OpenShift OAuth login) →
+`https://rhods-dashboard-redhat-ods-applications.apps.sno-flywheel.local` (on RHOAI 3.x:
+`https://rh-ai.apps.sno-flywheel.local`; OpenShift OAuth login) →
 *Data Science Pipelines* under the **flywheel** project. This is the nicer Beat 3 screen; the
 terminal `kfp.Client` task list below is the fallback if the dashboard or its route is down.
 

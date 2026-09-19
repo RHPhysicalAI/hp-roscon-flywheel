@@ -226,7 +226,7 @@ learned in `DECISIONS.md` as you go.
 1. `git checkout -b fury desktop-gpu-split`. Re-point `targetRevision` in `argocd/*-app.yaml` (7 files) and `rhem/bootstrap/resourcesync*.yaml` (2 files) to `fury`.
 2. Fury values in tracked files: `gitops/flywheel/edge-kafka.yaml` advertised listener → `10.20.0.10:30903`; dashboard `CAMERA_HOST` → the Fury host's `fury-net` address `10.20.0.1` (env, D124); Fleet template (see 4).
 3. Follow `argocd/README.md` bootstrap table in order (10 apps) with the 8 hand-created Secrets first. **Fresh cosign keypair** on the Fury; its `cosign.pub` goes into the Fleet's inline trust files. Securesign creates fresh Rekor/Fulcio — after it's up, copy the new Rekor public key into `gitops/tekton/rekor-public-key.yaml` and the Fleet's inline `rekor.pub`.
-4. **Fleet template changes** (`gitops/rhem/fleet-act-inference.yaml`): `AddDevice=nvidia.com/gpu=0:1` for the `gpu=nvidia` branch (not `=all` — `all` hands every slice to the container); rollout `BatchSequence` retargeted: batch 1 = `role=canary` (one fleet VM), batch 2 = `site=fury`; keep `successThreshold: 100%`. Add a `mig_slice` label so the device chooses its slice.
+4. **Fleet template changes** (`gitops/rhem/fleet-act-inference.yaml`): `AddDevice=nvidia.com/gpu=0:1` for the `gpu=nvidia` branch (not `=all` — `all` hands every slice to the container); rollout `BatchSequence` retargeted: batch 1 = `role=canary` (one fleet VM), batch 2 = `site=fury`; keep `successThreshold: 100%`. Add a `gpu_device` label so the device chooses its CDI device: `all` by default, a slice's `MIG-<uuid>` name on a partitioned host (index names such as `0:1` contain `:`, which a flightctl label value may not).
 5. Tekton: run the runtime-image pipeline **natively on aarch64** (the arm64 leg took 53 min under qemu on the desktop; measure native). The `qemu-binfmt` DaemonSet exists for the amd64 leg. Sign into the Fury's Rekor. Re-package + sign the current best modelcar the same way (or let Phase 5's promotion produce it).
 6. `rhem/bootstrap/README.md`: the four `flightctl apply` objects, logged in as a real user (SA tokens map to no org).
 
@@ -235,7 +235,7 @@ learned in `DECISIONS.md` as you go.
 ### Phase 4 — Enroll the Fury host as the GPU device
 
 - `device/provision.sh` with `RHEM_HUB_IP=10.20.0.10`: it installs `flightctl-agent-1.3.0-1.el10` (aarch64 pin — verify the rpm exists on `rpm.flightctl.io` first) and re-runs `nvidia-ctk cdi generate` — harmless now that MIG is already on. Check `rpm -qf /etc/containers/policy.json` diffs *before* the Fleet overwrites the file (D042).
-- `device/enroll.sh` with labels `site=fury gpu=nvidia arch=arm64 policy_device=cuda mig_slice=0:1 zenoh_router=10.20.0.1`.
+- `device/enroll.sh` with labels `site=fury gpu=nvidia arch=arm64 policy_device=cuda zenoh_router=10.20.0.1` (plus `gpu_device=MIG-<uuid>` when serving from a slice)`.
 - The `ROLE=all` collision (D132): once the device serves, never run a second `/run_policy` on the host; local eval uses `ROLE=coordinator` against the device, or stop `flightctl-agent` + the quadlet first.
 
 **Exit:** device `Healthy` in RHEM, quadlet serving on slice `0:1`, sim episodes stamped with the Fleet's model version.

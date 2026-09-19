@@ -93,9 +93,10 @@ spec:
       port: 3306
       targetPort: 3306
 ---
-# The registry. The operator adds an OpenShift OAuth proxy sidecar (8443, serving cert) and a Route
-# for it (`oauthProxy.serviceRoute: enabled`); the plain REST port stays cluster-internal. Every call
-# - the pipeline's included - carries a Bearer token and must pass `get services/<name>` in this ns.
+# The registry. The operator adds a kube-rbac-proxy sidecar (8443, serving cert) and a Route for it
+# (`kubeRBACProxy.serviceRoute: enabled`; the RHOAI 3.5 webhook rewrites `oauthProxy` to this, so it
+# is declared directly); the plain REST port stays cluster-internal. Every call - the pipeline's
+# included - carries a Bearer token and must pass `get services/<name>` in this ns.
 apiVersion: modelregistry.opendatahub.io/v1beta1
 kind: ModelRegistry
 metadata:
@@ -105,9 +106,8 @@ metadata:
     argocd.argoproj.io/sync-wave: "3"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
-  grpc: {}
   rest: {}
-  oauthProxy:
+  kubeRBACProxy:
     serviceRoute: enabled
   mysql:
     host: model-registry-db.rhoai-model-registries.svc

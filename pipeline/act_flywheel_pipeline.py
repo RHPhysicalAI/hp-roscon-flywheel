@@ -380,7 +380,7 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
                           crane_sha256_arm64: str = "d2235f7779cd39c6e40f43701d2512c997409f629fb53e621ede0d57d3f995e2",
                           cosign_sha256_amd64: str = "c3b4f5410e608af03a5eb0aaac84a4313d8da131248e08ff1759ac70c79d1644",
                           cosign_sha256_arm64: str = "426193b4c5da4d4d643e822f48fe0cc8a476ca1782a272704831f5a0cef716d7",
-                          github_repo: str = "RHPhysicalAI/hp-roscon-flywheel", gitops_branch: str = "desktop-gpu-split",
+                          github_repo: str = "RHPhysicalAI/hp-roscon-flywheel", gitops_branch: str = "fury",
                           fleet_file: str = "gitops/rhem/fleet-act-inference.yaml", consumer_file: str = "gitops/flywheel/manifest-consumer.yaml",
                           fleet_ui_url: str = "https://ui.flightctl.apps.sno-flywheel.local/devicemanagement/fleets/act-inference",
                           modelcar_base: str = UBI_MICRO, timeout_min: int = 600,

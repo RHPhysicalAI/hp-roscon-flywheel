@@ -14,8 +14,12 @@
 #
 #   label            desktop VM      Fury host    used by
 #   site             desktop         fury         rolloutPolicy batch order (desktop first, then fury)
-#   gpu              none            nvidia       AddDevice=nvidia.com/gpu=all only when "nvidia";
+#   gpu              none            nvidia       AddDevice=nvidia.com/gpu=<gpu_device> only when "nvidia";
 #                                                 OMP/TORCH thread caps only when "none"
+#   gpu_device       (unset)         MIG-<uuid>   the CDI device handed to the container: "all" when the
+#                                                 label is absent; on a MIG-partitioned host the slice's
+#                                                 MIG-<uuid> name (index names like 0:1 contain ":", which
+#                                                 a label value may not)
 #   policy_device    cpu             cuda         POLICY_DEVICE -> rosetta_client params file (entrypoint)
 #   zenoh_router     10.0.0.48       <fury-ip>    ZENOH_ROUTER=<router>:<port> (two labels: ':' is not a
 #   zenoh_port       7447            7447         legal label-value character, D033)
@@ -208,14 +212,13 @@ spec:
                 Description=ACT policy inference (RHEM-managed, Fleet act-inference)
 
                 [Container]
-                # Runtime image: built + signed by Tekton (Phase 4.5 F), referenced by the multi-arch manifest-list digest (docs/eval-records/runtime-image-tekton.md: tag act-inference-aa7392f, Rekor 11/12/13).
+                # Runtime image: built + signed by Tekton (Phase 4.5 F), referenced by the multi-arch manifest-list digest (D129: tag act-inference-ea513fa, Rekor 14/15/16).
                 Image=quay.io/jary/soarm-flywheel@sha256:02e66d895ed4ba328aa43263561027c18406d774887f465ab7acbd81e4c42d08
                 ContainerName=act-inference
                 Network=host
                 EnvironmentFile=/etc/act-inference/env
                 Volume=models.volume:/modelcar:ro
-                {{ if eq (getOrDefault .metadata.labels "gpu" "none") "nvidia" }}AddDevice=nvidia.com/gpu=all
-                SecurityLabelDisable=true
+                {{ if eq (getOrDefault .metadata.labels "gpu" "none") "nvidia" }}AddDevice=nvidia.com/gpu={{ getOrDefault .metadata.labels "gpu_device" "all" }}
                 {{ end }}HealthCmd=/healthcheck.sh
                 HealthStartPeriod=240s
                 HealthInterval=30s

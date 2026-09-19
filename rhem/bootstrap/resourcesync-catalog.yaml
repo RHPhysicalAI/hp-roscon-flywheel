@@ -13,5 +13,5 @@ metadata:
 spec:
   type: catalog
   repository: hp-roscon-flywheel
-  targetRevision: desktop-gpu-split
+  targetRevision: fury
   path: gitops/rhem-catalog

@@ -54,7 +54,7 @@ data:
     HTML_FILE     = pathlib.Path(os.environ.get("HTML_FILE",  "/app/index.html"))
     # The camera bridge runs next to the simulator, not in the cluster; the browser fetches the
     # streams directly, so this must be the address the *viewer* can reach.
-    CAMERA_HOST   = os.environ.get("CAMERA_HOST", "10.0.0.48")
+    CAMERA_HOST   = os.environ.get("CAMERA_HOST", "10.20.0.1")
     FW_NS         = os.environ.get("FLYWHEEL_NS", "flywheel")
     THRESHOLD     = int(os.environ.get("TRIGGER_THRESHOLD", "10"))
     COLLECTOR_DEPLOY = os.environ.get("COLLECTOR_DEPLOYMENT", "manifest-consumer")
@@ -1663,7 +1663,7 @@ spec:
               # The address the *viewer's browser* uses to reach the camera bridge (port 8081),
               # which runs next to the simulator, not in the cluster. On the Fury this is the
               # Fury host's address on the booth network.
-              value: "10.0.0.48"
+              value: "10.20.0.1"
           readinessProbe:
             httpGet:
               path: /api/status

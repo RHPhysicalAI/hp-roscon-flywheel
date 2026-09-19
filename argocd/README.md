@@ -2,7 +2,7 @@
 
 Everything in `gitops/` is delivered by Argo CD (OpenShift GitOps, ns `openshift-gitops`).
 Each `*-app.yaml` here is an Argo `Application` that is applied **once by hand** to bootstrap;
-after that Argo syncs the referenced `gitops/<dir>` from branch `desktop-gpu-split` (`selfHeal:
+after that Argo syncs the referenced `gitops/<dir>` from branch `fury` (`selfHeal:
 true`). Nothing else in this directory is applied by Argo itself.
 
 ## Bootstrap order
