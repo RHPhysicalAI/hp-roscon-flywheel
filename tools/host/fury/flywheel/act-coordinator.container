@@ -1,0 +1,29 @@
+# This project was developed with assistance from AI tools.
+#
+# The recording loop. Not part of the target: collecting episodes is something an operator starts
+# (systemctl start act-coordinator) and the disk guard stops. It cannot run without the guard, and it
+# will not start with less than the floor free - each successful episode keeps about 1.3 GB.
+[Unit]
+Description=Episode coordinator and recorder (the collection loop)
+Requires=act-inference.service
+After=act-inference.service disk-guard.service
+BindsTo=disk-guard.service
+
+[Container]
+ContainerName=act-coordinator
+Image=quay.io/jary/soarm-flywheel@sha256:02e66d895ed4ba328aa43263561027c18406d774887f465ab7acbd81e4c42d08
+Network=host
+Environment=ROLE=coordinator ZENOH_ROUTER=127.0.0.1:7447 MODEL_VERSION=act-v2-ft160
+Volume=/data/flywheel:/data:z
+Volume=/data/flywheel/bags:/data/bags:z
+HealthCmd=none
+StopSignal=SIGINT
+StopTimeout=20
+
+[Service]
+# a ROS 2 tree exits 130 on the SIGINT above; that is a clean stop, not a failure
+SuccessExitStatus=130 143
+ExecStartPre=/bin/sh -c 'mkdir -p /data/flywheel/bags; [ "$(df -BG --output=avail /data/flywheel/bags | tail -1 | tr -dc 0-9)" -ge 1500 ]'
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=300

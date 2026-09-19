@@ -1,0 +1,13 @@
+# This project was developed with assistance from AI tools.
+#
+# /data also holds the VM disks and the models, so the floor is generous. The guard stops the recorder
+# as a unit; stopping its container would only make systemd restart it.
+[Unit]
+Description=Stops the episode recorder before /data runs low
+
+[Service]
+Environment=BAGS_DIR=/data/flywheel/bags MIN_FREE_GB=1500 CAP=450 POLL_S=60 LOG=/var/log/disk-guard.log
+Environment="STOP_CMD=systemctl stop act-coordinator.service" "RUNNING_CMD=systemctl is-active --quiet act-coordinator.service"
+ExecStart=/usr/local/sbin/disk-guard.sh
+Restart=always
+RestartSec=5

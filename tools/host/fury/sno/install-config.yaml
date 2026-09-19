@@ -1,0 +1,30 @@
+# This project was developed with assistance from AI tools.
+#
+# Single-node OpenShift hub for the Fury, as a KVM guest on fury-net. No secrets here:
+# 32-sno-install.sh appends pullSecret and sshKey when it renders this into /root/sno-install.
+apiVersion: v1
+baseDomain: local
+metadata:
+  name: sno-flywheel
+compute:
+- name: worker
+  architecture: arm64
+  hyperthreading: Enabled
+  replicas: 0
+controlPlane:
+  name: master
+  architecture: arm64
+  hyperthreading: Enabled
+  replicas: 1
+networking:
+  networkType: OVNKubernetes
+  # must be stated: the default 10.0.0.0/16 does not contain the node, and the installer gates on it
+  machineNetwork:
+  - cidr: 10.20.0.0/24
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  none: {}

@@ -1,0 +1,30 @@
+# This project was developed with assistance from AI tools.
+#
+# The sim's cameras render with OpenGL, which this GPU only offers with MIG off - so refuse to start
+# in MIG mode rather than fall back to the cpu at 1.7 frames a second.
+[Unit]
+Description=SO-ARM sim (Gazebo, cameras rendered on the GPU)
+After=mig-config.service nvidia-cdi-refresh.service
+PartOf=fury-flywheel.target
+
+[Container]
+ContainerName=so-arm-sim
+Image=localhost/soarm-sim:arm64
+Pull=never
+Network=host
+AddDevice=nvidia.com/gpu=all
+Environment=NVIDIA_DRIVER_CAPABILITIES=all
+Volume=/data/flywheel/episodes:/data/episodes:z
+StopSignal=SIGINT
+StopTimeout=15
+
+[Service]
+# a ROS 2 tree exits 130 on the SIGINT above; that is a clean stop, not a failure
+SuccessExitStatus=130 143
+ExecStartPre=/bin/sh -c '[ "$(nvidia-smi -i 0 --query-gpu=mig.mode.current --format=csv,noheader)" = Disabled ]'
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=fury-flywheel.target
