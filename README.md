@@ -81,7 +81,7 @@ Exact images, chart versions, and ports: [`docs/BILL-OF-MATERIALS.md`](docs/BILL
 | Red Hat OpenShift (Single Node) | Hub platform | 4.19 |
 | OpenShift GitOps (Argo CD) | Delivers every hub component from Git | — |
 | Red Hat OpenShift AI | Training pipeline (Data Science Pipelines) and Model Registry | 2.25 |
-| Red Hat Trusted Artifact Signer | Signing and Rekor transparency log | cosign v2.6.5 |
+| Red Hat Trusted Artifact Signer | Signing and Rekor transparency log | 1.4.3 (cosign v2.6.5) |
 | Red Hat Edge Manager | Fleet management and model delivery to the device | flightctl 1.3.0 |
 | OpenShift Pipelines (Tekton) | Multi-arch runtime image build and sign | — |
 | RHEL | Managed device operating system | 10.2 |

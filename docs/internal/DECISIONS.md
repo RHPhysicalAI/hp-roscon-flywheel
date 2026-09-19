@@ -4410,3 +4410,119 @@ networking+monitoring). Removed `gitops/acm/` and `argocd/acm-app.yaml` from git
 flightctl and the enrolled device were untouched throughout. **Next:** the integrated console comes
 from the standalone RHEM's own `flightctl-plugin` ConsolePlugin — productized chart
 charts.openshift.io `flightctl` 1.0.2 — layered on the flightctl/RHEM install we KEEP; no ACM.
+
+## D136 — Integrated-console RHEM deferred; keep the standalone install; loop restarted
+
+**Date:** 2026-09-11
+**Context:** pursuing D135's "next" — layer the productized RHEM chart's `flightctl-plugin`
+ConsolePlugin onto the install we keep. Inspected the 1.0.2 chart template
+(`templates/ui/flightctl-ui-console-plugin.yaml`): the ConsolePlugin is **gated on
+`enableMulticlusterExtensions == "true"`** (or `"auto"` with the MultiClusterEngine CRD present).
+The planned swap set it `"false"` ("we're not on ACM"), under which **no ConsolePlugin renders at
+all** — so the swap would have torn down the proven 1.3.0 install and still yielded only a
+standalone UI. Converging evidence (ACM 2.17 dropped edge-manager per D135; the standalone chart
+gates its console plugin behind the multicluster flag; the plugin displayName is "FCTL Plugin", not
+"Red Hat Edge Manager") indicates a **cleanly-supported, RHEM-branded, in-console experience does
+not exist at the versions we have** — it reads as an ACM 2.13–2.15-era capability the current
+split has pulled apart. Remaining paths (force the flag off-label standalone; reinstall MCE-only to
+satisfy `"auto"`; keep standalone; defer) are all compromises.
+**Decision:** **keep the working standalone RHEM 1.3.0 install as-is** (UI route + enrolled
+`act-device` intact), defer the integrated-console pursuit. No teardown; `argocd/rhem-app.yaml`
+already points at the 1.3.0 standalone, so **no repo change was needed**. Revisit when the RHEM
+productization/console-plugin story settles (or if MCE-only is later judged worth the weight).
+**Also:** restarted the flywheel collection loop on the desktop host — `act-coordinator` from the
+Tekton-signed runtime digest `sha256:02e66d89…`, `MODEL_VERSION=act-v2-ft160` (matches the Fleet;
+`Observed model_version` clean, no D073 mismatch). Preflight green: disk-guard resident, 540 GB
+free, no prior coordinator (D057), sim/pose up, zenoh on 7447. Verified live: recorder activated,
+device policy action server reachable, episodes recording. First loop run on the Tekton digest
+(prior runs were the interim `2ad1fb1c…`).
+**Consequences:** the demo shows the standalone RHEM UI (capability-complete), not the OCP-console
+plugin. flightctl CLI token is expired (401) — device-management view only; re-login is a
+browser-OAuth step (`flightctl login --web`) for the operator, does not affect the loop.
+
+## D137 — sdb1 mounted, flywheel-data relocated off the root disk (D061 root cause fixed)
+
+**Date:** 2026-09-11
+**Context:** the root disk (`/dev/nvme1n1p2`, 1.8 TB) held BOTH the raw episode bags
+(`~/flywheel-data`) and the qcow2 images of the `sno-flywheel`/`act-device` VMs, so a bag flood
+paused MinIO/Kafka/the sim together — the D061 outage mechanism (9/09) and the D132 brush with the
+floor. `disk-guard.sh` only reacts (stops recording at the 100 GB floor), never reclaims. The
+4.5 TB ext4 `sdb1` had sat unmounted as the `flywheel-mount-sdb1-relocate-data` inbox todo.
+**Decision:** mounted `sdb1` (by UUID) at `~/flywheel-data` via
+`/etc/fstab` (`defaults,noatime,nofail`) and relocated all 231 GB of flywheel-data onto it — now
+253 GB used / 4.3 TB free. **New bags land on the 4.5 TB disk, no longer competing with the VM
+qcow2 files** — the structural fix D061 flagged as option 3. All script paths stay `~/flywheel-data`
+(mounted over), so no code change. Kept `~/flywheel-data.old` (231 GB, on root) as rollback until a
+full loop cycle validates the new mount, then `sudo rm -rf` reclaims it (root ~85% → ~72%).
+**Gotcha (root cause of a mid-op scare):** `sdb1` carried a label and was NOT blank —
+GNOME had auto-mounted it under `/media`, so the first explicit `mount /dev/sdb1 /mnt/flywheel-new`
+silently missed and `rsync` wrote 231 GB to a root-disk folder instead of the disk. Caught by the
+recovery script's mountpoint/device asserts (`findmnt … == /dev/sdb1`, SRC≠DST filesystem) before
+any delete; corrected by copying `~/flywheel-data.old` onto the correctly-mounted disk. The drive's
+pre-existing 23 GB `models/` was moved aside to `~/flywheel-data/_preexisting-20260911T183207Z/`,
+not merged. Also hit: running the recovery script under `sudo` made `$HOME=/root`; fixed by running
+as the user. Lesson: verify a mount actually took (mountpoint check) before rsyncing, or a failed
+mount writes to the underlying dir.
+**Consequences:** the D061-class outage can't recur the same way (bags off the VM disk).
+`disk-guard.sh` stays as the floor. The weekend re-baseline runner's `disk-drain.sh`
+`HIGH_WATER_GB=300` was calibrated for the old shared 1.8 TB disk and should be retuned before it is
+armed. Follow-up: optionally neuter the GNOME auto-mount so it can't re-grab sdb1 on boot (fstab is
+authoritative now).
+
+## D138 — Standalone MinIO/Kafka for Olga while SNO was down, and a fresh clean paired-eval (r2) to replace contaminated comparison data
+
+**Date:** 2026-09-13/14
+**Context:** the SNO VM was shut down over the weekend to free the desktop's RAM/cores for other GPU
+work. Olga's eval dashboard (APPENG-6295) reads MinIO + Kafka off the SNO node IP `10.0.0.49`
+(NodePorts 30900 / 30903), which die with the VM. Separately, v2's *operational* curated data was
+contaminated — after a cut-over the sim stopped re-randomising cubes, so episodes inherited
+tray-placed cubes and logged inflated "successes" (the D2155-area finding) — making the v1/v2
+comparison unfair. The fair method is the eval harness (homes the arm each episode, pins the scene),
+not the loop's operational rate.
+**Decision A — standalone data plane for Olga (no cluster):** stood up plain host containers
+`olga-minio` (`quay.io/minio/minio`, digest-pinned to the cluster's) and `olga-kafka`
+(`quay.io/strimzi/kafka:0.45.0-kafka-3.9.0`, KRaft) via `~/olga-stack/up.sh`, mirrored Olga's two
+buckets + Kafka log dir off the (still-up) cluster, recreated the scoped `olga-readonly` user, and
+**gave the host the freed `10.0.0.49` as a br0 secondary IP** so her endpoints/ports are byte-for-byte
+unchanged (the desktop already routes that range for remote users, so her tailnet
+traffic terminates there). Creds live in mode-600 files under `~/olga-stack/`, never printed.
+Kafka's external listener hard-codes `advertised.listeners=10.0.0.49:30903`, so the standalone maps
+host `10.0.0.49:30903 → container 9094` to match.
+**Decision B — fresh clean paired-eval (r2):** ran teacher (v1, `upstream-act-teacher`) vs
+`act-v2-ft160` (v2) on the **same seeds**, homed arm, pinned `RANDOM_RADIUS=0.03`, **served locally
+on the RTX 5090** (`ROLE=all POLICY_DEVICE=cuda`, device off — no `/run_policy` collision, D132) via
+`tools/host/local/paired-eval-shifted.sh` wrapped by `~/olga-stack/r2/run-r2.sh` (resumable, chunked).
+Started 160, appended to **360 each** in one continuous re-run (resume skips finished chunks).
+**Result (360 paired): teacher 81.9% (295/360), v2 92.5% (333/360); fixed=57 broken=19 net=+38
+sign_p=0.0000 verdict=PASS** (D022 rule). Report at `~/flywheel-data/eval/r2-clean/paired-report.md`.
+**Bridge to the dashboard's contract:** `~/olga-stack/r2/explode.py` converts the eval JSON's
+`episodes[]` into the dashboard's per-episode record schema — clean labels (NOT `eval-*`, which the
+dashboard drops), `task_success`→`curation_verdict` pass/reject, `rollout.{steps,duration_s}` — and
+lands them in **new isolated buckets `episodes-curated-r2` / `episodes-rejected-r2`** (both pass and
+reject per version, so the dashboard's success rate isn't hidden). Olga points her dashboard at those
+two buckets (2 env vars) + `versions.yaml` (`upstream-act-teacher: 0`, `act-v2-ft160: 160`); old
+buckets untouched. Final clean state: 628 curated + 92 rejected = **720**.
+**Gotchas (all fixed):** (1) the teacher HF-cache snapshot's files are **symlinks into `../../blobs/`**,
+which dangle when only the snapshot dir is bind-mounted — materialized a flat copy at
+`~/olga-stack/r2/teacher-ckpt` via `cp -rL`. (2) Re-run seeds (1150–1159) **flipped outcome** between
+runs, leaving stale duplicate object copies across buckets (723 vs 720); reconciled by re-exploding
+from the authoritative raw chunk files into `records-final` and `mc mirror --overwrite --remove`.
+(3) `pkill -f run-r2.sh` matched its **own** SSH command line → self-kill; and `ssh -n` + a heredoc
+silently no-ops (stdin is `/dev/null`). (4) the `minio/mc` image lacks `grep`/`awk`, and parens in an
+`echo` break its `sh`. **Fallback preserved:** `~/olga-stack/r2/records.bak160` (the verified 160-each
+state) + `r2-clean.bak160`.
+
+### D138 addendum — reclaim ordering (bring SNO + the loop back; tear the standalone down)
+
+The r2 eval data lives **only** in the standalone MinIO, so the reclaim must preserve it. Order
+(⚠️ the IP release must precede the VM start, or node and host fight over `10.0.0.49`):
+1. r2 data is already on disk (`~/olga-stack/r2/records-final`, 720) — no export needed.
+2. Stop `olga-minio` + `olga-kafka` (docker).
+3. **`sudo ip addr del 10.0.0.49/24 dev br0`** (operator), then **`sudo virsh start sno-flywheel`**
+   (+ `act-device` for the loop). Wait ~10–15 min for the single node to stabilise.
+4. Re-create `episodes-curated-r2` / `episodes-rejected-r2` in the **cluster** MinIO and upload
+   `records-final`; extend the cluster `olga-readonly` policy to those buckets — so Olga's endpoint
+   (`10.0.0.49:30900`) and data are unchanged, now served by the cluster.
+5. Bring the collection loop back (device clock-step after suspend per D132/D063, sim already up,
+   `run-coordinator.sh` on the Tekton digest, disk-guard first).
+
