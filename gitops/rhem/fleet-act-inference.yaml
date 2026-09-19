@@ -26,6 +26,13 @@
 #                                                 MIG-<uuid> name (index names like 0:1 contain ":", which
 #                                                 a label value may not)
 #   policy_device    cpu             cuda         POLICY_DEVICE -> rosetta_client params file (entrypoint)
+#   pull_default     (unset)         insecureAcceptAnything
+#                                                 policy.json's default requirement. Unset = "reject": a device
+#                                                 pulls from the enumerated registries and nowhere else (D131).
+#                                                 The Fury host is also a shared build and tenant machine, so it
+#                                                 alone carries the label; the two quay.io/jary repositories stay
+#                                                 signature- and Rekor-enforced there all the same. Any other
+#                                                 value is not a policy type and podman then refuses every pull.
 #   zenoh_router     10.0.0.48       <fury-ip>    ZENOH_ROUTER=<router>:<port> (two labels: ':' is not a
 #   zenoh_port       7447            7447         legal label-value character, D033)
 #
@@ -41,7 +48,8 @@
 #                                             (Rekor SET enforced on the device), signedIdentity matchRepository;
 #                                             the RHEL default entries for registry.access.redhat.com /
 #                                             registry.redhat.io are preserved because this file REPLACES the
-#                                             distro file; the default is REJECT (review W-10): any reference
+#                                             distro file; the default is REJECT (review W-10) unless the device
+#                                             carries a pull_default label (table above): any reference
 #                                             outside the four enumerated registries/repos — a renamed repo, a
 #                                             typo in a promotion edit, a mirror, docker.io — is refused before
 #                                             any signature is even looked at (third negative test, D091 + Case 3)
@@ -104,7 +112,7 @@ spec:
                 {
                     "default": [
                         {
-                            "type": "reject"
+                            "type": "{{ getOrDefault .metadata.labels "pull_default" "reject" }}"
                         }
                     ],
                     "transports": {
@@ -182,7 +190,7 @@ spec:
               mode: 0644
               content: |
                 # Rendered per device from labels by RHEM (Fleet act-inference); read by EnvironmentFile= in the quadlet.
-                ZENOH_ROUTER={{ .metadata.labels.zenoh_router }}:{{ .metadata.labels.zenoh_port }}
+                ZENOH_ROUTER={{ getOrDefault .metadata.labels "zenoh_router" "127.0.0.1" }}:{{ getOrDefault .metadata.labels "zenoh_port" "7447" }}
                 POLICY_DEVICE={{ getOrDefault .metadata.labels "policy_device" "cpu" }}
                 {{ if eq (getOrDefault .metadata.labels "gpu" "none") "none" }}# CPU device: one torch thread per vCPU (D034); SMT siblings were slower on the host
                 OMP_NUM_THREADS=8
@@ -218,6 +226,10 @@ spec:
               content: |
                 [Unit]
                 Description=ACT policy inference (RHEM-managed, Fleet act-inference)
+                # Where the sim is a unit on the same machine, a sim restart restarts the policy too (its action
+                # server does not survive one). Inert on a device that has no such unit.
+                After=so-arm-sim.service
+                PartOf=so-arm-sim.service
 
                 [Container]
                 # Runtime image: built natively on the arm64 hub and signed by Tekton, referenced by the manifest-list digest (D148: tag act-inference-e0716d0, linux/arm64 only, this hub's Rekor 2/3).
@@ -233,8 +245,13 @@ spec:
                 HealthTimeout=10s
                 HealthRetries=3
                 HealthOnFailure=kill
+                # a ROS 2 tree ignores SIGTERM: without this every stop is a timeout and a SIGKILL
+                StopSignal=SIGINT
+                StopTimeout=15
 
                 [Service]
+                # exit 130 after the SIGINT above is a clean stop, not a failure
+                SuccessExitStatus=130 143
                 Restart=always
                 RestartSec=10
                 TimeoutStartSec=300

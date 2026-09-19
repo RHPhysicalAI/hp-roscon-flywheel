@@ -27,6 +27,7 @@ exec > >(tee -a "$here/log/$(basename "$0" .sh).log") 2>&1
 agent_ver=1.3.0-1.el10
 repo_url=https://rpm.flightctl.io/flightctl-epel10.repo
 hub=10.20.0.10
+pull_default=insecureAcceptAnything     # the label this host is approved with; every other device renders "reject"
 cfg=/etc/flightctl/config.yaml
 cert=/var/lib/flightctl/certs/agent.crt
 live=/etc/containers/policy.json
@@ -95,7 +96,8 @@ fi
 awk '/- path: \/etc\/containers\/policy\.json/ {f=1; next}
      f && /content: \|/ {c=1; next}
      c && /^ *- path:/ {exit}
-     c {sub(/^ +/, ""); print}' "$fleet" > "$fp"
+     c {sub(/^ +/, ""); print}' "$fleet" |
+    sed -E "s/\{\{ getOrDefault \.metadata\.labels \"pull_default\" \"[A-Za-z]+\" \}\}/$pull_default/" > "$fp"
 jq -e '.default and .transports.docker' "$fp" >/dev/null || die "could not read the Fleet's policy.json out of $fleet"
 if diff -q <(jq -S . "$live") <(jq -S . "$fp") >/dev/null; then
     echo "$live is already the Fleet's"
@@ -201,10 +203,11 @@ next, from the laptop - 41-device-enroll.md, step 4 onwards:
        $name
   2. approve that request with these labels (step 4 has the full command):
        fleet=act-inference site=fury gpu=nvidia arch=arm64 policy_device=cuda
-       zenoh_router=10.20.0.1 zenoh_port=7447 alias=fury-host
+       zenoh_router=10.20.0.1 zenoh_port=7447 alias=fury-host pull_default=$pull_default
        gpu_device - $slice
   3. back here, watch the Fleet land:  sudo journalctl -fu flightctl-agent
      then  sudo podman ps  should show act-inference-128875-act-inference, healthy after a few minutes
-from then on /etc/containers/policy.json is the Fleet's (default: reject). Pulls from anywhere else need
-    --signature-policy $keep
+from then on /etc/containers/policy.json is the Fleet's. With the pull_default label this host keeps pulling
+from anywhere, and the two quay.io/jary repositories are signature- and Rekor-enforced. Without the label the
+default is reject, and a pull from anywhere else needs  --signature-policy $keep
 EOF

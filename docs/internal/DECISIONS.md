@@ -4991,3 +4991,48 @@ worth adding before Phase 5's promotions depend on this path.
 pinned, `gitops/rhem/fleet-act-inference.yaml` on `fury` names an image that cannot start. The host keeps
 serving from the previous image under the hand-installed unit.
 
+## D150 — Fury Phase 4 design: the host is a device *and* a shared machine, so the Fleet's pull default is label-driven; the hub owns the policy's lifecycle
+
+**Date:** 2026-09-19
+**Context:** on the development stand-in the device was a dedicated VM; here it is the bare-metal host, which is
+also the build box, the hub's hypervisor, the tenant machine of act 2, and shared with partner staff. A review of
+`device/provision.sh`, `device/enroll.sh`, the Fleet and flightctl 1.3's agent source against this host found:
+- **`policy.json` `default: reject` (D131) would be system-wide here.** Root podman could pull only from the two
+  Red Hat registries and the two signed `quay.io/jary` repositories: no `nvcr.io` (smoke tests, DCGM, whatever
+  other people run), no `docker.io/library/ros` for sim rebuilds.
+- **No unit-name clash.** The agent namespaces a Fleet quadlet as `<app>-<crc32 prefix>-<unit>`
+  (`act-inference-128875-act-inference.service`, as the stand-in's records already show). The hand-installed unit
+  still has to go before enrolling, for D132's reason: two `/run_policy` servers on one Zenoh graph.
+- **flightctl 1.3 has `flightctl app stop|start`**: a per-device override that survives Fleet rollouts, with the
+  agent still connected and the application reported `Stopped`, not failed.
+- The plan's Phase 4 text is wrong for this host in three places: `provision.sh` would add NVIDIA's repo and
+  write a static `/etc/cdi` spec that goes stale at the next mode switch (the toolkit is from RHEL Supplementary
+  and `nvidia-cdi-refresh` owns the spec — D139, D141), it would pin the hub in `/etc/hosts` beside dnsmasq, and
+  `enroll.sh` needs passwordless sudo and parks the enrollment key in `/tmp` on a shared login host.
+**Decision (operator's, on recommendation): the Fleet's `policy.json` default is
+`{{ getOrDefault .metadata.labels "pull_default" "reject" }}`.** Every device stays fail-closed unless it is
+approved with `pull_default=insecureAcceptAnything`; only the Fury host is. The two `quay.io/jary` repositories
+remain signature- and Rekor-enforced on it, so the trust demonstration (unsigned, wrong key, not logged → refused)
+holds on the host; the "anything outside the allow-list is refused" case belongs on a fleet VM (Phase 7). A
+mistyped label value is not a policy type, and podman then refuses every pull — it fails closed. The label is set
+by whoever approves the device, the same trust as the approval itself.
+**Decision: the hub owns the policy's lifecycle; `fury-mode` verifies.** To tenants: `flightctl app stop` from a
+laptop, then `fury-mode tenants`. Back: `fury-mode flywheel`, then `flightctl app start`. `fury-mode` refuses to
+switch while the agent's policy unit is up (a loaded, idle policy holds the device nodes without appearing as a
+compute process) and prints the command. No hub credential lands on the shared host, and a promotion merged
+during act 2 does not resurrect the policy. Relabelling `gpu_device` to a `MIG-<uuid>` stays the documented way
+to *move* the policy onto a slice, for when tenants mode has a Zenoh router and a robot for it to drive — today
+it has neither (the router lives in the sim container, and the sim cannot run under MIG).
+**Also changed in the Fleet's unit:** `After=`/`PartOf=so-arm-sim.service` (a sim restart restarts the policy, as
+the hand-installed unit did; inert where no such unit exists), `StopSignal=SIGINT`, `StopTimeout=15`,
+`SuccessExitStatus=130 143` (a ROS 2 tree ignores SIGTERM: every stop was a timeout and a kill, and read as a
+failure), and defaults for the `zenoh_router` / `zenoh_port` labels (a missing one failed the render).
+**Host side:** `tools/host/fury/40-device-provision.sh` (operator, on the host) and `41-device-enroll.md`
+(laptop) replace the two `device/` scripts on this machine; the recorder's unit no longer `Requires=` the
+hand-installed policy; `14-flywheel-services.sh` leaves that unit out once the host is enrolled. No hostname
+change is needed after all: approval sets `alias=fury-host`.
+**To check live on enrollment day:** whether an app-stop override holds across a host reboot; what RHEM shows
+after a by-hand stop; the agent's `Driver=image` pre-pull of the amd64-only modelcar on arm64; whether a newly
+approved device goes through the batch sequence at all (unknown 6's real proof may be the first template change,
+Phase 5); SELinux denials from the confined agent writing `/etc/containers/policy.json` on this host.
+

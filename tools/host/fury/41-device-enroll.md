@@ -81,7 +81,7 @@ echo $ER
 `$ER` must be exactly one name, and the one the script printed on the host. If it is not, stop here.
 
 ```
-flightctl approve -l fleet=act-inference -l site=fury -l gpu=nvidia -l arch=arm64 -l policy_device=cuda -l zenoh_router=10.20.0.1 -l zenoh_port=7447 -l alias=fury-host enrollmentrequest/$ER
+flightctl approve -l fleet=act-inference -l site=fury -l gpu=nvidia -l arch=arm64 -l policy_device=cuda -l zenoh_router=10.20.0.1 -l zenoh_port=7447 -l alias=fury-host -l pull_default=insecureAcceptAnything enrollmentrequest/$ER
 DEV=$ER
 flightctl get devices -o wide
 ```
@@ -91,7 +91,12 @@ Notes on the labels:
 - No `gpu_device` in flywheel mode: without it the Fleet renders `AddDevice=nvidia.com/gpu=all`, the whole GPU.
 - No `role`: the canary is a fleet VM (Phase 7). This device lands in the `site=fury` batch.
 - `alias=fury-host` replaces the alias the agent proposes, which is the hostname — unset on this machine.
-- `zenoh_router` and `zenoh_port` have no default in the template. Leave either out and the render fails.
+- `zenoh_router` and `zenoh_port` default to `127.0.0.1` and `7447` in the template; they are set here so the
+  device's labels say what it uses.
+- `pull_default=insecureAcceptAnything` is for this host only. It is also a shared build and tenant machine, so
+  podman keeps pulling from anywhere, while the two `quay.io/jary` repositories stay signature- and
+  Rekor-enforced. A device without the label renders `reject` (the fleet VMs). Any other value is not a
+  policy type, and podman then refuses every pull.
 - Values may hold letters, digits, `-`, `_` and `.` only, 63 characters at most. `10.20.0.1:7447`, `0:1` and
   `nvidia.com/gpu=0:1` are all refused by the API; a slice is named by its `MIG-<uuid>` (section 6).
 
@@ -123,8 +128,10 @@ nvidia-smi --query-compute-apps=pid,name,used_memory --format=csv
 
 Expect `act-inference-128875-act-inference` `Up … (healthy)` and no container called plain `act-inference`;
 both units `active`; the Fleet's two digests and `AddDevice=nvidia.com/gpu=all`; `ZENOH_ROUTER=10.20.0.1:7447`
-and `POLICY_DEVICE=cuda` with no thread caps; `Published model_version: act-v2-ft160`; `reject`. The policy
-shows up in `nvidia-smi` only after its first goal — the model is loaded lazily.
+and `POLICY_DEVICE=cuda` with no thread caps; `Published model_version: act-v2-ft160`; `insecureAcceptAnything`
+(the `pull_default` label at work). The policy shows up in `nvidia-smi` only after its first goal — the model is
+loaded lazily. That the enforcement is still there: `sudo jq '.transports.docker | keys' /etc/containers/policy.json`
+lists the two `quay.io/jary` repositories.
 
 Host — episodes stamped with the Fleet's model version. The recorder is an operator-started unit; re-run
 `14-flywheel-services.sh` once after enrolling so that its unit no longer asks for the hand-installed policy.
@@ -228,7 +235,6 @@ serves (D132) — stop the application first, start it again afterwards.
   update that failed once is not retried until the spec changes or the agent restarts.
 - `rejected by policy` or `A signature was required` in the agent's journal: the digest in the Fleet is not
   signed under this hub's key and Rekor. That is a Fleet or pipeline problem, not a host one.
-- After this, podman on the host refuses pulls from anywhere the Fleet's `policy.json` does not list. For a
-  deliberate one: `sudo podman pull --signature-policy /etc/containers/policy.json.rhel-default …` (`build`
-  and `push` take the same flag). A user's own `~/.config/containers/policy.json` overrides the system file
-  for that user's rootless podman.
+- `rejected by policy` on a pull from somewhere else (nvcr.io, docker.io): the device lost its `pull_default`
+  label and rendered the fail-closed default. Put the label back (section 6 shows a label edit). For a single
+  deliberate pull: `sudo podman pull --signature-policy /etc/containers/policy.json.rhel-default …`.
