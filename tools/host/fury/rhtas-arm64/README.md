@@ -26,15 +26,14 @@ different builder. No Fulcio, CT log, TUF, TSA or search UI (signing is key-base
 7. `curl -k https://rekor-server-trusted-artifact-signer.apps.sno-flywheel.local/api/v1/log/publicKey` goes, byte for
    byte, into `gitops/tekton/rekor-public-key.yaml` and the Fleet's inline `rekor.pub` - unless the old signer key was reused.
 
-## Known and not known
-Read at the tags, not run: every Dockerfile and its bases (pinned digests all include arm64; the Go builder pulls
-anonymously from `registry.access.redhat.com`, `rhel9/mariadb-105` and `rhel9/redis-6` only from `registry.redhat.io` with
-a login; nothing installs packages, so no entitlement), the 17 `RELATED_IMAGE_*` and where each is used, standalone
-`Trillian`/`Rekor` CRs, the signer and Route logic, and that `config/default` renders with `oc kustomize` alone.
-**Unverified until run**: that each image builds and runs on aarch64 (Red Hat builds them for x86_64 only), disk space for
-rootless podman, the registry and MariaDB on local-path, the operator outside OLM on 4.22, a real `cosign` round trip.
+## What was verified (2026-09-19, aarch64 host, OpenShift 4.22 single node)
+All six images build natively with rootless podman in about four and a half minutes together (rekor-server 2 min 7 s,
+logserver 58 s, logsigner 31 s, operator 42 s, database and redis seconds each; 11 GB of rootless store). The operator
+runs outside OLM from `operator-install.yaml`, pulls from the cluster registry, and brings the standalone `Trillian` and
+`Rekor` CRs to Ready in about 90 seconds on the node-local provisioner. A `cosign` v2.6.5 `sign-blob` from a pod created
+log entry 0 and `verify-blob` passed against the log's own public key. `cli-server` stays at 0 once scaled down.
+Not exercised: the search UI, backfill, monitoring, a restore of the log from its volumes.
 
 ## Fallback
-Time box: one day. If Rekor is not Ready and taking a pipeline `cosign sign` by then - or one image eats over two hours -
-stop and deploy the upstream sigstore `rekor` Helm chart (plus its `trillian` chart; images are multi-arch except
+Not needed so far. Should the rebuilt images stop being workable, deploy the upstream sigstore `rekor` Helm chart (plus its `trillian` chart; images are multi-arch except
 Trillian's default `db_server`, which needs an arm64 MySQL). Keep Service `rekor-server` port 80 and the Route host.

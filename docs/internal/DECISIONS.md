@@ -4908,3 +4908,18 @@ anything else can reach it.
 **Still owed for Phase 3's exit:** Rekor up and its public key pinned (`gitops/tekton/rekor-public-key.yaml`,
 the Fleet's inline `rekor.pub`), a fresh cosign keypair (Fleet's `cosign.pub`), the push/sign/GitHub Secrets,
 one native Tekton build signed into this Rekor, the `rhem/bootstrap` objects, and the rollout batches (unknown 6).
+
+**Addendum (2026-09-19, same day): the rebuild worked first time; the fallback is not needed.** All six images
+built natively with rootless podman in about four and a half minutes together (rekor-server 2 min 7 s, the two
+Trillian servers 58 s and 31 s, the operator 42 s, database and redis a few seconds each). The operator runs
+outside OLM from the rendered manifest (7 CRDs, one ClusterRole, the manager — nothing else), pulls from the
+cluster registry, and brought `Trillian` and `Rekor` to Ready about 90 seconds after the CRs were applied. The
+signer key was generated straight into its Secret and never touched a disk; the tree ID is pinned in the live
+CR. A `cosign` v2.6.5 `sign-blob` from an arm64 pod created log entry 0 and `verify-blob` passed against the
+log's public key, over the same in-cluster Service URL the Tekton Task and the promotion pipeline already use —
+so nothing downstream changed except the key. The amd64-only `cli-server` stays at 0 replicas once scaled down.
+**Pinned now:** the new log key in `gitops/tekton/rekor-public-key.yaml`. **Deliberately not yet:** the Fleet's
+inline `rekor.pub` and `cosign.pub` — the Fleet on this branch still names images signed under the development
+stand-in's trust root, so its two keys and its two digests change together, in one commit, once the first
+native build is signed here. No device can receive the half-changed state: the Fleet is not applied to this
+hub until the `rhem/bootstrap` step.
