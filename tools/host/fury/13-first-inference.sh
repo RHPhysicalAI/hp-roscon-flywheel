@@ -39,6 +39,15 @@ podman container exists so-arm-sim      || die "the sim is not running - ./12-si
 mkdir -p "$data/bags" "$data/eval"
 
 date -u
+# only a running container of this very image is reused: a dead one from an earlier run, or one serving
+# another image, would otherwise be waited on in place of the image under test
+if podman container exists "$name"; then
+    cur=$(podman inspect --format '{{.State.Status}} {{.ImageName}}' "$name")
+    if [[ $cur != "running $img" ]]; then
+        echo "## removing a leftover $name container: $cur"
+        podman rm -f -t 10 "$name" >/dev/null
+    fi
+fi
 if ! podman container exists "$name"; then
     podman run -d --name "$name" --network host --device "$dev" \
         -e ROLE=policy -e POLICY_DEVICE=cuda -e MODEL_VERSION=act-v2-ft160 \
@@ -52,6 +61,10 @@ fi
 echo "## waiting for the policy to publish its model version (up to 5 min)"
 for i in $(seq 1 100); do
     podman logs "$name" 2>&1 | grep -q 'Published model_version' && break
+    if [[ $(podman inspect --format '{{.State.Status}}' "$name" 2>/dev/null) != running ]]; then
+        podman logs --tail 15 "$name" 2>&1
+        die "the policy container is not running any more - its last lines are above"
+    fi
     sleep 3
 done
 echo "## health"
