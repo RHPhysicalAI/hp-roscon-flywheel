@@ -1,0 +1,6 @@
+# This project was developed with assistance from AI tools.
+#
+# The fleet renderer's compiled Warp kernels. A plain named volume, so it outlives the container: the first start
+# on a slice compiles them, every later start loads them.
+[Volume]
+VolumeName=fleet-renderer-cache

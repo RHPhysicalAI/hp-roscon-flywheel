@@ -4,8 +4,8 @@
 #   fury-mode flywheel   MIG off. The sim renders its cameras on the GPU (OpenGL only exists without MIG)
 #                        and shares it with policy serving and training, the way the desktop did.
 #   fury-mode tenants    MIG on, 3g + 1g + 1g + 1g. Isolated slices for compute tenants; no graphics.
-#                        Starts the coding assistant on the large slice and the training tenant on 0:2,
-#                        each if its unit is installed.
+#                        Starts the coding assistant on the large slice, the training tenant on 0:2 and the
+#                        fleet's renderer on 0:3, each if its unit is installed.
 #   fury-mode status
 #
 # The GPU has to be idle to change MIG mode, so a switch stops the robot loop first. The choice is
@@ -23,6 +23,7 @@ cfg=/etc/sysconfig/mig-config
 loop=(flywheel-runner.service act-coordinator.service act-inference.service so-arm-sim.service)   # act-inference.service: before enrolment only
 assistant=llm-assistant.service          # act 2's tenant on slice 0:0 - a host unit of ours, stopped for every switch
 tenant=training-tenant.service           # act 2's tenant on slice 0:2 - the same (72-training-tenant-install.sh)
+renderer=fleet-renderer.service          # act 2's tenant on slice 0:3 - the same (73-fleet-renderer-install.sh)
 policy='act-inference-*-act-inference.service'                             # after: <app id>-<quadlet>, named by the agent
 telemetry=dcgm-exporter.service          # runs in both modes (70-dcgm.sh). Not installed is fine: every call below is quiet
 die() { echo "fury-mode: $*" >&2; exit 1; }
@@ -58,7 +59,7 @@ then run this again. Hub unreachable: sudo systemctl stop '${policy%-act-inferen
     sudo systemctl stop flywheel-runner.service flywheel-eval.service"
     fi
     systemctl disable --now fury-flywheel.target 2>/dev/null
-    systemctl stop "${loop[@]}" "$assistant" "$tenant" 2>/dev/null
+    systemctl stop "${loop[@]}" "$assistant" "$tenant" "$renderer" 2>/dev/null
     # DCGM holds the driver open without being a compute process, and MIG mode does not change under a client.
     # From here on it comes back on every way out, a refusal included.
     systemctl stop "$telemetry" 2>/dev/null
@@ -70,7 +71,7 @@ then run this again. Hub unreachable: sudo systemctl stop '${policy%-act-inferen
 status() {
     echo "mig mode:  $(mig)    configured layout: $(sed -n 's/^MIG_LAYOUT=//p' "$cfg" 2>/dev/null)"
     nvidia-smi -L | sed 's/ (UUID.*//'
-    for u in fury-flywheel.target "${loop[@]}" "$assistant" "$tenant" "$telemetry" disk-guard.service flightctl-agent.service; do
+    for u in fury-flywheel.target "${loop[@]}" "$assistant" "$tenant" "$renderer" "$telemetry" disk-guard.service flightctl-agent.service; do
         printf '%-28s %s\n' "$u" "$(systemctl is-active "$u" 2>/dev/null)"
     done
     printf '%-28s %s\n' "policy (rhem-managed)" "$(policy_state)"
@@ -108,6 +109,12 @@ tenants)
         systemctl reset-failed "$tenant" 2>/dev/null
         systemctl start --no-block "$tenant"
         echo "the training tenant is starting on slice 0:2 - loss lines within a few minutes: journalctl -fu ${tenant%.service}"
+    fi
+    if systemctl cat "$renderer" >/dev/null 2>&1; then
+        # a switch always gets a fresh try, as for the tenant
+        systemctl reset-failed "$renderer" 2>/dev/null
+        systemctl start --no-block "$renderer"
+        echo "the fleet renderer is starting on slice 0:3 - its first start on a slice compiles kernels for minutes, later ones load them: journalctl -fu ${renderer%.service}"
     fi
     status
     ;;

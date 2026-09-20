@@ -39,6 +39,8 @@ at most 1200 bytes:
 - Send rate: 30 a second is plenty; the renderer uses the latest and never queues. Loss is fine. A robot not heard
   from for 5 s is drawn greyed out at its last state; after 60 s it leaves the wall.
 - Unknown keys are ignored; a datagram that does not parse, or has another `v`, is counted and dropped.
+  So is one that lacks a joint or a cube, carries a non-finite number or a zero quaternion. The wall shows live
+  robots and, greyed, stale ones.
 
 ## Pictures: renderer -> anyone
 
@@ -49,12 +51,14 @@ HTTP on `RENDER_HTTP_ADDR` (default `10.20.0.1:9702`), no authentication, read-o
 | `GET /wall.mjpg` | `multipart/x-mixed-replace` MJPEG: one mosaic of every live robot's overhead (`static`) camera, labelled with the robot id, grid sized to the fleet, up to 1920 px wide |
 | `GET /robot/<id>/static.mjpg`, `/robot/<id>/wrist.mjpg` | one robot's camera as MJPEG |
 | `GET /robot/<id>/static.jpg`, `/robot/<id>/wrist.jpg` | the latest frame, once |
-| `GET /status` | JSON: robots (id, age of last state in s, datagrams/s), render rate, ms per batch, render size, device name, dropped datagrams |
-| `GET /healthz` | 200 when the render loop has produced a frame in the last 2 s |
+| `GET /status` | JSON: `robots[{id, state, age_s, datagrams_per_s, datagrams}]`, `robots_live`, `robots_stale`, `render_fps`, `fps_target`, `batch_ms`, `batch_worlds`, `idle_batch_ms`, `render_size`, `shadows`, `device`, `max_robots`, `dropped{total, <reason>}`, `overruns`, `streams`, `jpegs_per_s`, `wall_ms`, `phase`, `last_frame_age_s` |
+| `GET /healthz` | 200 when the render loop has produced a frame in the last 2 s. With no robot live it renders one world at rest twice a second, so it is healthy before any world exists |
+| `GET /`, `GET /wall.jpg` | a small page with the mosaic and the status table; the mosaic once |
 
 Defaults (D163's measurement: about 228 camera pairs a second per 1g.31gb slice at 640x480): render **480x480**,
 **15 frames a second**, shadows on - about twenty robots from one slice. `RENDER_SIZE`, `RENDER_FPS`,
-`RENDER_SHADOWS` change them. The output is converted from the renderer's linear colour to sRGB before encoding.
+`RENDER_SHADOWS` change them; `RENDER_DEVICE` (default `cuda:0`) and `RENDER_MAX_ROBOTS` (default 24: the batch is
+allocated once, and a robot beyond it is dropped and counted as `over_capacity`) size it. The output is converted from the renderer's linear colour to sRGB before encoding.
 
 ## Network
 
