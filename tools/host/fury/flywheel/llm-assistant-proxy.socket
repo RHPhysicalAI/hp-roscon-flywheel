@@ -1,0 +1,16 @@
+# This project was developed with assistance from AI tools.
+#
+# The assistant's API listens on loopback only (llm-assistant.container). This socket is the one deliberate way in
+# from the hub: the host's address on the hub's network, one port, forwarded to the loopback listener by the
+# service of the same name. Installed and removed by 64-assistant-expose.sh, never by the mode switch.
+[Unit]
+Description=Hub-side listener for the coding assistant's API (forwards to 127.0.0.1:8000)
+
+[Socket]
+ListenStream=10.20.0.1:8001
+# the address belongs to the libvirt bridge, which may come up after this unit at boot
+FreeBind=true
+NoDelay=true
+
+[Install]
+WantedBy=sockets.target

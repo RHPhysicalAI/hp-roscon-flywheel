@@ -1,0 +1,22 @@
+# This project was developed with assistance from AI tools.
+#
+# Applied by hand, once per hub:  oc apply -f tools/hub/manual/assistant-endpointslice.yaml
+# Argo CD excludes EndpointSlices (and Endpoints) from what it manages, so this cannot live under gitops/. It gives
+# Service assistant (gitops/flywheel/assistant.yaml) its one endpoint: the host's hub-side listener for the coding
+# assistant's API.
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: assistant
+  namespace: flywheel
+  labels:
+    kubernetes.io/service-name: assistant
+addressType: IPv4
+ports:
+  - name: openai
+    port: 8001
+    protocol: TCP
+endpoints:
+  - addresses: ["10.20.0.1"]
+    conditions:
+      ready: true

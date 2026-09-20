@@ -5394,3 +5394,20 @@ tokens: **time to first token 0.132 s, decode 245.7 tokens/s, end to end 218.7 t
 five. D154's 142.5 tokens/s was taken with MIG off while the flywheel's sim and policy shared the GPU; the slice
 has its compute to itself, which is the point of act 2. **The number to quote for the slice is 245 tokens/s
 single stream.**
+
+## D161 — The assistant is reached from inside the cluster only: a Service in front of a host-side listener, no Route
+
+**Date:** 2026-09-20. **Status:** built; the host step (`64-assistant-expose.sh open`) is the operator's.
+
+D156 left the assistant on loopback and called opening it "an operator's decision". Decided with the operator: it
+goes through the hub, the way the camera streams do (D159) - but one step tighter, because this is an API without a
+key and not a read-only stream. **Host:** the API stays on `127.0.0.1:8000`; systemd listens on the hub-side address
+`10.20.0.1:8001` and forwards (`llm-assistant-proxy.socket` / `.service`, `systemd-socket-proxyd`), and
+`64-assistant-expose.sh` lists that port in `libvirt-to-host`. The mode switch does not manage it: with the
+assistant down the forward is refused. **Hub:** Service `assistant.flywheel.svc:8000`, no selector, its endpoint
+applied by hand (`tools/hub/manual/assistant-endpointslice.yaml`; Argo CD does not manage EndpointSlices, D159) -
+and **no Route**. Browsers reach the model only through something in the cluster that serves them over https: the
+dashboard's backend for the chat panel, a developer workspace for the editor. That also removes the private-CA
+question for in-cluster clients (plain http on the cluster network to the host bridge). Known and accepted: peers
+on the operator's tailnet reach `10.20.0.1:8001` directly, as they do every port on that address. If the API is ever
+given a Route or a wider network, it gets a key first (`--api-key`, held server-side).
