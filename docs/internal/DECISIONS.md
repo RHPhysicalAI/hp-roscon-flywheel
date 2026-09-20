@@ -5524,6 +5524,37 @@ at twenty robots and holds at sixteen. Host memory peak 1.0 GiB, the wall's JPEG
 wall: every arm moving. What it showed was the test sender's synthetic motion (a cube sliding, nothing picked
 up) - the worlds, physics with replayed recorded motion, are the next piece.
 
+**Addendum, same day - stages A and B are live: twelve managed robots, twelve worlds, one wall.**
+*Worlds (B).* A world costs **1.4-1.6 vCPUs and 540 MiB on the hub** - half again what the same world cost on the
+host's own cores. Twelve put the 32-vCPU node at 64% and the render batch at 54 ms of its 66; sixteen ran (76%,
+14.5 frames a second) but left the hub VM with every vCPU busy during a restart, and twenty did not schedule: the
+node's cpu *requests* were 97% booked with a quarter of its cpu idle. The request is now 500m (the platform wins
+when cpu is short, and a workspace or a pipeline run still schedules), the scale script caps at sixteen, and **the
+fleet's size is twelve**. The arms replay **thirty recorded episodes of the policy's own actions** (extracted from
+the training dataset into a hand-made ConfigMap), in the collection scene: only the green cube is re-placed, by
+3 cm. Open loop, that lifts the two cubes that never move into the tray and the green one when it lies right - what
+the operator recognised as the policy's usual two of three. The built-in motion is the fallback, in the policy's
+order. The wall lays a fleet that divides evenly out as a full grid (4 x 3).
+*Robots (A).* The golden image holds the OS, the agent, podman, cloud-init and a firewall - **no application
+image**: the runtime image has whiteouts, which a container build cannot carry into an embedded store, so every
+robot pulls its two images itself and verifies them itself, which is also the better story. OS image 34 s, disk
+65 s, 940 MiB; 40 GiB thin root. The builder is handed the host's own image store, as the spike did: podman
+refuses a store that shows up at another path inside the builder's container, and the builder is privileged either
+way. Three first-boot faults, each of which would have hit every clone, found by reading the clone's disk from the
+host (`82-fleet-vm-peek.sh` - there is no other way into these guests, by design): cloud-init 24.4 rejects
+netplan's `to: default` route and with it the whole pre-network stage (the clone boots with no address); the agent
+ordered after cloud-init's *final* stage closes a cycle through `multi-user.target`, which systemd breaks by never
+starting the agent (it now waits for the network stage, where its config is written); RHEL's cloud-init makes the
+fqdn the hostname, and the approval check accepts `fleet-vm-NN` only. After those: twelve clones enrolled by
+themselves, were approved by the checked script (dry run first; the canary alone, then batches), joined
+`Fleet/robots` (live in `gitops/rhem/fleet-robots.yaml`), and **all twelve were Online, UpToDate and Healthy about
+25 minutes after the first one booted** - the canary's own pull-verify-start took under ten. Host with twelve VMs,
+twelve worlds and three tenants: load about 50 of 72 cores, 267 GB of memory free.
+*How it is shown (operator, same day).* The demo stays in tenants mode with everything running; act 1 is shown
+from a recording, not by switching modes on stage. The fleet's beats therefore assume a
+running fleet and reset only what they touch: robots stopped and started with `81-fleet-scale.sh <N>` (back in
+about a minute - no approval, no pull), a rollout walking the Fleet's batches.
+
 **Staging, each stage showable on its own:** (A) the micro-VM factory, enrolment and approval tooling, the robots'
 Fleet - RHEM at scale, no sim yet; (B) world pods + the rendering tenant + the wall, the arms driven by recorded
 motion; (C) the policy on each device closes the loop with its world.
