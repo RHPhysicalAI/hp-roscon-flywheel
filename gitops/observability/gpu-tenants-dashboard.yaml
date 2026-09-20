@@ -70,7 +70,7 @@ spec:
             title: "All slices"
           items:
             - content:
-                # the full JSON-pointer path including "spec", as in edge-flywheel-dashboard.yaml (D028)
+                # the full JSON-pointer path including "spec" (D028)
                 $ref: "#/spec/panels/busyAll"
               height: 8
               width: 12

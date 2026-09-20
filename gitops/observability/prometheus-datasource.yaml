@@ -9,13 +9,11 @@ metadata:
   namespace: observability
 spec:
   config:
-    # the default for its own kind only: tempo-edge stays the default TempoDatasource
     default: true
     plugin:
       kind: PrometheusDatasource
       spec:
-        # proxy (not directUrl), for the reason given in tempo-datasource.yaml: the Perses backend makes
-        # the call, a browser cannot reach a cluster Service.
+        # proxy (not directUrl): the Perses backend makes the call, a browser cannot reach a cluster Service.
         proxy:
           kind: HTTPProxy
           spec:
