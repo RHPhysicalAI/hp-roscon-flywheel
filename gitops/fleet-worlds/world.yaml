@@ -24,8 +24,8 @@
 # gets less cpu runs slower than real time but keeps moving and reporting.
 # On the hub itself a world costs more than on the host's cores - measured 2026-09-20 with 8 and with 12 worlds:
 # 1.5-1.6 vCPUs and 540 MiB each, every world still sending its 30 states a second. 12 worlds put the 32-vCPU
-# node at 64% with the platform, and the renderer's batch at 54 ms of its 66 ms: 12 is the comfortable number
-# for both halves, 20 the ceiling the scale script enforces.
+# node at 64% with the platform, and the renderer's batch at 54 ms of its 66 ms; 16 worlds put it at 76% and the
+# batch at 67-68 ms (14.5 frames a second). 16 is the fleet's size and the cap the scale script enforces.
 #
 # Recorded motion: a ConfigMap fleet-trajectories made by hand from tools/fleet/extract_trajectories.py
 # (tools/hub/fleet-worlds-scale.sh trajectories <file>) - thirty episodes of the policy's own recorded actions,

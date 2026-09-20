@@ -13,17 +13,18 @@
 # Scaling up goes in steps of STEP worlds, each waited for: a world wants more than two cores for the half minute
 # it takes to start, and the hub is one node that also runs the platform. Scaling down is immediate.
 # The ceiling: a world costs about 1.5 vCPUs and 0.55 GiB on the hub at steady state (measured; see world.yaml), and
-# the hub has 32 vCPUs. 12 worlds leave the platform its share; above 20 this script refuses.
+# the hub has 32 vCPUs. 12 worlds leave the platform its share, 16 is the cap this script enforces: measured, the
+# node is at 76% there and the renderer's slice at its 15 frames a second.
 #
 #   KUBECONFIG         the hub's kubeconfig                                        (required)
 #   STEP               worlds started at once when scaling up                      (default 4)
-#   FLEET_WORLDS_MAX   the ceiling, for an operator who has measured the hub       (default 20)
+#   FLEET_WORLDS_MAX   the ceiling, for an operator who has measured the hub       (default 16)
 set -euo pipefail
 
 NS=fleet
 STS=statefulset/world
 COMFORTABLE=12
-max=${FLEET_WORLDS_MAX:-20}
+max=${FLEET_WORLDS_MAX:-16}
 step=${STEP:-4}
 die() { echo "${0##*/}: $*" >&2; exit 1; }
 [[ -n ${KUBECONFIG:-} ]] || die "KUBECONFIG must be set"
