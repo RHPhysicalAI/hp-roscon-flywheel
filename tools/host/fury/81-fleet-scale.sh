@@ -187,6 +187,8 @@ EOF
 # This project was developed with assistance from AI tools.
 hostname: $n
 fqdn: $n.fleet.local
+# RHEL's cloud-init would make the fqdn the hostname; the agent reports the hostname, and the hub approves fleet-vm-NN
+prefer_fqdn_over_hostname: false
 preserve_hostname: false
 ssh_pwauth: false
 disable_root: true
