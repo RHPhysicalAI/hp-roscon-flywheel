@@ -88,7 +88,7 @@ spec:
       containers:
         - name: world
           # Do not commit this file with the placeholder in it: tools/hub/build-fleet-world.sh prints the digest.
-          image: quay.io/jary/soarm-flywheel@sha256:FLEET_WORLD_IMAGE_DIGEST_PLACEHOLDER
+          image: quay.io/jary/soarm-flywheel@sha256:8a3e499815698cf81bbdbe5c876d2ee5d0ce6775dbc11e4ede6f679e4a83ecc7
           imagePullPolicy: IfNotPresent
           command: ["/bin/bash", "-c"]
           args:
