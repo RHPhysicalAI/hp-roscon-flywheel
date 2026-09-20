@@ -22,6 +22,7 @@ cfg=/etc/sysconfig/mig-config
 loop=(flywheel-runner.service act-coordinator.service act-inference.service so-arm-sim.service)   # act-inference.service: before enrolment only
 assistant=llm-assistant.service          # act 2's tenant on slice 0:0 - a host unit of ours, stopped for every switch
 policy='act-inference-*-act-inference.service'                             # after: <app id>-<quadlet>, named by the agent
+telemetry=dcgm-exporter.service          # runs in both modes (70-dcgm.sh). Not installed is fine: every call below is quiet
 die() { echo "fury-mode: $*" >&2; exit 1; }
 mig() { nvidia-smi -i 0 --query-gpu=mig.mode.current --format=csv,noheader; }
 policy_state() { systemctl list-units --all --no-legend --plain "$policy" | awk '{print $3 "/" $4}'; }
@@ -42,6 +43,10 @@ then run this again. Hub unreachable: sudo systemctl stop '${policy%-act-inferen
     fi
     systemctl disable --now fury-flywheel.target 2>/dev/null
     systemctl stop "${loop[@]}" "$assistant" 2>/dev/null
+    # DCGM holds the driver open without being a compute process, and MIG mode does not change under a client.
+    # From here on it comes back on every way out, a refusal included.
+    systemctl stop "$telemetry" 2>/dev/null
+    trap 'systemctl start --no-block "$telemetry" 2>/dev/null' EXIT
     local busy; busy=$(nvidia-smi --query-compute-apps=pid,name --format=csv,noheader)
     [[ -z $busy ]] || die "the gpu is still in use, stop this first: $busy"
 }
@@ -49,7 +54,7 @@ then run this again. Hub unreachable: sudo systemctl stop '${policy%-act-inferen
 status() {
     echo "mig mode:  $(mig)    configured layout: $(sed -n 's/^MIG_LAYOUT=//p' "$cfg" 2>/dev/null)"
     nvidia-smi -L | sed 's/ (UUID.*//'
-    for u in fury-flywheel.target "${loop[@]}" "$assistant" disk-guard.service flightctl-agent.service; do
+    for u in fury-flywheel.target "${loop[@]}" "$assistant" "$telemetry" disk-guard.service flightctl-agent.service; do
         printf '%-28s %s\n' "$u" "$(systemctl is-active "$u" 2>/dev/null)"
     done
     printf '%-28s %s\n' "policy (rhem-managed)" "$(policy_state)"
@@ -63,6 +68,7 @@ flywheel)
     systemctl restart mig-config.service       || die "mig-config failed: journalctl -u mig-config"
     systemctl restart nvidia-cdi-refresh.service
     [[ $(mig) == Disabled ]]                   || die "MIG is still on"
+    systemctl start "$telemetry" 2>/dev/null   # only now: it enumerates the gpu, or its instances, once at start
     systemctl enable --now fury-flywheel.target
     status
     if [[ -s /etc/flightctl/config.yaml ]]; then echo "next, from the laptop: flightctl app start device/<name> --name act-inference --yes"; fi
@@ -74,6 +80,7 @@ tenants)
     systemctl restart nvidia-cdi-refresh.service
     n=$(nvidia-ctk cdi list 2>/dev/null | grep -c 'nvidia.com/gpu=0:[0-9]' || true)
     [[ $n -eq 4 ]]                             || die "wanted 4 slices in the cdi spec, found $n"
+    systemctl start "$telemetry" 2>/dev/null   # only now: it enumerates the gpu, or its instances, once at start
     if systemctl cat "$assistant" >/dev/null 2>&1; then
         # --no-block: the model loads for minutes, and the unit reports itself through its health check
         systemctl start --no-block "$assistant"

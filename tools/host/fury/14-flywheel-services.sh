@@ -20,8 +20,13 @@ for f in fury-mode.sh mig-config.sh disk-guard.sh flywheel/so-arm-sim.container 
     [[ -f $here/$f ]] || die "missing $f next to this script"
 done
 
-# let quadlet check the container files before anything is installed
-QUADLET_UNIT_DIRS=$here/flywheel /usr/libexec/podman/quadlet -dryrun >/dev/null || die "quadlet rejected the container files"
+# let quadlet check the container files before anything is installed - the three of this script, copied aside:
+# the directory holds other scripts' units too, and a malformed one of those must not block this
+qd=$(mktemp -d)
+cp "$here"/flywheel/{so-arm-sim,act-inference,act-coordinator}.container "$qd/"
+checked=yes; QUADLET_UNIT_DIRS=$qd /usr/libexec/podman/quadlet -dryrun >/dev/null || checked=no
+rm -f "$qd"/*.container; rmdir "$qd"
+[[ $checked == yes ]] || die "quadlet rejected the container files"
 
 install -m 0755 "$here/fury-mode.sh"   /usr/local/sbin/fury-mode
 install -m 0755 "$here/mig-config.sh"  /usr/local/sbin/mig-config.sh

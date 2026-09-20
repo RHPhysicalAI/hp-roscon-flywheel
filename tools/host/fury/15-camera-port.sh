@@ -1,10 +1,15 @@
 #!/bin/bash
-# Let the hub reach the sim's camera bridge on this host, and nothing else. One-time bring-up.
+# Let the hub reach the sim's camera bridge on this host. One-time bring-up.
 #
 # The flywheel dashboard is served over https, and a browser will not load an http stream into an https page, so
 # the two camera streams go through the hub's router (gitops/flywheel/so-arm-sim.yaml: Route sim-cameras ->
 # 10.20.0.1:8081). Guests may not open connections to this host except on listed ports (policy libvirt-to-host,
 # 06-network.sh); this adds the bridge's port to that list.
+#
+# Who reaches 10.20.0.1:8081 then: the guests (the hub), through this entry. Not the lab uplink: the entry opens
+# nothing in the uplink's zone, and the lab network has no route to 10.20.0.1. Peers on the operator's tailnet reach
+# it with or without the entry, because this host routes 10.20.0.0/24 for the tailnet - accepted: it is the admin
+# network.
 #
 #   ./15-camera-port.sh open      8081/tcp in the libvirt-to-host policy, now and after a reboot
 #   ./15-camera-port.sh status    what is open, and whether the bridge answers
@@ -40,7 +45,7 @@ open)
     is_open             || firewall-cmd --policy=$policy --add-port=$port
     is_open --permanent || firewall-cmd --permanent --policy=$policy --add-port=$port
     zone_ok || die "virbr-fury left its zone:  sudo virsh net-destroy fury-net && sudo virsh net-start fury-net  - with the hub VM shut down"
-    echo "firewalld: $port open in policy $policy (guests to this host), and nowhere else"
+    echo "firewalld: $port open in policy $policy (guests to this host). The lab uplink is not opened; tailnet peers reach 10.20.0.1 with or without it (accepted: the admin network)"
     ;;
 close)
     ! is_open             || firewall-cmd --policy=$policy --remove-port=$port

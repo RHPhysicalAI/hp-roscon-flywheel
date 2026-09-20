@@ -1,0 +1,70 @@
+# This project was developed with assistance from AI tools.
+#
+# GPU telemetry for the hub's dashboard: NVIDIA's DCGM exporter, scraped by the hub's Prometheus over the
+# VM network. One set of series for the whole GPU with MIG off, one per GPU instance with MIG on (labels
+# GPU_I_ID and GPU_I_PROFILE) - the exporter's default device selector follows the mode by itself.
+#
+# Not part of the robot-loop target: it runs in both modes. It does hold the driver open, though, and the
+# GPU must have no clients to change MIG mode or its instances, so fury-mode stops it before a switch and
+# starts it again afterwards. A restart is also what makes it see the new layout: instances are
+# enumerated once, at start. Installed by 70-dcgm.sh; what each choice rests on is in 70-dcgm.md.
+[Unit]
+Description=DCGM exporter (GPU and MIG metrics for the hub, 10.20.0.1:9400)
+# at boot, start on the layout the machine will keep rather than on the one before it
+After=mig-config.service nvidia-cdi-refresh.service
+
+[Container]
+ContainerName=dcgm-exporter
+# nvcr.io/nvidia/k8s/dcgm-exporter:4.5.2-4.8.1-ubi9, the multi-arch list, by digest
+Image=nvcr.io/nvidia/k8s/dcgm-exporter@sha256:e28d8e75a7e55efd799a43309e4f8081b594074cbd51b85319465362fd7bf260
+Pull=never
+# Host networking with one explicit address, not a published port. A published port is a DNAT rule, and
+# firewalld accepts DNATed traffic before it looks at zones or policies: the opening in libvirt-to-host
+# would decide nothing. Who reaches 10.20.0.1:9400 this way: the guests (the hub), through that opening.
+# Not the lab uplink: nothing listens on its address, and its zone does not open 9400. Peers on the
+# operator's tailnet do, with or without the opening, because this host routes 10.20.0.0/24 for the
+# tailnet - accepted: it is the admin network.
+# The exporter takes a single listen address, so loopback does not answer: check with 10.20.0.1 locally.
+Network=host
+Environment=DCGM_EXPORTER_LISTEN=10.20.0.1:9400
+AddDevice=nvidia.com/gpu=all
+# The profiling fields (DCGM_FI_PROF_*) are the only per-instance utilisation there is, and DCGM reads
+# them only with SYS_ADMIN. Everything else is dropped, as in NVIDIA's own manifest for this version.
+# An accepted risk: root with SYS_ADMIN on the host network. What bounds it: every other capability
+# dropped, no new privileges, SELinux-confined (container_t), the image pinned by digest.
+DropCapability=all
+AddCapability=CAP_SYS_ADMIN
+NoNewPrivileges=true
+# both shipped lists carry the same fields in this version; this is the one documented to include profiling
+Environment=DCGM_EXPORTER_COLLECTORS=/etc/dcgm-exporter/dcp-metrics-included.csv
+# milliseconds. The default is 30 s, and a slice that lights up half a minute after its job started is no
+# demo; the hub scrapes every 10 s (gitops/observability/fury-gpu-scrape.yaml)
+Environment=DCGM_EXPORTER_INTERVAL=5000
+# the label would otherwise be re-read at every start: keep series continuous across a mode switch
+Environment=DCGM_EXPORTER_NO_HOSTNAME=true
+# the image defines no health check and this unit is judged by its scrape
+HealthCmd=none
+# SELinux: confined (container_t) is what is installed, as CUDA ran confined on this host. Only if
+# 70-dcgm.sh reports no DCGM_FI_PROF_* series and `ausearch -m avc -ts recent` names this container, in
+# this order, stopping at the first that brings the series (70-dcgm.md, failure table):
+#  1. sudo setsebool -P container_use_devices=1, restart the unit, ./70-dcgm.sh install, check again
+#  2. a module for exactly what was denied: sudo ausearch -m avc -ts recent | audit2allow -M dcgm-local,
+#     then sudo semodule -i dcgm-local.pp, restart, install, check again
+#  3. LAST RESORT: uncomment the next line (--security-opt=label=disable, NVIDIA's documented form for
+#     CDI). Its cost: a root, host-network, CAP_SYS_ADMIN container with no SELinux confinement at all.
+#     To revert: comment the line again, ./70-dcgm.sh install
+#SecurityLabelDisable=true
+
+[Service]
+# a clear line in the journal instead of a bind error while libvirt has not brought the bridge up yet
+ExecStartPre=/bin/sh -c 'ip -4 -o addr show | grep -qF " 10.20.0.1/" || { echo "10.20.0.1 is not up yet (virbr-fury)"; exit 1; }'
+Restart=always
+# slow enough to stay under systemd's start limit while the bridge is awaited at boot
+RestartSec=15
+TimeoutStartSec=120
+# a wedged host engine must not compete with the robot loop for memory or cpu
+MemoryMax=512M
+CPUQuota=100%
+
+[Install]
+WantedBy=multi-user.target
