@@ -153,9 +153,12 @@ because the agent's container is the only policy on the graph (the `podman ps` l
 
 ## 6. Later: serving from a MIG slice (`gpu_device`)
 
-Only worth doing when tenants mode has something for the policy to talk to. Today it does not: the Zenoh
-router lives in the sim container, the sim cannot run with MIG on, and a policy that cannot reach a router
-never passes its health check and is killed and restarted every five minutes or so.
+This is robot zero (D164), and it is wrapped: `tools/hub/robot-zero.sh up` and `down` do what follows in the
+right order and check each step, `tools/hub/fury-switch.sh` calls them around a mode switch, and
+`74-robot-zero.md` is the operator page. The policy needs something to talk to in tenants mode - the Zenoh
+router in `robot-zero-sim` (`74-robot-zero-install.sh`); without it the policy never passes its health check and
+is killed and restarted every five minutes or so. What follows is the same thing by hand, for when the script
+cannot be used.
 
 The order matters. A label change re-renders the quadlet and the agent restarts it at once, so the slice has
 to exist before the label names it, and the policy has to be down before MIG can change at all.
@@ -178,16 +181,26 @@ Laptop — edit the first line, paste the rest:
 ```
 GPU_DEVICE=MIG-00000000-0000-0000-0000-000000000000
 d=$(mktemp -d)
-flightctl get device/$DEV -o json | jq --arg v $GPU_DEVICE 'del(.status) | .metadata.labels.gpu_device = $v' > $d/device.json
+flightctl get device/$DEV -o json | jq --arg v $GPU_DEVICE 'del(.status, .metadata.annotations, .metadata.generation, .metadata.owner, .metadata.creationTimestamp, .metadata.deletionTimestamp) | .metadata.labels.gpu_device = $v' > $d/device.json
 flightctl apply -f $d/device.json
 rm -f $d/device.json
 rmdir $d
-flightctl get device/$DEV --rendered | grep AddDevice=
+flightctl get device/$DEV -o json | jq -r '.spec.applications[].inline[] | select(.path == "act-inference.container") | .content' | grep AddDevice=
+flightctl get device/$DEV -o json | jq '.status.updated.status, .status.config.renderedVersion, .metadata.annotations["device-controller/renderedVersion"]'
 flightctl app start device/$DEV --name act-inference --yes
 ```
 
-Going back to the whole GPU is the same dance with the label removed — `jq 'del(.status) | del(.metadata.labels.gpu_device)'`
-in place of the `jq` above — and `fury-mode flywheel` on the host between the stop and the start.
+Start only when the first line names the slice and the two versions of the second are equal (`UpToDate`): with
+`AddDevice=nvidia.com/gpu=all` and MIG on, the policy would land on the assistant's slice. (flightctl 1.3.0 has
+no `get --rendered`; the device's spec is the Fleet's template already rendered with this device's labels.)
+
+The write is the whole device document, so it carries as little as it can: everything the hub manages is taken
+out (it keeps what it is not sent), `metadata.resourceVersion` stays in — it is the hub's lock, and a device that
+changed between the `get` and the `apply` is then a refused write, not a silently overwritten label map. Afterwards
+`flightctl get device/$DEV -o json | jq .metadata.labels` still shows `alias`, `fleet` and `pull_default` as they were.
+
+Going back to the whole GPU is the same dance with the label removed — the same `del(...)` followed by
+`| del(.metadata.labels.gpu_device)` in place of the `jq` above — and `fury-mode flywheel` on the host between the stop and the start.
 `flightctl edit device/$DEV` does the same label change in an editor.
 
 ## 7. Later: switching modes with the policy under RHEM
@@ -195,6 +208,9 @@ in place of the `jq` above — and `fury-mode flywheel` on the host between the 
 The policy is the hub's to stop and start now; `fury-mode` handles the sim, the recorder and MIG. The stop is
 a device-level override that survives Fleet rollouts, so a promotion merged while the machine is in tenants
 mode does not bring the policy back up on the wrong device.
+
+`tools/hub/fury-switch.sh tenants | flywheel` is the wrapped way, and with robot zero (section 6) the only
+complete one: it also moves the policy's placement. By hand, without robot zero —
 
 To tenants — laptop, wait for `Stopped`, then host:
 

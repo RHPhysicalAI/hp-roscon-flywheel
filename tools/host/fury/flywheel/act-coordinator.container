@@ -31,6 +31,12 @@ StopTimeout=20
 [Service]
 # a ROS 2 tree exits 130 on the SIGINT above; that is a clean stop, not a failure
 SuccessExitStatus=130 143
+# The collection loop belongs to flywheel mode. In tenants mode robot zero's world (robot-zero-sim, D164) runs a
+# Zenoh router on the same port, with the policy and ray-traced camera topics behind it: started there, this unit
+# would record bags of the rendering tenant's pixels into the flywheel's bag directory and fight robot zero's own
+# episode loop for the arm. A condition, not a pre-start: it skips the start - inactive, not failed, not retried -
+# and it is looked at before the pre-start below creates anything.
+ExecCondition=/bin/sh -c '[ "$(nvidia-smi -i 0 --query-gpu=mig.mode.current --format=csv,noheader)" = Disabled ] || { echo "MIG is on (tenants mode): the collection loop belongs to flywheel mode, not starting. Robot zero has its own loop, which records nothing: robot-zero-episodes.service"; exit 1; }'
 ExecStartPre=/bin/sh -c 'mkdir -p /data/flywheel/bags; [ "$(df -BG --output=avail /data/flywheel/bags | tail -1 | tr -dc 0-9)" -ge 1500 ]'
 Restart=on-failure
 RestartSec=15

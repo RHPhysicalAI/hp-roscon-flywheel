@@ -1,0 +1,66 @@
+# This project was developed with assistance from AI tools.
+#
+# Robot zero's episode loop (D164): the flywheel's own coordinator, in the signed runtime image, with everything
+# that produces data taken away. It homes the arm, re-places the cubes (the collection scene: the green cube within
+# 3 cm, any yaw), sends the policy a goal, lets it work for up to a minute, cancels, and starts over. While the
+# policy is out of service it waits for the action server; nothing else happens.
+#
+# Robot zero must never reach the flywheel's data: the pixels it sees are the rendering tenant's, not Gazebo's, and
+# episodes made from them would poison the dataset, move the training trigger and show up on the evaluation pages.
+# What keeps it out, each checked by 74-robot-zero-install.sh on the file it installs:
+#   RECORD=false      the entrypoint does not start the episode recorder and the coordinator sends it no goal:
+#                     no bag is written, and with no bag nothing is kept or pruned either
+#   no Volume= at all and a read-only root: /data/flywheel is not in this container, the rest-pose file the
+#                     coordinator keeps goes to a tmpfs that ends with the container
+#   no EnvironmentFile=, no CURATOR_URL: no credential and no address of the hub's pipeline
+# RECORD=false does NOT silence the coordinator's start/end signals on /flywheel/episode_control. What turns those
+# into a curator record is the episode emitter, and that lives in the flywheel's sim container, which cannot start
+# under MIG; robot zero's world (SIM_CAMERAS=off) starts none.
+[Unit]
+Description=Robot zero's episode loop (reset, run the policy, repeat - records nothing)
+After=robot-zero-sim.service
+# only ever beside its world: stopped with it, restarted with it, started by it
+BindsTo=robot-zero-sim.service
+StartLimitIntervalSec=1h
+StartLimitBurst=10
+
+[Container]
+ContainerName=robot-zero-episodes
+# the runtime image of the Fleet's policy and of act-coordinator.container
+Image=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837
+Pull=never
+Network=host
+# No MODEL_VERSION: in this role the coordinator only compares it with what the policy announces, and a value
+# here would go stale at the next promotion.
+Environment=ROLE=coordinator ZENOH_ROUTER=127.0.0.1:7447
+Environment=RECORD=false
+# the scene of act-coordinator.container, so that robot zero looks like the robot of act 1
+Environment=EPISODE_LEN=60 RANDOMIZE_CUBES=true RANDOMIZE_ONLY=cube_medium RANDOM_RADIUS=0.03 RANDOM_YAW_DEG=180
+# The policy's own rest pose, as the flywheel's coordinator learned it on this host (2026-09-20), so that the arm is
+# taken out of the way after a failed episode from the first one on. Pinned here because the file it is kept in
+# on the flywheel's side is not mounted.
+Environment=REST_POSE=0.0405,-1.7216,1.4556,1.3300,-0.0984,0.0051
+Environment=REST_POSE_FILE=/tmp/rest_pose.json
+# the same name as robot-zero-sim.container: the cube reset and the cube check talk to that Gazebo and no other
+Environment=GZ_PARTITION=robot-zero
+Environment=HOME=/tmp
+Environment=ROS_LOG_DIR=/tmp/ros-log
+ReadOnly=true
+DropCapability=all
+NoNewPrivileges=true
+# the image's health check asks for the policy's action server: that is the policy's health, not this loop's
+HealthCmd=none
+StopSignal=SIGINT
+StopTimeout=20
+
+[Service]
+ExecCondition=/bin/sh -c 'nvidia-ctk cdi list 2>/dev/null | tr -d "[:blank:]" | grep -qxF "nvidia.com/gpu=0:1" || { echo "CDI device nvidia.com/gpu=0:1 is not there (MIG off): robot zero is a tenants-mode tenant, not starting"; exit 1; }'
+# a ROS 2 tree exits 130 on the SIGINT above; that is a clean stop, not a failure
+SuccessExitStatus=130 143
+Restart=always
+RestartSec=15
+TimeoutStartSec=300
+CPUQuota=200%
+MemoryHigh=2G
+MemoryMax=3G
+MemorySwapMax=0
