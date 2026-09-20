@@ -21,8 +21,11 @@
 # (real-time factor 0.97-0.99, /joint_states 49 a second; 0.8 cores with the arm at rest, up to 1.2 when it
 # presses on something), 950 MiB peak, and more than the 2-core limit wanted for the 20-30 s of start-up. The
 # physics thread alone is 0.7 of a core, so a world cannot be made much cheaper than its request. A world that
-# gets less cpu runs slower than real time but keeps moving and reporting. On the 32-vCPU hub that also runs
-# the platform: 16 worlds is the comfortable number, 20 the ceiling the scale script enforces.
+# gets less cpu runs slower than real time but keeps moving and reporting.
+# On the hub itself a world costs more than on the host's cores - measured 2026-09-20 with 8 and with 12 worlds:
+# 1.5-1.6 vCPUs and 540 MiB each, every world still sending its 30 states a second. 12 worlds put the 32-vCPU
+# node at 64% with the platform, and the renderer's batch at 54 ms of its 66 ms: 12 is the comfortable number
+# for both halves, 20 the ceiling the scale script enforces.
 #
 # Recorded motion is optional: a ConfigMap fleet-trajectories made by hand from tools/fleet/extract_trajectories.py
 # (tools/hub/fleet-worlds-scale.sh trajectories <file>). Without it the motion player's synthetic motion runs.
