@@ -111,7 +111,7 @@ function originLabel(origin) {
   if (!origin) return '';
   if (origin.startsWith('files:')) return origin.slice(6);
   if (origin.startsWith('eval:')) return 'run ' + origin.slice(5);
-  if (origin.startsWith('live')) return 'Kafka + MinIO';
+  if (origin.startsWith('live')) return 'Kafka + object storage';
   return origin;
 }
 
@@ -795,7 +795,7 @@ function renderViews(stats) {
   const versionCount = Object.keys(snap.versions).length;
   const parts = [];
   if (stats.source_mode === 'live' && snap.seed_complete === false) {
-    parts.push('Loading episodes from MinIO…');
+    parts.push('Loading episodes from object storage…');
   } else if (snap.episode_count) {
     parts.push(`${snap.episode_count} episode(s) loaded across ${versionCount} version(s)`);
   }

@@ -1042,7 +1042,7 @@ data:
         <div class="card-header">
           <span class="card-title">Flywheel Progress</span>
           <span class="annotation">
-            Curated episodes flow to MinIO &rarr; Kafka &rarr; training trigger &rarr; LeRobot ACT fine-tune
+            Curated episodes flow to object storage &rarr; Kafka &rarr; training trigger &rarr; LeRobot ACT fine-tune
           </span>
         </div>
         <div id="progress-inner">
@@ -1682,7 +1682,7 @@ spec:
             - name: TRIGGER_THRESHOLD
               value: "160"   # matches manifest-consumer (D022/D023); was thor-testing's 10
             - name: DASHBOARD_CODE_REV
-              value: "2026-09-20-camroute"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
+              value: "2026-09-20-wording"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
             # MinIO (read-only) for the paired A/B video clips under paired-ab/. hub-credentials
             # holds the same values as the MinIO root account (argocd/README.md).
             - name: MINIO_ENDPOINT

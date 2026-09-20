@@ -68,7 +68,7 @@
     <div id="empty-state" class="no-data" style="display:none">
       <span id="empty-records">
         No episode records loaded. Mount a directory of episode JSON files at <code>/records</code>
-        (<code>RECORDS_DIR</code>), or run in live mode to read from Kafka + MinIO.
+        (<code>RECORDS_DIR</code>), or run in live mode to read from Kafka + object storage.
       </span>
       <span id="empty-eval" hidden>
         No evaluation run found yet. One appears here once a promotion run has written its
@@ -122,7 +122,7 @@
   </main>
 
   <footer>
-    <span>Read-only &middot; no writes to Kafka, MinIO, or the sim</span>
+    <span>Read-only &middot; no writes to Kafka, object storage, or the sim</span>
     <span id="footer-counts"></span>
   </footer>
 

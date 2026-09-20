@@ -397,7 +397,7 @@ def main() -> None:
     records_dir = os.environ.get("RECORDS_DIR", "/records")
 
     if source_mode == "live":
-        store.origin = "live:kafka+minio"
+        store.origin = "live:kafka+s3"
         run_live(store)
     elif source_mode == "files":
         if pathlib.Path(records_dir).exists():
