@@ -64,6 +64,8 @@ data:
     CAMERA_SUFFIX = os.environ.get("CAMERA_SUFFIX", "").strip()
     if not all(c.isalnum() or c in "._-" for c in CAMERA_SUFFIX):
         CAMERA_SUFFIX = ""
+    # The line under the two pictures: says where they come from, which differs between the two GPU modes.
+    CAMERA_CAPTION = os.environ.get("CAMERA_CAPTION", "").strip() or "Live feeds from SO-ARM101 Gazebo sim (480x480)."
     # Header link to the evaluation dashboard; empty means no link is rendered.
     EVAL_DASHBOARD_URL = os.environ.get("EVAL_DASHBOARD_URL", "").strip()
     FW_NS         = os.environ.get("FLYWHEEL_NS", "flywheel")
@@ -367,7 +369,7 @@ data:
     @app.route("/")
     def index():
         html = HTML_FILE.read_text() if HTML_FILE.exists() else "<h1>index.html not mounted</h1>"
-        html = html.replace("__CAMERA_BASE__", CAMERA_BASE).replace("__CAMERA_SUFFIX__", CAMERA_SUFFIX).replace("<!-- __EVAL_LINK__ -->", eval_link())
+        html = html.replace("__CAMERA_BASE__", CAMERA_BASE).replace("__CAMERA_SUFFIX__", CAMERA_SUFFIX).replace("__CAMERA_CAPTION__", escape(CAMERA_CAPTION)).replace("<!-- __EVAL_LINK__ -->", eval_link())
         return Response(html, mimetype="text/html")
 
     @app.route("/api/events")
@@ -967,7 +969,7 @@ data:
             </div>
           </div>
           <div class="annotation" style="font-size:10px">
-            Live feeds from SO-ARM101 Gazebo sim (480&times;480).
+            __CAMERA_CAPTION__
           </div>
         </div>
       </div>
@@ -1687,7 +1689,7 @@ spec:
             - name: TRIGGER_THRESHOLD
               value: "160"   # matches manifest-consumer (D022/D023); was thor-testing's 10
             - name: DASHBOARD_CODE_REV
-              value: "2026-09-20-robot-zero-cameras"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
+              value: "2026-09-20-robot-zero-caption"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
             # MinIO (read-only) for the paired A/B video clips under paired-ab/. hub-credentials
             # holds the same values as the MinIO root account (argocd/README.md).
             - name: MINIO_ENDPOINT
@@ -1724,6 +1726,8 @@ spec:
               value: "https://fleet-wall-flywheel.apps.sno-flywheel.local/robot/r00"
             - name: CAMERA_SUFFIX
               value: ".mjpg"
+            - name: CAMERA_CAPTION
+              value: "Robot zero, live: the signed policy on its own GPU slice; both cameras ray-traced by the rendering tenant (480x480)."
           readinessProbe:
             httpGet:
               path: /api/status
