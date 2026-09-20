@@ -1,0 +1,43 @@
+# This project was developed with assistance from AI tools.
+#
+# OpenShift Dev Spaces for one demo workspace: a terminal coding agent working on this repo against the in-cluster
+# model endpoint http://assistant.flywheel.svc:8000/v1 (gitops/flywheel/assistant.yaml). The operator comes from
+# argocd/bootstrap-operators.yaml; this CR is what turns it on. Everything not set here is the operator's default -
+# in particular the editor (the VS Code-based one) and the workspace namespace template.
+#
+# No NetworkPolicy: the operator creates none unless spec.networking.networkPolicy.enabled is set, the policies in
+# `flywheel` select the pipeline-server pods only, and Service `assistant` has no pods behind it (its endpoint is the
+# GPU host), so a workspace pod reaches it as any other pod does.
+apiVersion: org.eclipse.che/v2
+kind: CheCluster
+metadata:
+  name: devspaces
+  namespace: openshift-devspaces
+  annotations:
+    # The CRD arrives with the operator's CSV, not with this app.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  components:
+    metrics:
+      enable: false   # no ServiceMonitor/dashboards for a single-user demo
+    pluginRegistry:
+      # Empty, not omitted: omitted falls back to the operator's built-in default URL. Empty means the Open VSX
+      # instance embedded in the plugin registry pod, so extensions resolve with no internet.
+      openVSXURL: ""
+  devEnvironments:
+    # A workspace left open during a talk must still be there: no inactivity timeout, no run timeout.
+    secondsOfInactivityBeforeIdling: -1
+    secondsOfRunBeforeIdling: -1
+    # First start pulls the tools image (several GB) onto the node; after that IfNotPresent starts from the local copy
+    # and does not need the registry.
+    startTimeoutSeconds: 600
+    imagePullPolicy: IfNotPresent
+    # One demo workspace, plus room to start a replacement next to one that is wedged or still terminating.
+    maxNumberOfRunningWorkspacesPerUser: 2
+    storage:
+      pvcStrategy: per-user
+      perUserStrategyPvcConfig:
+        storageClass: local-path   # the hub's only class (gitops/storage); it does not enforce the size
+        claimSize: 10Gi
+    # Nothing builds images in the workspace, so its pods stay on the restricted SCC.
+    disableContainerBuildCapabilities: true

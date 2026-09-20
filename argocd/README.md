@@ -16,7 +16,7 @@ export KUBECONFIG=~/sno-flywheel/auth/kubeconfig
 
 | # | File | Argo app | Target ns | Waits on |
 |---|---|---|---|---|
-| 0 | `bootstrap-operators.yaml` | — (three Subscriptions) | `openshift-operators` | — ; then `oc adm policy add-cluster-role-to-user cluster-admin -z openshift-gitops-argocd-application-controller -n openshift-gitops` once that namespace exists |
+| 0 | `bootstrap-operators.yaml` | — (four Subscriptions) | `openshift-operators` | — ; then `oc adm policy add-cluster-role-to-user cluster-admin -z openshift-gitops-argocd-application-controller -n openshift-gitops` once that namespace exists |
 | 1 | `storage-app.yaml` | `storage` | `local-path-storage` | — (default StorageClass `local-path`) |
 | 2 | `operators-app.yaml` | `operators` | `openshift-operators` | 1 |
 | 3 | `operators-config-app.yaml` | `operators-config` | `redhat-ods-operator` | 2 — all CSVs `Succeeded` (`oc get csv -A`) |
@@ -27,12 +27,13 @@ export KUBECONFIG=~/sno-flywheel/auth/kubeconfig
 | 8 | `repo-flightctl-charts.yaml` | — (repository Secret) | `openshift-gitops` | — |
 | 9 | `rhem-app.yaml` | `rhem` | `flightctl` | 1, 8, **OCP ≥ 4.19** (chart `kubeVersion >= 1.32`) |
 | 10 | `tekton-app.yaml` | `tekton` | `flywheel` | 2 (Pipelines CSV, `pipeline` SA); Secrets `quay-push` + `cosign-signing` (below) |
+| 11 | `devspaces-app.yaml` | `devspaces` | `openshift-devspaces` | 0 — Dev Spaces and DevWorkspace CSVs `Succeeded`; 1 (workspace PVC on `local-path`) |
 
 Every app runs `prune: true` (D026 row 5, Phase 4.5 F): the cluster equals `gitops/<dir>`, and
 `oc get applications.argoproj.io -n openshift-gitops` lists exactly one app per `*-app.yaml` here.
 
 ```bash
-oc apply -f argocd/bootstrap-operators.yaml   # GitOps, Cluster Observability, Tempo; wait for the CSVs
+oc apply -f argocd/bootstrap-operators.yaml   # GitOps, Cluster Observability, Tempo, Dev Spaces; wait for the CSVs
 oc adm policy add-cluster-role-to-user cluster-admin -z openshift-gitops-argocd-application-controller -n openshift-gitops
 oc apply -f argocd/storage-app.yaml
 oc apply -f argocd/operators-app.yaml
@@ -43,8 +44,21 @@ oc apply -f argocd/observability-app.yaml
 oc apply -f argocd/repo-flightctl-charts.yaml
 oc apply -f argocd/rhem-app.yaml                 # after the cluster is on 4.19
 oc apply -f argocd/tekton-app.yaml               # runtime-image build + sign (D028)
+oc apply -f argocd/devspaces-app.yaml            # after the Dev Spaces CSV is Succeeded
 oc get applications.argoproj.io -n openshift-gitops
 ```
+
+## Dev Spaces (`devspaces-app.yaml`)
+
+OpenShift Dev Spaces is here for one thing: a single demo workspace in the browser, in which a terminal coding agent
+works on this repo against the in-cluster model endpoint `http://assistant.flywheel.svc:8000/v1` - the Service has no
+Route, so the agent has to run in a pod, and a workspace is that pod. `gitops/devspaces/checluster.yaml` switches idling
+off (a workspace left open during a talk is still there), keeps workspace images on the node once pulled and serves
+editor extensions from the registry embedded in the install, so a started workspace needs no internet. The operator
+and its DevWorkspace dependency come from `bootstrap-operators.yaml`. The dashboard URL is
+`oc get checluster devspaces -n openshift-devspaces -o jsonpath='{.status.cheURL}'`
+(`https://devspaces.apps.<cluster domain>`; login is the cluster's OAuth) and needs the same `/etc/hosts` treatment as
+the other `*.apps` names.
 
 ## Hand-created Secrets (never in git)
 

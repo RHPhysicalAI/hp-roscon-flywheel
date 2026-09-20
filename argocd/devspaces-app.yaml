@@ -1,0 +1,37 @@
+# This project was developed with assistance from AI tools.
+#
+# Bootstrap once, after the Dev Spaces CSV from bootstrap-operators.yaml is Succeeded:
+#   oc apply -f argocd/devspaces-app.yaml
+# gitops/devspaces holds one CheCluster; its CRD and admission webhook belong to the operator, not to this app.
+# SkipDryRunOnMissingResource (here and on the CR) lets the sync start before the CRD is served. The retry is
+# the one departure from the other apps: Argo CD does not re-attempt a failed automated sync of the same commit,
+# so a sync that lands while the operator is still coming up would otherwise stay Failed until the next push.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: devspaces
+  namespace: openshift-gitops
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  destination:
+    namespace: openshift-devspaces
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    path: gitops/devspaces
+    repoURL: https://github.com/RHPhysicalAI/hp-roscon-flywheel.git
+    targetRevision: fury
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
