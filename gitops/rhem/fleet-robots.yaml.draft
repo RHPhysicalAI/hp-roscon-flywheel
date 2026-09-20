@@ -1,0 +1,264 @@
+# This project was developed with assistance from AI tools.
+#
+# Fleet robots - DRAFT, NOT LIVE. The computers of the fleet tenant's robots: micro-VMs on the Fury host
+# (docs/internal/FLEET-VMS.md, D163 stage A). Nothing has been applied and no device carries fleet=robots.
+#
+# Why the file is called .yaml.draft: ResourceSync/rhem-fleets renders EVERY .yaml/.yml/.json file in this
+# directory on the pushed branch (flightctl v1.3.0 internal/tasks/resourcesync.go:43, :440-452; this directory's
+# README, "Rules for files"). A header cannot keep a file out of that; the extension does. Going live is a
+# deliberate step:  git mv fleet-robots.yaml.draft fleet-robots.yaml  + commit + push. Taking it back out is the
+# reverse: the sync deletes a Fleet it owns once its file is gone (resourcesync.go:315).
+#
+# Derived from the CPU branch of fleet-act-inference.yaml. A separate Fleet, not more devices in act-inference:
+#   - act 1's promotion PR edits ONE file with two count=1 regexes that must each match exactly once
+#     (pipeline/act_flywheel_pipeline.py:295-297, :304). It never touches this file - and that is wanted: D163
+#     calls this tenant "a showcase and not a second flywheel", so a promotion merged in act 1 must not start a
+#     20-device rollout, and a slow micro-VM must not fail act 1's rollout (act-inference's second batch is
+#     site=fury at 100%, fleet-act-inference.yaml:98-102, which would take in every VM).
+#   - a CPU device on 2 vCPUs needs other settings than act-inference's CPU branch hard-codes
+#     (OMP/TORCH threads = 8, fleet-act-inference.yaml:195-197; After=/PartOf=so-arm-sim.service, :231-232).
+#   - a model rollout to the robots becomes its own beat in act 2: edit the digest + MODEL_VERSION here, merge,
+#     watch canary -> 25% -> 50% -> the rest.
+# What is shared with act-inference and must be kept in step BY HAND: the four trust files (byte-identical
+# below) and, until the robots get their own model line, the two image digests.
+#
+# DECIDED 2026-09-20 (operator, FLEET-VMS.md section 13): each robot's computer runs its own Zenoh router
+# (zenoh-router.container below), and the policy connects to 127.0.0.1. Reason: the policy is a Zenoh client and
+# its health check needs the graph (docker/inference-entrypoint.sh:38-40, docker/healthcheck.sh:21-29); with no
+# router to reach it is killed and restarted every few minutes (tools/host/fury/41-device-enroll.md:156-158) - so
+# in stage A, which has no sim, no device would ever be Healthy. It also gives every robot its own graph, which is
+# D132's requirement. Stage C: the robot's world pod connects to ITS robot's router as a client, at
+# 10.20.0.(20+NN):7447 - pods reach fury-net from the hub, so the hub needs no NodePort per robot.
+# That router has NO authentication and no TLS and listens on every address: "its own graph" is address
+# separation, not isolation - whoever reaches a robot's 7447 can publish into its graph. Who can is decided in the
+# OS image, not here (tools/host/fury/fleet/Containerfile: firewalld, 7447 from the hub's address only).
+# UNTESTED, to check on the first VM before this file goes live - as was done for fleet-act-inference.yaml
+# (README.md in this directory): `/usr/libexec/podman/quadlet -dryrun` on the rendered units; that quadlet passes
+# `Exec=-c ...` through without reading the leading '-' as systemd's ignore-failure prefix; that the glob
+# /opt/ros/*/setup.bash matches exactly one path; that rmw_zenohd starts from this image this way.
+# NOT YET SET, on purpose: MemoryMax= / StartLimitBurst= on the two containers. Restart=always with
+# HealthOnFailure=kill turns an out-of-memory kill into an endless restart loop that the disruption budget does
+# not see; the numbers wait for the first VM's measurement (FLEET-VMS.md section 2).
+#
+# Labels, set at approval by tools/hub/fleet-approve.sh:
+#   fleet=robots          this Fleet's selector
+#   site=fury             disruption-budget group
+#   role=canary           on exactly one device: rollout batch 1
+#   alias=fleet-vm-NN     the VM's name; robot=NN the same number on its own
+#   gpu=none policy_device=cpu arch=arm64
+#   threads               torch/OMP threads, default 2 = the VM's vCPUs (approve with threads=4 for 4-vCPU VMs)
+#   zenoh_router, zenoh_port   default 127.0.0.1 / 7447 (the router on the device)
+#   pull_default          NEVER set on a robot: the default renders "reject", so a robot pulls from the four
+#                         enumerated registries/repositories and nowhere else (D131, D150) - the third negative
+#                         test belongs on these devices.
+#
+# Images: both digests below are embedded in the fleet's OS image, in an additional read-only image store
+# (tools/host/fury/80-fleet-golden.sh reads them from a copy of this file; fleet/Containerfile), so a new device
+# should not download 4 GB. WHAT THAT COSTS, stated plainly: policy.json is applied when an image is PULLED. An
+# image that podman finds in the embedded store is run without any signature check on the device. For these two
+# digests the check happens exactly once - on the host, under the same policy.json, when 80-fleet-golden.sh pulls
+# them to embed them - and the trust anchor for them moves from each device to that build. Every OTHER image a
+# robot is ever told to run (a promoted modelcar, the negative tests) is pulled, and verified on the device, as
+# before. If the agent's pull turns out not to use that store (81-fleet-scale.sh status shows it), the
+# fallback is a registry mirror on the hub, delivered as one more inline file here: the image references and
+# policy.json below stay exactly as they are (FLEET-VMS.md, "Images"). A change of either digest here means
+# rebuilding the golden image, or accepting that every robot pulls the new image.
+apiVersion: flightctl.io/v1beta1
+kind: Fleet
+metadata:
+  name: robots
+spec:
+  selector:
+    matchLabels:
+      fleet: robots
+  rolloutPolicy:
+    deviceSelection:
+      strategy: BatchSequence
+      # A percentage is of all devices the selector matches, and devices updated by earlier batches count towards
+      # it (flightctl v1.3.0 managing-fleets.md, "might be none, if the previous batch already updated 10%").
+      # With 20 robots: 1 canary, then up to 5 in total, then up to 10 in total, then the implicit last batch.
+      sequence:
+        - selector:
+            matchLabels:
+              role: canary
+          limit: 1
+          successThreshold: 100%
+        - selector:
+            matchLabels:
+              fleet: robots
+          limit: 25%
+          successThreshold: 90%
+        - selector:
+            matchLabels:
+              fleet: robots
+          limit: 50%
+          successThreshold: 90%
+    # never more than five robots' computers updating at once, whatever the batch size
+    disruptionBudget:
+      groupBy: ["site"]
+      maxUnavailable: 5
+    successThreshold: 90%
+    # as the live Fleet. Not shorter until `81-fleet-scale.sh status` has shown that the embedded image store is
+    # used: on the fallback path a device's first update is a 4.5 GiB pull across one bridge, 5 at a time.
+    defaultUpdateTimeout: 30m
+  template:
+    spec:
+      config:
+        - name: node-trust
+          inline:
+            - path: /etc/containers/policy.json
+              mode: 0644
+              content: |
+                {
+                    "default": [
+                        {
+                            "type": "{{ getOrDefault .metadata.labels "pull_default" "reject" }}"
+                        }
+                    ],
+                    "transports": {
+                        "docker": {
+                            "registry.access.redhat.com": [
+                                {
+                                    "type": "sigstoreSigned",
+                                    "keyPath": "/etc/pki/sigstore/SIGSTORE-redhat-release3",
+                                    "rekorPublicKeyPath": "/etc/pki/sigstore/REKOR-signing-key"
+                                }
+                            ],
+                            "registry.redhat.io": [
+                                {
+                                    "type": "sigstoreSigned",
+                                    "keyPath": "/etc/pki/sigstore/SIGSTORE-redhat-release3",
+                                    "rekorPublicKeyPath": "/etc/pki/sigstore/REKOR-signing-key"
+                                }
+                            ],
+                            "quay.io/jary/soarm-act-modelcar": [
+                                {
+                                    "type": "sigstoreSigned",
+                                    "keyPath": "/etc/pki/containers/cosign.pub",
+                                    "rekorPublicKeyPath": "/etc/pki/containers/rekor.pub",
+                                    "signedIdentity": {
+                                        "type": "matchRepository"
+                                    }
+                                }
+                            ],
+                            "quay.io/jary/soarm-flywheel": [
+                                {
+                                    "type": "sigstoreSigned",
+                                    "keyPath": "/etc/pki/containers/cosign.pub",
+                                    "rekorPublicKeyPath": "/etc/pki/containers/rekor.pub",
+                                    "signedIdentity": {
+                                        "type": "matchRepository"
+                                    }
+                                }
+                            ]
+                        },
+                        "docker-daemon": {
+                            "": [
+                                {
+                                    "type": "insecureAcceptAnything"
+                                }
+                            ]
+                        }
+                    }
+                }
+            - path: /etc/containers/registries.d/quay-jary.yaml
+              mode: 0644
+              content: |
+                # This project was developed with assistance from AI tools.
+                # policy.json says WHAT to require for quay.io/jary/*; this file says to LOOK for cosign/sigstore
+                # attachments there at all (thor-testing D018).
+                docker:
+                  quay.io/jary:
+                    use-sigstore-attachments: true
+            - path: /etc/pki/containers/cosign.pub
+              mode: 0644
+              content: |
+                -----BEGIN PUBLIC KEY-----
+                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEBzDM5ZzFL6THPevBGQLp2oGYuPlN
+                8wIgS2RwhWwem9Zu5pAt1Tye/vcPSCFRUm3XkVG6D1ixarxBbCTxg/c2Zg==
+                -----END PUBLIC KEY-----
+            - path: /etc/pki/containers/rekor.pub
+              mode: 0644
+              content: |
+                -----BEGIN PUBLIC KEY-----
+                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEhpJW95T/igzFRfnFWXNq8WvRtPQN
+                oZDRbkgmJpRJYZIlVc2Sn+2PtqT2hju2NJd/j9Jyw5Bylr9kNU7C+tSyZA==
+                -----END PUBLIC KEY-----
+        - name: act-inference-env
+          inline:
+            - path: /etc/act-inference/env
+              mode: 0644
+              content: |
+                # Rendered per device from labels by RHEM (Fleet robots); read by EnvironmentFile= in the quadlet.
+                ZENOH_ROUTER={{ getOrDefault .metadata.labels "zenoh_router" "127.0.0.1" }}:{{ getOrDefault .metadata.labels "zenoh_port" "7447" }}
+                POLICY_DEVICE={{ getOrDefault .metadata.labels "policy_device" "cpu" }}
+                # one torch thread per vCPU (D034)
+                OMP_NUM_THREADS={{ getOrDefault .metadata.labels "threads" "2" }}
+                TORCH_NUM_THREADS={{ getOrDefault .metadata.labels "threads" "2" }}
+                ROBOT={{ getOrDefault .metadata.labels "robot" "00" }}
+      applications:
+        - name: act-inference
+          appType: quadlet
+          envVars:
+            ROLE: policy
+            MODEL_VERSION: act-v2-ft160
+            POLICY_PATH: /modelcar/models/act
+            ACTIONS_PER_CHUNK: "100"
+            CHUNK_SIZE_THRESHOLD: "0.5"
+          inline:
+            - path: models.volume
+              content: |
+                [Volume]
+                Driver=image
+                # same modelcar as fleet-act-inference.yaml today; a robots' rollout replaces this digest and MODEL_VERSION above
+                Image=quay.io/jary/soarm-act-modelcar@sha256:d741db2bd5f7e2bb1762594ffb49a98da67f4e6096d4359839dc3f2faab3eab8
+            - path: zenoh-router.container
+              content: |
+                [Unit]
+                Description=Zenoh router of this robot's computer (RHEM-managed, Fleet robots)
+
+                [Container]
+                Image=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837
+                ContainerName=zenoh-router
+                Network=host
+                Entrypoint=/bin/bash
+                # no $ in here: systemd expands variables in the generated ExecStart, and the unit has no ROS_DISTRO
+                Exec=-c 'source /opt/ros/*/setup.bash && exec ros2 run rmw_zenoh_cpp rmw_zenohd'
+
+                [Service]
+                Restart=always
+                RestartSec=5
+
+                [Install]
+                WantedBy=default.target
+            - path: act-inference.container
+              content: |
+                [Unit]
+                Description=ACT policy inference on a robot's computer (RHEM-managed, Fleet robots)
+                After=zenoh-router.service
+                Wants=zenoh-router.service
+
+                [Container]
+                Image=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837
+                ContainerName=act-inference
+                Network=host
+                EnvironmentFile=/etc/act-inference/env
+                Volume=models.volume:/modelcar:ro
+                HealthCmd=/healthcheck.sh
+                HealthStartPeriod=240s
+                HealthInterval=30s
+                HealthTimeout=10s
+                HealthRetries=3
+                HealthOnFailure=kill
+                # a ROS 2 tree ignores SIGTERM: without this every stop is a timeout and a SIGKILL
+                StopSignal=SIGINT
+                StopTimeout=15
+
+                [Service]
+                SuccessExitStatus=130 143
+                Restart=always
+                RestartSec=10
+                TimeoutStartSec=300
+
+                [Install]
+                WantedBy=default.target
