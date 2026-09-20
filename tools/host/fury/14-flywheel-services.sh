@@ -11,6 +11,8 @@ set -euo pipefail
 here=$(dirname "$(readlink -f "$0")")
 mkdir -p "$here/log"
 exec > >(tee -a "$here/log/$(basename "$0" .sh).log") 2>&1
+# Under sudo the terminal can go away before tee has written the last lines - wait for it on the way out.
+trap 'exec >&- 2>&-; wait' EXIT
 
 die() { echo "${0##*/}: $*" >&2; exit 1; }
 for f in fury-mode.sh mig-config.sh disk-guard.sh flywheel/so-arm-sim.container flywheel/act-inference.container \

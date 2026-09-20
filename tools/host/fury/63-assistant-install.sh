@@ -29,7 +29,8 @@ podman image exists "$img" || die "the image is not in root's storage. Once, wit
 runuser -u nobody -- test -r "$model/config.json" || die "$model is not readable by other users:  chmod -R o+rX $model"
 
 # let quadlet check the two files, alone, before anything is installed
-qd=$(mktemp -d); trap 'rm -f "$qd"/llm-*; rmdir "$qd"' EXIT
+# Under sudo the terminal can go away before tee has written the last lines - wait for it on the way out.
+qd=$(mktemp -d); trap 'rm -f "$qd"/llm-*; rmdir "$qd"; exec >&- 2>&-; wait' EXIT
 cp "$unit" "$vol" "$qd/"
 gen=$(QUADLET_UNIT_DIRS=$qd /usr/libexec/podman/quadlet -dryrun 2>&1) || die "quadlet rejected the unit:
 $gen"

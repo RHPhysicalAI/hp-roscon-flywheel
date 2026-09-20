@@ -17,6 +17,11 @@ ContainerName=act-coordinator
 Image=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837
 Network=host
 Environment=ROLE=coordinator ZENOH_ROUTER=127.0.0.1:7447 MODEL_VERSION=act-v2-ft160
+# The collection scene the training data and the paired evaluation use: the medium cube placed at random
+# within 3 cm, any yaw, 60 s episodes. Without these the image's defaults apply - fixed cubes, 25 s - and a
+# model trained on such episodes fails the gate (the first unattended run here did exactly that).
+# No RESET_ARM here: it breaks the loop (see the coordinator's failure recovery, which homes the arm itself).
+Environment=EPISODE_LEN=60 RANDOMIZE_CUBES=true RANDOMIZE_ONLY=cube_medium RANDOM_RADIUS=0.03 RANDOM_YAW_DEG=180
 Volume=/data/flywheel:/data:z
 Volume=/data/flywheel/bags:/data/bags:z
 HealthCmd=none
