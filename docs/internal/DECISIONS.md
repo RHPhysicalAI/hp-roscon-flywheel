@@ -5483,6 +5483,16 @@ therefore no longer a gate, and look tuning and a separate evaluation rig are dr
   possibility for a bigger number in the fleet view, clearly labelled, **not** pursued until the real fleet's
   ceiling is known.
 
+**Addendum, same day - the base image is RHEL image mode (bootc).** No aarch64 KVM guest image was at hand, and
+the operator preferred the alternative on its merits: the devices' base is a bootc image (the RHEL 10 bootc
+base + the flightctl agent + podman, the policy image pre-loaded), turned into a qcow2 on this host with
+bootc-image-builder, and the micro-VMs are copy-on-write clones of that. It is the canonical RHEM device
+flow, it needs nothing downloaded by hand, it takes care of first-boot identity, and it leaves room for an
+OS image rollout as a later beat. First a short spike that the builder and the base behave on this aarch64
+host with its 64k-page kernel. OpenShift Virtualization was looked at for the VMs and set aside with
+evidence: the operator is offered for arm64, but the hub is itself a VM and its node has no `/dev/kvm` -
+guests there would run under software emulation.
+
 **Staging, each stage showable on its own:** (A) the micro-VM factory, enrolment and approval tooling, the robots'
 Fleet - RHEM at scale, no sim yet; (B) world pods + the rendering tenant + the wall, the arms driven by recorded
 motion; (C) the policy on each device closes the loop with its world.
