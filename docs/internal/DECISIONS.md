@@ -5368,3 +5368,10 @@ metrics port).
 
 **Stop-gap that worked meanwhile:** the dashboard's plain-http NodePort (`:30801`), where the http streams are not
 mixed content.
+
+**Addendum, same day - working, and one trap.** With the port open both streams come through the Route (200,
+`multipart/x-mixed-replace`, about 1.2 MB in 5 s each). The trap: the EndpointSlice was first committed next to the
+Service under `gitops/flywheel/`, the app went Synced, and the Route kept answering 503 - Argo CD excludes
+`EndpointSlice` (and `Endpoints`) from what it manages, silently. It now lives in
+`tools/hub/manual/sim-cameras-endpointslice.yaml`, applied by hand once per hub (`argocd/README.md`). "Synced" says
+that what Argo manages matches git; it says nothing about what Argo was never going to create.

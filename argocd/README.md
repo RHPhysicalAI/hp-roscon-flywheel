@@ -75,6 +75,19 @@ oc create secret generic hub-credentials -n flywheel \
   --dry-run=client -o yaml | oc apply -f -
 ```
 
+## Hand-applied objects Argo CD will not manage
+
+Argo CD leaves `EndpointSlice` and `Endpoints` out of what it manages: one placed under `gitops/` is reported
+Synced and never created. The one this hub needs lives outside `gitops/` and is applied once per hub, after the
+`flywheel` app has synced:
+
+```
+oc apply -f tools/hub/manual/sim-cameras-endpointslice.yaml
+```
+
+It gives Service `sim-cameras-host` its endpoint - the camera bridge next to the sim on the GPU host - behind the
+https Route `sim-cameras` (D159). The host side is `tools/host/fury/15-camera-port.sh open`.
+
 ## The Helm OCI repository Secret (`repo-flightctl-charts.yaml`)
 
 `rhem-app.yaml` uses a Helm **OCI** source (`repoURL: quay.io/flightctl/charts`, `chart:

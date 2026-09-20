@@ -1,0 +1,22 @@
+# This project was developed with assistance from AI tools.
+#
+# Applied by hand, once per hub:  oc apply -f tools/hub/manual/sim-cameras-endpointslice.yaml
+# Argo CD excludes EndpointSlices (and Endpoints) from what it manages, so this cannot live under gitops/: it
+# would be reported Synced and never created. It gives Service sim-cameras-host (gitops/flywheel/so-arm-sim.yaml)
+# its one endpoint, the camera bridge next to the sim on the GPU host (D159).
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: sim-cameras-host
+  namespace: flywheel
+  labels:
+    kubernetes.io/service-name: sim-cameras-host
+addressType: IPv4
+ports:
+  - name: camera
+    port: 8081
+    protocol: TCP
+endpoints:
+  - addresses: ["10.20.0.1"]
+    conditions:
+      ready: true

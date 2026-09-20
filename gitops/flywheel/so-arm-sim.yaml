@@ -111,7 +111,8 @@ spec:
 # On this hub the sim is a unit on the GPU host, not the Deployment above (replicas 0), so the camera bridge is
 # outside the cluster. The dashboard is served over https, and a browser will not load an http stream into an
 # https page - so the streams go through the router like everything else: this Service has no selector, the
-# EndpointSlice below names the host's bridge, and the Route above points here. The host lets the hub reach that
+# EndpointSlice tools/hub/manual/sim-cameras-endpointslice.yaml names the host's bridge (applied by hand: Argo CD
+# leaves EndpointSlices out of what it manages, so one in this folder is silently ignored), and the Route above points here. The host lets the hub reach that
 # one port and nothing else (tools/host/fury/15-camera-port.sh).
 apiVersion: v1
 kind: Service
@@ -123,20 +124,3 @@ spec:
     - name: camera
       port: 8081
       targetPort: 8081
----
-apiVersion: discovery.k8s.io/v1
-kind: EndpointSlice
-metadata:
-  name: sim-cameras-host
-  namespace: flywheel
-  labels:
-    kubernetes.io/service-name: sim-cameras-host
-addressType: IPv4
-ports:
-  - name: camera
-    port: 8081
-    protocol: TCP
-endpoints:
-  - addresses: ["10.20.0.1"]
-    conditions:
-      ready: true
