@@ -46,6 +46,7 @@ GOLDEN = 0.6180339887498949
 CUBE_REACH = {"cube_small": (-0.46, (-0.20, 0.20, 1.30), (0.10, 0.30, 1.10)),
               "cube_medium": (0.23, (-0.35, 0.35, 1.30), (0.00, 0.40, 1.17)),
               "cube_large": (0.62, (0.30, -0.50, 1.40), (0.45, -0.20, 1.10))}
+CUBE_ORDER = ("cube_small", "cube_medium", "cube_large")   # orange, green, blue: the order the policy works in
 TRAY_REACH = (0.30, -0.30, 1.20)
 GRIP_CLOSED, GRIP_OPEN = 0.25, 1.2
 PEAK_SPEED = 0.9     # rad/s, sets how long a move between two waypoints takes
@@ -70,12 +71,11 @@ def _move(a: np.ndarray, b: np.ndarray, fps: float, speed: float) -> list[np.nda
 
 
 def synthetic_episode(seed: int, fps: float = SYNTHETIC_FPS) -> np.ndarray:
-    """One reach-and-return episode, T x 6 float32 inside the joint limits: one to three cubes to the tray, then home."""
+    """One reach-and-return episode, T x 6 float32 inside the joint limits: the three cubes to the tray in CUBE_ORDER, then home."""
     rng = random.Random(seed)
     speed = PEAK_SPEED * rng.uniform(0.75, 1.15)
-    cubes = rng.sample(sorted(CUBE_REACH), k=rng.randint(1, 3))
     points = [HOME.copy()]
-    for cube in cubes:
+    for cube in CUBE_ORDER:
         pan, hover_shape, grasp_shape = CUBE_REACH[cube]
         pan += rng.uniform(-0.10, 0.10)
         roll = rng.uniform(-0.5, 0.5)

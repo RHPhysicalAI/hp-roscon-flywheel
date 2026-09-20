@@ -134,3 +134,13 @@ def test_load_trajectories_refuses_broken_files(tmp_path, actions, lengths):
     _write_npz(tmp_path / "t.npz", actions, lengths)
     with pytest.raises(ValueError):
         mp.load_trajectories(str(tmp_path / "t.npz"))
+
+
+def test_synthetic_episode_visits_orange_green_blue_in_order():
+    """Every built-in episode pans to the small, the medium and then the large cube."""
+    for seed in range(6):
+        pan = mp.synthetic_episode(seed)[:, 0]
+        first = [int(np.argmax(np.abs(pan - mp.CUBE_REACH[c][0]) < 0.11)) for c in mp.CUBE_ORDER]
+        assert all(np.any(np.abs(pan - mp.CUBE_REACH[c][0]) < 0.11) for c in mp.CUBE_ORDER)
+        assert first == sorted(first) and len(set(first)) == 3
+
