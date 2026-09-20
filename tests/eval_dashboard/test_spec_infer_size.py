@@ -98,3 +98,10 @@ def test_the_files_entry_wins_when_loaded_from_yaml(tmp_path):
     versions = store.snapshot()["versions"]
     assert versions[UNLISTED]["dataset_size"] == 40
     assert versions["other-policy-ft80"]["dataset_size"] == 80
+
+
+def test_last_ft_match_wins_when_the_collector_name_carries_one():
+    """A candidate named after a fine-tuned collector takes its own size, the last -ft<N> in the name."""
+    from eval_dashboard.main import infer_size
+
+    assert infer_size("act-v2-ft160-ft320-202609200102") == 320

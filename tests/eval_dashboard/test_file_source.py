@@ -18,7 +18,7 @@ EXPECTED = {
     "fixture-weak-v0": {"episode_count": 20, "success_count": 1},
 }
 
-# The fixture JSON files are Jeremy's synthetic data (tests/fixtures/README.md)
+# The fixture JSON files are synthetic data (tests/fixtures/README.md)
 # and are gitignored rather than redistributed in this repo -- see
 # tests/fixtures/README.md for where to get them. Tests below that depend on
 # them skip cleanly on a fresh clone instead of failing.

@@ -195,8 +195,9 @@ def load_version_meta(path: str) -> dict[str, dict]:
 
 def infer_size(model_version: str) -> int | None:
     """Training-set size read off a `-ft<N>` name, for versions the versions file omits."""
-    match = re.search(r"-ft(\d+)", model_version) if isinstance(model_version, str) else None
-    return int(match.group(1)) if match else None
+    # The last match: a candidate is named <collector>-ft<N>-<stamp>, and the collector's own name may carry one too.
+    found = re.findall(r"-ft(\d+)", model_version) if isinstance(model_version, str) else []
+    return int(found[-1]) if found else None
 
 
 def watch_files(store: Store, directory: str, transform=lambda records: records) -> None:
