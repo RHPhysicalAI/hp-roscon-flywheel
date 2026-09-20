@@ -340,11 +340,20 @@ uplink until the mirror exists; nothing known-bad for aarch64 or a 64k host was 
 
 ## 15. Bring-up runbook
 
+**As run on 2026-09-20 (D163 addendum):** steps 1-2, 4-9 and 11 for a fleet of **twelve** - the hub's cpu carries
+twelve worlds, and the fleet matches the wall. Measured: OS image 34 s + disk 65 s; the canary Healthy in under
+ten minutes from approval; all twelve Healthy about 25 minutes after the first clone booted, approved in batches of
+four. **Not run yet: steps 3, 10 and 10b** (parallel guest shutdown, the first-VM checks and benchmark, the
+two-VM identity check) - 10b is the one that matters before the fleet is called done.
+**How it is shown:** the demo stays in tenants mode with the whole fleet running; nothing on stage waits for a mode
+switch, a build or a download. The fleet's beats are steps 12-13: stop some robots, start them again, walk a
+rollout through the batches.
+
 | # | Who, where | Command | Expect | Time |
 |---|---|---|---|---|
 | 0 | operator, host | `./79-bootc-spike.sh up <key.pub>`, paste; then `remove` | `RESULT` lines: repositories visible, ssh after N s, guest page size 4096, `bootc status` | 15 min |
 | 1 | operator, host | copy `80-`, `81-fleet-*.sh` and the whole directory `fleet/` (three files) to `~/flywheel-setup`; check the scripts arrived executable (`ls -l`). Optional: `./80-fleet-golden.sh status` prints how to remove the 4.5 GiB left by the dropped embedding attempt | — | 2 min |
-| 2 | operator, host | `./80-fleet-golden.sh build` — paste the output | key and signature checks pass, `OS image built …`, whether the builder managed read-only or needed read-write, `golden image ready`, virtual size 40 GiB | 10–15 min |
+| 2 | operator, host | `./80-fleet-golden.sh build` — paste the output | key and signature checks pass, `OS image built …`, `golden image ready`, virtual size about 41 GiB, under 1 GiB on disk | 2–3 min (measured; longer when the base image has to be pulled) |
 | 3 | operator, host | `./81-fleet-scale.sh guests-shutdown` | before: unset; a backup file; after: `PARALLEL_SHUTDOWN 40`, timeout unchanged, the file's last lines | 1 min |
 | 4 | main session, laptop | make the Fleet live (`git mv`, commit, push); `tools/hub/fleet-status.sh` | a line starting `Fleet robots:` instead of "does not exist on the hub yet" | 5 min |
 | 5 | laptop | `FURY_SSH=… tools/hub/fleet-enrol-config.sh` — **only when step 6 can follow at once** | `600 …` for the file, then "NOW, on the host" | 1 min |
@@ -355,14 +364,15 @@ uplink until the mirror exists; nothing known-bad for aarch64 or a 64k host was 
 | 10 | operator, first VM | with the debug key: `sudo ausearch -m avc -ts boot` (section 9); `sudo podman images --digests`; `df -h /` (a 40 GiB root, about 16 GB used); `sudo grep -rl client-key-data /var/lib/cloud /run/cloud-init` (section 5); `sudo firewall-cmd --list-all`; `ls -la /etc/flightctl/certs`; `/usr/libexec/podman/quadlet -dryrun`; the CPU benchmark and the container's memory (section 2) | both images listed; no denials; the grep prints nothing; 7447 only from `10.20.0.10`; no key under `/etc/flightctl/certs`; p95 under 1000 ms | 15 min |
 | 10b | operator, host + VMs 01 and 02 | **before scaling past 2:** `./81-fleet-scale.sh 2`, approve 02, then on **both** VMs: `cat /etc/machine-id`; `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`; `sudo openssl x509 -noout -fingerprint -in /var/lib/flightctl/certs/agent.crt` | all three **differ** between the two VMs. If any is the same, stop: every clone would share it. Then `sudo rm -f /root/fleet/debug.pub` | 10 min |
 | 11 | laptop, then host — **bring-up, ahead of the demo** | create the fleet in steps of four: `FLEET_EXPECT="1-24" fleet-approve.sh --watch` (it stops by itself after 30 min — start it again); `./81-fleet-scale.sh 4`, wait until all four say `images pulled: yes`, then `8`, `12` … `24`, watching `free -g`, `df -h /data` and the hub | one `approved` line per VM; every VM `seed:gone`, then `images pulled: yes`; all `Healthy` in `fleet-status.sh` | about 15 min a step, 1½–2 h for 24 |
-| 11b | operator, host — **the last bring-up step** | `./81-fleet-scale.sh 4` (or whatever the demo opens with) | `asked 20 VM(s) above fleet-vm-04 to shut down; they stay defined`; `fleet-status.sh`: 4 reporting, 20 not reporting | 3 min |
-| 12 | operator, host — **on stage: scale up** | `./81-fleet-scale.sh 16` (then `24`) | `started fleet-vm-05` …; no approval, no pull; in `fleet-status.sh` and the RHEM UI the robots go from not reporting to `Online`, then `Healthy` | seconds to issue, 1–2 min to healthy |
+| 11b | operator, host — **the last bring-up step** | `./81-fleet-scale.sh 12` — the demo opens with the whole fleet running, the same size as the wall | every VM `running … ping:yes … images pulled: yes`; `fleet-status.sh`: 12 reporting, all `Healthy` | 3 min |
+| 12 | operator, host — **on stage: robots leave** | `./81-fleet-scale.sh 8` | VMs above 08 shut down, none deleted; their devices go `not-reporting` after the hub's timeout | 1–2 min |
 | 12b | laptop — **on stage: the rollout beat**, with every enrolled robot running | edit digest + `MODEL_VERSION` in the Fleet, merge; `fleet-status.sh` | RENDERED moves: canary, 25 %, 50 %, the rest | per rollout |
-| 13 | operator, host — **on stage: scale down** | `./81-fleet-scale.sh 8` | VMs above 08 shut down, none deleted; their devices go `not-reporting` after the hub's timeout | 1–2 min |
+| 13 | operator, host — **on stage: robots come back** (also the reset after the beat) | `./81-fleet-scale.sh 12` | `started fleet-vm-09` …; no approval, no pull; in `fleet-status.sh` and the RHEM UI the robots go from not reporting to `Online`, then `Healthy` | seconds to issue, 1–2 min to healthy |
 | 14 | laptop, then host — **after the demo, or to retire a robot** | `fleet-status.sh decommission 24 23 …` (the VMs must be running), then `./81-fleet-scale.sh remove 24 23 …` | `device … deleted`, then `removed fleet-vm-24` | 3 min |
 | — | laptop, any time | `fleet-status.sh drop-pending` | the pending requests with full names; delete stale ones by name | 1 min |
 
 At demo time the operator's path is steps 12–13 only: wrapped commands, no raw `flightctl`, `oc` or `virsh`, and
-nothing that downloads. Everything slow — the build, the 24 first pulls — is bring-up.
+nothing that downloads. Everything slow — the build, the first pulls — is bring-up. Step 13 is also the reset:
+whatever the beat left stopped is running again a minute or two later.
 The agent's certificate path in step 10b is the one the host's own script relies on with this agent version
 (`40-device-provision.sh:32`).
