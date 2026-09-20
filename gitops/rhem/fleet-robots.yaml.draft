@@ -52,17 +52,29 @@
 #                         enumerated registries/repositories and nowhere else (D131, D150) - the third negative
 #                         test belongs on these devices.
 #
-# Images: both digests below are embedded in the fleet's OS image, in an additional read-only image store
-# (tools/host/fury/80-fleet-golden.sh reads them from a copy of this file; fleet/Containerfile), so a new device
-# should not download 4 GB. WHAT THAT COSTS, stated plainly: policy.json is applied when an image is PULLED. An
-# image that podman finds in the embedded store is run without any signature check on the device. For these two
-# digests the check happens exactly once - on the host, under the same policy.json, when 80-fleet-golden.sh pulls
-# them to embed them - and the trust anchor for them moves from each device to that build. Every OTHER image a
-# robot is ever told to run (a promoted modelcar, the negative tests) is pulled, and verified on the device, as
-# before. If the agent's pull turns out not to use that store (81-fleet-scale.sh status shows it), the
-# fallback is a registry mirror on the hub, delivered as one more inline file here: the image references and
-# policy.json below stay exactly as they are (FLEET-VMS.md, "Images"). A change of either digest here means
-# rebuilding the golden image, or accepting that every robot pulls the new image.
+# Images: every robot pulls both digests below ITSELF, from quay, under the policy.json below - so each device
+# checks the cosign signature and the Rekor entry of what it runs, which is what D163 promises. The OS image holds
+# no application image: embedding the two was tried and dropped (the runtime image has whiteouts, which a
+# container build cannot carry, and an embedded image would have run unverified on the device -
+# tools/host/fury/fleet/Containerfile). What it costs: about 4.5 GiB per robot through the one uplink, once, and
+# about 11 GB on its disk. The local-speed answer is a mirror on the hub (FURY-PLAN Phase 8b): one more inline file
+# here, with the image references and policy.json below unchanged, because a mirror keeps the quay.io identity.
+#
+# Rollout policy, given that first pull - what was chosen and why:
+#   - The batches do NOT govern a new robot's first pull. A newly approved device gets the current template at
+#     once (seen on this hub, D152); batches apply to template CHANGES. What throttles the first pull is how many
+#     clones are created at a time - tools/host/fury/81-fleet-scale.sh, in steps of four or so, ahead of the demo.
+#   - Smaller batches would not make a big rollout faster: the uplink is shared, so N pulls at once take as long
+#     as N in a row. They only decide how many robots are waiting at the same time. So the batches stay sized for
+#     the story (canary, a quarter, half, the rest), not for bandwidth.
+#   - maxUnavailable: 5 is what bounds a rollout that IS a big pull (a new runtime image): five robots at 4.5 GiB
+#     is 22 GiB per wave, about 11 minutes at the 35 MiB/s quay gave this host today, inside the 30m timeout; at
+#     the 2-11 MiB/s seen earlier (D151) it would not be, and the answer then is the mirror, not a smaller number.
+#     The usual rollout - a promoted modelcar - is small, and five at a time keeps it watchable.
+#   - A robot that is SHUT OFF (81-fleet-scale.sh <N> shuts VMs down, it does not remove them) cannot update. It
+#     is expected to sit in its batch until the timeout and count against that batch's successThreshold -
+#     UNVERIFIED on 1.3. Run the rollout beat with every enrolled robot running, or decommission the ones that
+#     will stay off.
 apiVersion: flightctl.io/v1beta1
 kind: Fleet
 metadata:
@@ -98,8 +110,8 @@ spec:
       groupBy: ["site"]
       maxUnavailable: 5
     successThreshold: 90%
-    # as the live Fleet. Not shorter until `81-fleet-scale.sh status` has shown that the embedded image store is
-    # used: on the fallback path a device's first update is a 4.5 GiB pull across one bridge, 5 at a time.
+    # as the live Fleet: an update that changes the runtime image is a 4.5 GiB pull per robot, five at a time
+    # (the header has the arithmetic)
     defaultUpdateTimeout: 30m
   template:
     spec:

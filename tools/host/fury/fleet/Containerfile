@@ -1,8 +1,9 @@
 # This project was developed with assistance from AI tools.
 #
 # The operating system of a fleet VM - a robot's computer - as a RHEL image mode (bootc) image: D163 addendum,
-# docs/internal/FLEET-VMS.md. Built and turned into a qcow2 by ../80-fleet-golden.sh; not meant to be built by hand
-# (it expects the image store that script prepares, mounted at /mnt/imagestore).
+# docs/internal/FLEET-VMS.md. Built and turned into a qcow2 by ../80-fleet-golden.sh. What is in it: the OS, the
+# flightctl agent, podman, cloud-init, a firewall - and no application image: every robot pulls the policy's two
+# images itself, under the Fleet's policy.json, which is what "signature verification on every device" means.
 #
 # Follows flightctl v1.3.0 docs/user/building/building-images.md for a virtual device: agent from the project's
 # rpm repository, cloud-init added, LATE binding - no /etc/flightctl/config.yaml in here. The enrolment config
@@ -67,23 +68,13 @@ RUN mkdir -p /usr/lib/systemd/system/flightctl-agent.service.d /etc/flightctl/co
     printf '[Unit]\nAfter=cloud-final.service\n' > /usr/lib/systemd/system/flightctl-agent.service.d/10-after-cloud-init.conf && \
     printf 'default-labels:\n  enrol: fleet-vm\n' > /etc/flightctl/conf.d/fleet.yaml
 
-# The policy's two images, inside the OS image: an additional, read-only image store that every clone shares
-# copy-on-write, so no robot downloads 4 GB. "Physically bound" images are not a finished bootc feature
-# (bootc-dev/bootc issue 644, open); this is the plain form of it. The store is filled on the host by
-# 80-fleet-golden.sh with a native overlay driver and copied here with owners, modes and xattrs kept - podman
-# cannot create an overlay store on a build container's overlay root, and a vfs store is not readable by overlay.
-# Logically bound images were not used: they live in /usr/lib/bootc/storage, which podman only sees per command,
-# and the agent pulls with podman's defaults.
-RUN test -d /mnt/imagestore/overlay-images || { echo "no image store at /mnt/imagestore - build this with 80-fleet-golden.sh" >&2; exit 1; } && \
-    mkdir -p /usr/lib/containers/storage && \
-    cp -a /mnt/imagestore/overlay /mnt/imagestore/overlay-images /mnt/imagestore/overlay-layers /usr/lib/containers/storage/ && \
-    sed 's|^additionalimagestores = \[$|additionalimagestores = [ "/usr/lib/containers/storage",|' \
-        /usr/share/containers/storage.conf > /etc/containers/storage.conf && \
-    grep -q '^additionalimagestores = \[ "/usr/lib/containers/storage",$' /etc/containers/storage.conf && \
-    echo '/usr/lib/containers/storage /var/lib/containers/storage' >> /etc/selinux/targeted/contexts/files/file_contexts.subs
-# ^ the last line: the policy has rules for /var/lib/containers/storage/overlay* (container_ro_file_t) and none for
-#   /usr/lib/containers/storage, which would come out as lib_t. UNVERIFIED that the disk build honours it - check
-#   on the first VM:  ls -Zd /usr/lib/containers/storage/overlay
+# NOT in here, and it was tried (2026-09-20): the policy's two images in an additional read-only image store under
+# /usr/lib/containers/storage, so that no robot downloads 4 GB. It does not work with this runtime image: one of its
+# layers deletes files of a lower one (pip replacing apt's packages), which an overlay store records as whiteouts -
+# 0:0 character devices - and a container build cannot carry those in a COPY or a cp (80-fleet-golden.sh's guard
+# caught it before anything was built). It would also have meant that a robot runs those two images without
+# checking their signatures itself. The answer for local speed is a mirror on the hub (FURY-PLAN Phase 8b), where
+# devices still pull - and so still verify.
 
 # Every clone is a copy of what this build leaves behind, so anything per-device in here would be shared by the
 # whole fleet: identical ssh host keys, one machine-id, one agent identity, one enrolment config. Fail the build

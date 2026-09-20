@@ -1,14 +1,22 @@
 #!/bin/bash
-# Bring the fleet to N micro-VMs: copy-on-write clones of the golden image (80-fleet-golden.sh), each the
+# Bring the fleet to N RUNNING micro-VMs: copy-on-write clones of the golden image (80-fleet-golden.sh), each the
 # computer of one robot - docs/internal/FLEET-VMS.md, D163 stage A.
 #
-#   ./81-fleet-scale.sh <N> [vcpus] [mem-mib]   0..32. Creates the missing ones (fleet-vm-01 upward), starts the ones
-#                                               that are shut off, removes surplus ones from the highest number down.
+#   ./81-fleet-scale.sh <N> [vcpus] [mem-mib]   0..32: fleet-vm-01..N running. STARTS the ones that exist and are shut
+#                                               off (seconds - this is "scale up" on stage), CREATES only what is
+#                                               still missing (minutes each: a new clone pulls 4.5 GiB of images), and
+#                                               SHUTS DOWN the running ones above N, highest first. It never deletes.
 #                                               Defaults 2 vCPU / 3072 MiB; sizes apply to VMs created by this run.
-#   ./81-fleet-scale.sh status                  one line per VM
-#   ./81-fleet-scale.sh destroy-all             the same as 0
+#   ./81-fleet-scale.sh status                  one line per VM: running or shut off, seed, disk, images pulled
+#   ./81-fleet-scale.sh remove <NN>...          really remove these VMs: shut down, undefine, delete their files
+#   ./81-fleet-scale.sh destroy-all             really remove every fleet VM
 #   ./81-fleet-scale.sh enrol-config <file>     install the fleet's enrolment config root-only, shred <file>
 #   ./81-fleet-scale.sh guests-shutdown         one-time: let the host shut its guests down in parallel (see below)
+#
+# Create the fleet AHEAD of the demo, in steps of four or so (every new clone downloads its images through the one
+# uplink), then scale down with `<N>`: the VMs stay, shut off, their images on their disks. A shut-off robot stays
+# enrolled - RHEM shows its device as not reporting, which is what a switched-off robot is. Only `remove` and
+# `destroy-all` end a VM, and those want the device decommissioned on the laptop (the command is printed).
 #
 # fleet-vm-NN has the address 10.20.0.(20+NN) and the MAC 52:54:00:14:01:<NN in hex>; fury-net has no DHCP, so both
 # come from the clone's cloud-init seed, with its hostname and the agent's enrolment config (late binding: the
@@ -25,8 +33,9 @@
 # short a time as possible: once the clone answers on its address it is ejected - for the running VM and for later
 # boots - and shredded, and the clone shreds cloud-init's cached copies itself. `status` says seed:ATTACHED until
 # then. The whole list of places the key lives: docs/internal/FLEET-VMS.md section 5.
-# This host holds no hub credential (D150), so it cannot tidy RHEM: before scaling DOWN, run
+# This host holds no hub credential (D150), so it cannot tidy RHEM: before REMOVING a VM, run
 # tools/hub/fleet-status.sh decommission <NN>... on the laptop - this script prints the exact command.
+# Shutting VMs down with `<N>` needs nothing on the hub.
 #
 # guests-shutdown: libvirt-guests stops guests ONE AFTER ANOTHER by default, up to SHUTDOWN_TIMEOUT for each -
 # with the fleet that is a host shutdown of up to (N+1) x 300 s. This sets PARALLEL_SHUTDOWN in
@@ -39,12 +48,16 @@
 #
 # This project was developed with assistance from AI tools.
 set -euo pipefail
-usage() { echo "usage: ${0##*/} <N 0..32> [vcpus 1..8] [mem-mib 1536..16384] | status | destroy-all | enrol-config <file> | guests-shutdown" >&2; exit 1; }
+usage() { echo "usage: ${0##*/} <N 0..32> [vcpus 1..8] [mem-mib 1536..16384] | status | remove <NN>... | destroy-all | enrol-config <file> | guests-shutdown" >&2; exit 1; }
 max=32
 case ${1:-} in
 status|destroy-all|guests-shutdown) [[ -z ${2:-} ]] || usage ;;
 enrol-config) [[ -n ${2:-} && -z ${3:-} ]] || usage
     [[ -f $2 ]] || { echo "${0##*/}: no such file: $2" >&2; exit 1; } ;;
+remove) [[ -n ${2:-} ]] || usage
+    for a in "${@:2}"; do
+        if ! [[ $a =~ ^[0-9]{1,2}$ ]] || (( 10#$a < 1 || 10#$a > max )); then echo "${0##*/}: '$a' is not a VM number from 01 to $max" >&2; usage; fi
+    done ;;
 *)  if ! [[ ${1:-} =~ ^[0-9]{1,2}$ ]] || (( 10#$1 > max )); then
         echo "${0##*/}: N must be a number from 0 to $max - the host has room for about 24 beside the hub" >&2; usage
     fi
@@ -67,7 +80,8 @@ golden=$pool/fleet-golden.qcow2
 cfg=/root/fleet/agent-config.yaml
 headroom_gib=32                         # what the host keeps for itself beyond the VMs asked for
 disk_floor_gb=100                       # the flywheel's coordinator stops below this much free on /data (FURY-PLAN decision 6)
-disk_per_vm_gb=6                        # what a new clone is expected to write early on; it CAN grow to the image's 20 GiB
+disk_per_vm_gb=16                       # what a new clone writes while it pulls its images: 4.2 GiB compressed in /var/tmp + 10.7 GB unpacked
+disk_root_gib=40                        # the image's root filesystem (80-fleet-golden.sh): what a clone CAN grow to
 created=()
 tmp=
 die() { echo "${0##*/}: $*" >&2; exit 1; }
@@ -124,13 +138,16 @@ eject_seeds() {
 
 line() {  # one summary line for VM number $1
     local n; n=$(name_of "$1")
-    local mb; mb=$(du -m "$pool/$n.qcow2" 2>/dev/null | cut -f1 || true)
-    # The clone's own disk is the cheapest witness of what its agent pulled: the two images are 4.5 GiB, the
-    # rest of a first boot a few hundred MB. Over 3 GB: the embedded image store was NOT used (FLEET-VMS.md, "Images").
-    printf '%-12s %-9s %-11s ping:%-3s seed:%-8s disk:%6s MB %s\n' "$n" "$(state "$n")" "$(ip_of "$1")" \
-        "$(ping -c1 -W1 "$(ip_of "$1")" >/dev/null 2>&1 && echo yes || echo no)" "$([[ -f $pool/$n-seed.iso ]] && echo ATTACHED || echo gone)" "${mb:--}" \
-        "$(if (( ${mb:-0} > 3000 )); then echo "<- PULLED its images: the embedded store was not used"; fi)"
+    local mb pulled; mb=$(du -m "$pool/$n.qcow2" 2>/dev/null | cut -f1 || true)
+    # Every clone pulls its images itself, and its own disk is the cheapest witness from out here: a few hundred MB
+    # after a first boot, 10.7 GB for the unpacked runtime image alone. An estimate - RHEM's application status
+    # (tools/hub/fleet-status.sh) is what says the policy is actually up.
+    if (( ${mb:-0} >= 10000 )); then pulled=yes; elif (( ${mb:-0} >= 2000 )); then pulled=partly; else pulled=no; fi
+    printf '%-12s %-9s %-11s ping:%-3s seed:%-8s images pulled: %-6s (disk %s GB)\n' "$n" "$(state "$n")" "$(ip_of "$1")" \
+        "$(ping -c1 -W1 "$(ip_of "$1")" >/dev/null 2>&1 && echo yes || echo no)" "$([[ -f $pool/$n-seed.iso ]] && echo ATTACHED || echo gone)" \
+        "$pulled" "$(awk -v m="${mb:-0}" 'BEGIN {printf "%.1f", m / 1024}')"
 }
+mem_gib_of() { virsh dominfo "$1" 2>/dev/null | awk '/^Max memory:/ {printf "%d", ($3 + 1048575) / 1048576}'; }
 
 remove_vm() {  # clean shutdown first: the agent gets to say goodbye and the overlay is closed properly
     local n i; n=$(name_of "$1")
@@ -253,10 +270,30 @@ if [[ $1 == status ]]; then
     exit 0
 fi
 
-want=$((10#${1/destroy-all/0})); vcpus=${2:-2}; mem=${3:-3072}
-have=$(existing); missing=(); surplus=()
+have=$(existing)
+for i in $have; do ours "$(name_of "$i")"; done       # before anything changes: every fleet-vm-NN we may start, stop, eject from or remove is ours
+
+if [[ $1 == remove || $1 == destroy-all ]]; then
+    doomed=()
+    if [[ $1 == destroy-all ]]; then for i in $have; do doomed+=("$i"); done
+    else for a in "${@:2}"; do i=$((10#$a)); if [[ " ${have//$'\n'/ } " == *" $i "* ]]; then doomed+=("$i"); else echo "$(name_of "$i"): no such VM - nothing to remove"; fi; done; fi
+    (( ${#doomed[@]} > 0 )) || { echo "nothing to remove"; exit 0; }
+    echo "removing for good. RHEM still lists these devices - on the laptop, best BEFORE this, otherwise right after:"
+    echo "    tools/hub/fleet-status.sh decommission $(for i in "${doomed[@]}"; do printf '%02d ' "$i"; done)"
+    for i in $(printf '%s\n' "${doomed[@]}" | sort -rnu); do remove_vm "$i"; done
+    for i in $(existing); do line "$i"; done
+    exit 0
+fi
+
+want=$((10#$1)); vcpus=${2:-2}; mem=${3:-3072}
+missing=(); to_start=(); to_stop=()
 for ((i = 1; i <= want; i++)); do [[ " ${have//$'\n'/ } " == *" $i "* ]] || missing+=("$i"); done
-for i in $have; do (( i <= want )) || surplus+=("$i"); done
+for i in $have; do
+    n=$(name_of "$i")
+    if ! defined "$n"; then die "$pool/$n.qcow2 exists but no VM $n is defined - a half-removed VM. Remove its files by hand, then run this again:  sudo shred -u $pool/$n-seed.iso; sudo rm -f $pool/$n.qcow2"; fi
+    if (( i <= want )); then [[ $(state "$n") == running ]] || to_start+=("$i")
+    elif [[ $(state "$n") == running ]]; then to_stop+=("$i"); fi
+done
 
 # ---- every check before anything changes
 if (( ${#missing[@]} > 0 )); then
@@ -277,11 +314,8 @@ if (( ${#missing[@]} > 0 )); then
     davail=$(df -BG --output=avail /data | tail -1 | tr -dc 0-9)
     dneed=$(( disk_floor_gb + ${#missing[@]} * disk_per_vm_gb ))
     (( davail >= dneed )) || die "/data has $davail GB free. ${#missing[@]} new clones want $dneed GB: the $disk_floor_gb GB below which the flywheel's coordinator stops, plus $disk_per_vm_gb GB each. Free space, or ask for fewer"
-    echo "disk: /data has $davail GB free. Clones are thin; each CAN grow to the image's 20 GiB - worst case for $want VMs: $(( want * 20 )) GiB. Floor to keep: $disk_floor_gb GB"
-    (( davail - want * 20 >= disk_floor_gb )) || echo "warning: that worst case would go below the floor - watch  df -h /data  if the robots start pulling images" >&2
-    need=$(( ${#missing[@]} * mem / 1024 + headroom_gib ))
-    avail=$(free -g | awk '/^Mem:/ {print $7}')
-    (( avail >= need )) || die "${#missing[@]} new VMs at $mem MiB need $need GiB with the host's $headroom_gib GiB of headroom, $avail GiB are available. Ask for fewer, or smaller ones"
+    echo "disk: /data has $davail GB free. Each new clone writes about $disk_per_vm_gb GB while it pulls its images (${#missing[@]} new: $(( ${#missing[@]} * disk_per_vm_gb )) GB) and CAN grow to its ${disk_root_gib} GiB root - worst case for $want VMs: $(( want * disk_root_gib )) GiB. Floor to keep: $disk_floor_gb GB"
+    (( davail - want * disk_root_gib >= disk_floor_gb )) || echo "warning: that worst case would go below the floor - watch  df -h /data" >&2
     tmp=$(mktemp -d)
     debug_user='# no /root/fleet/debug.pub: nobody can log in to this clone, flightctl console is the way in'
     if [[ -s /root/fleet/debug.pub ]]; then
@@ -295,18 +329,33 @@ if (( ${#missing[@]} > 0 )); then
     fi
 fi
 
-for i in $have; do ours "$(name_of "$i")"; done       # before anything changes: every fleet-vm-NN we may start, eject from or remove is ours
-
-if (( ${#surplus[@]} > 0 )); then
-    echo "scaling down. RHEM still lists these devices - on the laptop, best BEFORE this, otherwise right after:"
-    echo "    tools/hub/fleet-status.sh decommission $(for i in "${surplus[@]}"; do printf '%02d ' "$i"; done)"
-    for ((k = ${#surplus[@]} - 1; k >= 0; k--)); do remove_vm "${surplus[k]}"; done
+# memory: what is about to start counts, whether it exists already or not
+need=$headroom_gib
+for i in "${to_start[@]+"${to_start[@]}"}"; do need=$(( need + $(mem_gib_of "$(name_of "$i")") )); done
+need=$(( need + (${#missing[@]} * mem + 1023) / 1024 ))
+avail=$(free -g | awk '/^Mem:/ {print $7}')
+if (( ${#to_start[@]} + ${#missing[@]} > 0 )); then
+    (( avail >= need )) || die "starting ${#to_start[@]} and creating ${#missing[@]} VM(s) needs $need GiB with the host's $headroom_gib GiB of headroom; $avail GiB are available. Ask for fewer. Nothing was started"
 fi
-for i in $have; do
+
+# ---- down first (it frees memory): ask all of them at once, highest number first, then wait. Never deleted, never killed.
+if (( ${#to_stop[@]} > 0 )); then
+    for ((k = ${#to_stop[@]} - 1; k >= 0; k--)); do virsh shutdown "$(name_of "${to_stop[k]}")" >/dev/null || true; done
+    echo "asked ${#to_stop[@]} VM(s) above $(name_of "$want") to shut down; they stay defined, with their disks. Waiting up to 2 minutes"
+    for ((k = 0; k < 24; k++)); do
+        left=0; for i in "${to_stop[@]}"; do [[ $(state "$(name_of "$i")") != running ]] || left=$((left + 1)); done
+        (( left > 0 )) || break
+        sleep 5
+    done
+    (( left == 0 )) || echo "  $left still shutting down - not forced. Look again with:  ./81-fleet-scale.sh status" >&2
+    echo "RHEM keeps these devices: a shut-off robot shows as not reporting, not as gone. To end one for good:  ./81-fleet-scale.sh remove <NN>"
+fi
+# ---- the fast path: what exists is started, lowest number first
+for i in "${to_start[@]+"${to_start[@]}"}"; do
     n=$(name_of "$i")
-    if (( i <= want )) && [[ $(state "$n") == 'shut off' ]]; then virsh start "$n" >/dev/null; echo "started $n (it existed, shut off)"; fi
-    if (( i <= want )) && ! defined "$n"; then die "$pool/$n.qcow2 exists but no VM $n is defined - a half-removed VM. Remove its files by hand, then run this again:  sudo shred -u $pool/$n-seed.iso; sudo rm -f $pool/$n.qcow2"; fi
+    if virsh start "$n" >/dev/null; then echo "started $n"; else echo "  could not start $n:  sudo virsh start $n   shows why" >&2; fi
 done
+# ---- the slow path: what is missing is created
 for i in "${missing[@]+"${missing[@]}"}"; do create_vm "$i"; done
 if (( ${#created[@]} > 0 )); then
     echo "waiting for ${#created[@]} new VM(s) to answer, then their seeds go (up to 3 minutes)"
@@ -319,8 +368,11 @@ if (( ${#created[@]} > 0 )); then
 fi
 eject_seeds
 
-echo "fleet: $want wanted, ${#missing[@]} created, ${#surplus[@]} removed"
+echo "fleet: $want wanted running - ${#to_start[@]} started, ${#missing[@]} created, ${#to_stop[@]} shut down"
 for i in $(existing); do line "$i"; done
 if (( ${#missing[@]} > 0 )); then
-    echo "new VMs take about half a minute to boot and another to ask for enrolment. Then, on the laptop:  tools/hub/fleet-approve.sh --watch"
+    echo "a NEW clone asks for enrolment about a minute after it boots - on the laptop:  FLEET_EXPECT=\"1-$want\" tools/hub/fleet-approve.sh --watch"
+    echo "then it pulls 4.5 GiB of images through the uplink before its policy can start: create a few at a time, and wait for 'images pulled: yes'"
+elif (( ${#to_start[@]} > 0 )); then
+    echo "started VMs are known to RHEM already: no approval, no pull - they report in about a minute after boot"
 fi

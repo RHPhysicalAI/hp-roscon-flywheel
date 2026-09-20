@@ -6,16 +6,21 @@
 #   tools/hub/fleet-status.sh                        one table: VM, device, approved?, labels, rendered version, statuses
 #   tools/hub/fleet-status.sh decommission 24 23 ..  take these VMs' devices out of RHEM the proper way, then delete them
 #   tools/hub/fleet-status.sh decommission all --yes every fleet=robots device; without --yes it lists them and stops
-#   tools/hub/fleet-status.sh delete 24 ..           for a device whose VM is already gone (it can never answer a
+#   tools/hub/fleet-status.sh delete 24 ..           for a device whose VM is already GONE (it can never answer a
 #                                                    decommission): delete it. Refused while the device is Online.
+#                                                    NOT for a VM that is only shut off: started again, its agent
+#                                                    would hold a certificate for a device the hub no longer knows.
 #   tools/hub/fleet-status.sh drop-pending           list every pending enrolment request: full name, age, who it says it is
 #   tools/hub/fleet-status.sh drop-pending <name>..  delete those requests. fleet-approve.sh never denies anything, so
 #                                                    stale and bogus requests stay until this removes them; a long list
 #                                                    can push a real clone's request off the hub's first page.
 #                                                    Refused for a request that is already approved (that is a device).
 #
-# Scaling down is two steps on two machines because the host holds no hub credential (D150): this first, then
-# tools/host/fury/81-fleet-scale.sh <N> on the host. Decommission is the agent wiping its own management
+# A robot that is merely SHUT OFF (tools/host/fury/81-fleet-scale.sh <N> shuts VMs down, it does not delete them)
+# stays enrolled: its device stops reporting and the table shows it as "not reporting" - that is what a switched-off
+# robot looks like, and it comes back by itself when its VM is started. Nothing to do here for that.
+# REMOVING a VM for good is two steps on two machines because the host holds no hub credential (D150): this first
+# (the VM must be running - the agent has to answer), then tools/host/fury/81-fleet-scale.sh remove <NN> on the host. Decommission is the agent wiping its own management
 # certificate and key on the hub's request; the device ends as Decommissioned and only then is it deleted
 # (flightctl v1.3.0 managing-devices.md, "Decommissioning should be performed before deleting a device").
 # Removing the VM first leaves a device that stays Disconnected in the fleet view until `delete`.
@@ -53,7 +58,8 @@ if [[ $verb == table ]]; then
             | [ (.metadata.labels.alias // "-"), .metadata.name[0:12], "yes",
                 ([.metadata.labels | to_entries[] | select(.key | IN("role", "threads", "zenoh_router", "pull_default")) | "\(.key)=\(.value)"] | join(",") | if . == "" then "-" else . end),
                 (.status.config.renderedVersion // "-"),
-                ((.status.lifecycle.status // "") as $l | if $l == "Decommissioning" or $l == "Decommissioned" then $l else (.status.summary.status // "-") end),
+                ((.status.lifecycle.status // "") as $l | if $l == "Decommissioning" or $l == "Decommissioned" then $l
+                  else ((.status.summary.status // "-") | if . == "Unknown" or . == "PoweredOff" then "not-reporting" else . end) end),
                 (.status.updated.status // "-"),
                 ([.status.applications[]? | "\(.name):\(.status) \(.ready)"] | join(" ") | if . == "" then ($d.status.applicationsSummary.status // "-") else . end)
               ] | @tsv' <<<"$devs")
@@ -66,7 +72,8 @@ if [[ $verb == table ]]; then
       [[ -z $pending ]] || printf '%s\n' "$pending"
     } | column -t -s$'\t'
     jq -r '[.items[] | select((.status.lifecycle.status // "") != "Decommissioned")] as $d
-        | "\($d | length) devices in fleet=robots, \([$d[] | select(.status.applicationsSummary.status == "Healthy")] | length) with healthy applications, canary: \([$d[] | select(.metadata.labels.role == "canary") | .metadata.labels.alias] | join(",") | if . == "" then "NONE - the next fleet-approve.sh pass appoints one" else . end)"' <<<"$devs"
+        | ([$d[] | select((.status.summary.status // "Unknown") | . == "Unknown" or . == "PoweredOff")] | length) as $off
+        | "\($d | length) devices in fleet=robots: \(($d | length) - $off) reporting, \($off) not reporting (a shut-off VM - still enrolled, back when it is started), \([$d[] | select(.status.applicationsSummary.status == "Healthy")] | length) with healthy applications, canary: \([$d[] | select(.metadata.labels.role == "canary") | .metadata.labels.alias] | join(",") | if . == "" then "NONE - the next fleet-approve.sh pass appoints one" else . end)"' <<<"$devs"
     "$fc" get fleet/robots -o json 2>/dev/null | jq -r '"Fleet robots: \([.status.conditions[]? | "\(.type)=\(.status)"] | join(" "))"' ||
         echo "Fleet robots does not exist on the hub yet (gitops/rhem/fleet-robots.yaml.draft is not live)"
     exit 0
@@ -131,6 +138,7 @@ for t in "${targets[@]}"; do
     if [[ $verb == delete ]]; then
         s=$(jq -r --arg d "$dev" '.items[] | select(.metadata.name == $d) | .status.summary.status // ""' <<<"$devs")
         if [[ $s == Online ]]; then echo "  $alias_: device $dev is Online - its VM is alive. Use:  ${0##*/} decommission $t" >&2; rc=1; continue; fi
+        echo "  $alias_: deleting a device that is not reporting. Right if its VM was REMOVED; wrong if it is only shut off (host: ./81-fleet-scale.sh status)"
         drop "$dev" "$alias_"; continue
     fi
     "$fc" decommission "device/$dev" >/dev/null
@@ -139,8 +147,8 @@ for t in "${targets[@]}"; do
     if [[ $l == Decommissioned ]]; then
         drop "$dev" "$alias_"
     else
-        echo "  $alias_: device $dev is still '$l' after 3 minutes - the VM is not answering. If it is already gone:  ${0##*/} delete $t" >&2; rc=1
+        echo "  $alias_: device $dev is still '$l' after 3 minutes - its VM is not answering. Shut off? Start it on the host ( ./81-fleet-scale.sh <N> ) and it finishes by itself. Gone for good?  ${0##*/} delete $t" >&2; rc=1
     fi
 done
-[[ $rc -ne 0 ]] || echo "done. Now on the host:  cd ~/flywheel-setup && ./81-fleet-scale.sh <N>"
+[[ $rc -ne 0 ]] || echo "done. Now on the host:  cd ~/flywheel-setup && ./81-fleet-scale.sh remove ${targets[*]}"
 exit "$rc"

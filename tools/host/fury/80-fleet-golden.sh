@@ -1,33 +1,34 @@
 #!/bin/bash
 # The fleet's golden image: one RHEL image mode (bootc) disk that every fleet VM is a copy-on-write clone of
-# (docs/internal/FLEET-VMS.md, D163 addendum). Three steps, no guest involved: fill a small image store with the
-# policy's two images, build fleet/Containerfile on top of the RHEL 10 bootc base, turn the result into a qcow2
-# with bootc-image-builder. 79-bootc-spike.sh is the proof that the base and the builder behave on this host.
+# (docs/internal/FLEET-VMS.md, D163 addendum). Two steps, no guest involved: build fleet/Containerfile on top of
+# the RHEL 10 bootc base, turn the result into a qcow2 with bootc-image-builder. 79-bootc-spike.sh is the proof
+# that the base and the builder behave on this host. The image holds the OS, the agent, podman, cloud-init and a
+# firewall - no application image: every robot pulls the policy's images itself and verifies them itself.
 #
-#   ./80-fleet-golden.sh build     first time 20-30 min (4.5 GiB from quay, then the build); a rebuild about 10
-#   ./80-fleet-golden.sh status    the golden image, its clones, the OS image, what is in the image store
+#   ./80-fleet-golden.sh build     about 10-15 min
+#   ./80-fleet-golden.sh status    the golden image, its clones, the build store, leftovers of the first attempt
 #   ./80-fleet-golden.sh remove    the golden image and the OS image - refused while any fleet VM exists
 #
-# Needs, next to this script: the directory fleet/ (Containerfile, flightctl.repo, RPM-GPG-KEY-flightctl), and
-# fleet-robots.yaml (a copy of gitops/rhem/fleet-robots.yaml.draft) - the two digests to embed are read from it,
-# so the image and the Fleet cannot disagree.
+# Needs, next to this script: the directory fleet/ (Containerfile, flightctl.repo, RPM-GPG-KEY-flightctl).
 #
 # No secret is involved any more. No activation key: a rootful build on this registered host sees RHEL's
 # repositories through the host's own subscription, and clones are never registered. No enrolment config: late
 # binding, 81-fleet-scale.sh hands it to each clone. The registry login is the operator's pull secret, given to
 # podman by PATH (--authfile); this script never reads, prints, copies or moves it.
 #
-# Two podman stores of this script's own, both under /data/libvirt/fleet and both kept between builds:
-#   imagestore   the two images to embed. Their pulls run under this host's policy.json - the Fleet's - so both
-#                are signature- and Rekor-verified HERE, once; a clone that runs them from the embedded store
-#                does not check them again. It is also what spares a rebuild the 4 GiB download.
-#   buildstore   the bootc base and the OS image. bootc-image-builder runs --privileged with SELinux confinement
-#                off and needs the store that holds the image: it gets this one, not the shared host's whole
-#                rootful store with everybody else's images in it. (79-bootc-spike.sh, which has already run,
-#                used the documented form with the main store.) Read-only is tried first; the builder mounts the
-#                image, which writes under the store, so read-write is the expected outcome - on a store that
-#                holds nothing but this script's own two images.
-# `remove` leaves both; emptying them is one command each, printed by `status`.
+# A podman store of this script's own, /data/libvirt/fleet/buildstore, kept between builds: the bootc base and
+# the OS image. bootc-image-builder runs --privileged with SELinux confinement off and needs the store that holds
+# the image: it gets this one, not the shared host's whole rootful store with everybody else's images in it.
+# (79-bootc-spike.sh, which has already run, used the documented form with the main store.) Read-only is tried
+# first; the builder mounts the image, which writes under the store, so read-write is the expected outcome - on
+# a store that holds nothing but this script's own two images. `remove` leaves it; `status` says how to empty it.
+#
+# Tried and dropped (2026-09-20): embedding the policy's two images in the OS image, from a second store
+# (/data/libvirt/fleet/imagestore). The runtime image has whiteouts - an upper layer deletes files of a lower one -
+# and a container build cannot carry those; this script's guard stopped the first build for exactly that. It
+# also moved the signature check off the devices. Local speed is the hub mirror's job (FURY-PLAN Phase 8b). If
+# that store is still on disk from the failed run (about 4.5 GiB), `status` prints how to remove it; `build`
+# ignores it.
 #
 # This project was developed with assistance from AI tools.
 set -euo pipefail
@@ -49,8 +50,7 @@ fi
 pool=/data/libvirt/fleet
 golden=$pool/fleet-golden.qcow2
 out=$pool/fleet-golden-build            # bootc-image-builder's output directory, emptied and removed again
-store=$pool/imagestore                  # the two images, in an overlay store of their own
-storerun=/run/fleet-imagestore
+oldstore=$pool/imagestore               # left by the dropped embedding attempt; never used, only reported
 build=$pool/buildstore                  # the bootc base and the OS image: the only store the privileged builder sees
 buildrun=/run/fleet-buildstore
 base=registry.redhat.io/rhel10/rhel-bootc:10.2
@@ -58,15 +58,15 @@ bib=registry.redhat.io/rhel10/bootc-image-builder:10.2
 auth=/root/sno-install/pull-secret
 os=localhost/fleet-os:latest
 agent_ver=1.3.0-1.el10
-disk_gib=20
-fleet=$here/fleet-robots.yaml
-[[ -f $fleet ]] || fleet=$here/../../../gitops/rhem/fleet-robots.yaml.draft
+# Root filesystem, thin. A robot pulls its images itself: the runtime image is about 10.7 GB unpacked, and while it
+# is being pulled its 4.2 GiB compressed layer sits in /var/tmp - which on a bootc guest is the root filesystem, as
+# is /var/lib/containers. About 16 GB at the peak, beside the OS: 20 GiB was too tight.
+disk_gib=40
 cfg=
 
 die() { echo "${0##*/}: $*" >&2; exit 1; }
 cleanup() { if [[ -n $cfg ]]; then rm -f "$cfg"; fi; exec >&- 2>&-; wait; }     # then wait for tee, or sudo eats the last lines
 trap cleanup EXIT
-sp() { podman --root "$store" --runroot "$storerun" "$@"; }                      # podman on the image store
 bp() { podman --root "$build" --runroot "$buildrun" "$@"; }                      # podman on the build store
 clones() { local f; for f in "$pool"/fleet-vm-[0-9][0-9].qcow2; do [[ -f $f ]] && echo "${f##*/}"; done; true; }
 date -u
@@ -86,9 +86,14 @@ status)
         echo "build store $build:"; bp images --format '    {{.Repository}}:{{.Tag}}  {{.Size}}  built {{.CreatedSince}}' || true
         echo "    to empty it:  sudo podman --root $build --runroot $buildrun rmi --all"
     else echo "no build store yet"; fi
-    if [[ -d $store ]]; then
-        echo "image store $store:"; sp images --digests --format '    {{.Repository}}@{{.Digest}}  {{.Size}}' || true
-        echo "    to empty it (the next build downloads 4.5 GiB again):  sudo podman --root $store --runroot $storerun rmi --all"
+    if [[ -d $oldstore ]]; then
+        # Literal paths on purpose: these lines are pasted as root, and nothing in them may depend on a variable.
+        echo "LEFTOVER: $oldstore ($(du -sh "$oldstore" 2>/dev/null | cut -f1)) - the image store of the dropped embedding attempt. Nothing uses it."
+        echo "  To remove it, three commands. The second one unmounts podman's overlay directory, which it leaves mounted on"
+        echo "  itself; it does nothing if 'findmnt' finds no such mount:"
+        echo "    sudo podman --root /data/libvirt/fleet/imagestore --runroot /run/fleet-imagestore rmi --all"
+        echo "    findmnt /data/libvirt/fleet/imagestore/overlay && sudo umount /data/libvirt/fleet/imagestore/overlay"
+        echo "    sudo find /data/libvirt/fleet/imagestore -xdev -depth -delete"
     fi
     exit 0 ;;
 remove)
@@ -97,7 +102,7 @@ remove)
     rm -f "$golden" "$out/qcow2/disk.qcow2" "$out/manifest-qcow2.json"
     if [[ -d $out ]]; then rmdir "$out/qcow2" 2>/dev/null || true; rmdir "$out" || die "$out is not empty - the builder left something this script does not know. Look, then delete by hand:  ls -la $out $out/*"; fi
     if [[ -d $build ]] && bp image exists "$os"; then bp rmi "$os"; fi
-    echo "removed the golden image and $os. Kept: the image store ($store), the base image in $build, and $bib - a rebuild needs all three"
+    echo "removed the golden image and $os. Kept: the base image in $build, and $bib - a rebuild needs both"
     exit 0 ;;
 esac
 
@@ -108,57 +113,28 @@ for f in Containerfile flightctl.repo RPM-GPG-KEY-flightctl; do
     [[ -f $here/fleet/$f ]] || die "no fleet/$f next to this script - copy the whole directory tools/host/fury/fleet/ here"
 done
 command -v flock >/dev/null || die "flock is missing (util-linux)"
-[[ -f $fleet ]]    || die "no fleet-robots.yaml next to this script - copy gitops/rhem/fleet-robots.yaml.draft here as fleet-robots.yaml"
 [[ -s $auth ]]     || die "no pull secret at $auth. Put it back root-only, or log in by hand ( sudo podman login registry.redhat.io ) and run this again"
 [[ ! -e $golden ]] || die "$golden already exists. To rebuild:  ./81-fleet-scale.sh destroy-all && ./80-fleet-golden.sh remove"
 [[ ! -e $out ]]    || die "a previous build left $out behind:  ./80-fleet-golden.sh remove"
 compgen -G '/etc/pki/entitlement/*.pem' >/dev/null || die "this host has no RHEL entitlement certificate, so dnf inside the build would find no repositories. Register the host first:  sudo subscription-manager register"
-runtime=$(sed -n 's/^ *Image=\(quay\.io\/jary\/soarm-flywheel@sha256:[0-9a-f]\{64\}\).*/\1/p' "$fleet" | head -1)
-car=$(sed -n 's/^ *Image=\(quay\.io\/jary\/soarm-act-modelcar@sha256:[0-9a-f]\{64\}\).*/\1/p' "$fleet" | head -1)
-[[ -n $runtime && -n $car ]] || die "could not read the runtime and modelcar digests out of $fleet"
 avail=$(df -BG --output=avail /data | tail -1 | tr -dc 0-9)
-[[ $avail -ge 150 ]] || die "/data has ${avail} GB free; the coordinator stops under 100 GB (FURY-PLAN decision 6) and a build needs about 40"
-echo "embedding    $runtime"; echo "             $car"
+[[ $avail -ge 130 ]] || die "/data has ${avail} GB free; the coordinator stops under 100 GB (FURY-PLAN decision 6) and a build needs about 15"
+[[ ! -d $oldstore ]] || echo "note: $oldstore is still there from the dropped embedding attempt - not used; './80-fleet-golden.sh status' says how to remove it"
 
-# ---- 1. the image store. A store of its own, made by podman natively on /data: an overlay store cannot be
-# created inside a build container (overlay on overlay), and copying two images out of the host's big store by
-# hand would mean writing podman's metadata ourselves.
-install -d -m 0750 -o root -g qemu "$pool"; restorecon "$pool"
-install -d -m 0700 "$store"
-for ref in "$runtime" "$car"; do
-    if sp image exists "$ref"; then echo "in the image store already: ${ref##*/}"
-    else sp pull -q "$ref" >/dev/null || die "could not pull $ref into the image store. 'A signature was required' means this digest is not signed under this hub's key - a Fleet or pipeline problem, not a host one"; fi
-done
-# Anything else in there is a stale model or runtime from an earlier Fleet: 4 GB the image should not carry.
-# Compared by image ID, not by digest: the runtime image is named by its manifest LIST digest
-# (fleet-act-inference.yaml:235), and `podman images` would show the arm64 instance's digest instead.
-keep=$(sp image inspect --format '{{.Id}}' "$runtime" "$car") || die "the image store does not list both images after pulling them:  sudo podman --root $store --runroot $storerun images --digests"
-while read -r id name; do
-    grep -qx "$id" <<<"$keep" || { echo "dropping stale $name from the image store"; sp rmi "$id" >/dev/null; }
-done < <(sp images --no-trunc --format '{{.ID}} {{.Repository}}' | sed 's/^sha256://')
-# What a Containerfile cannot carry faithfully. backingFsBlockDev is podman's own scratch device node, remade on
-# demand. A whiteout (a 0:0 character device: "this file was deleted by an upper layer") would be lost in the
-# copy and deleted files would reappear in the embedded image - neither image has one today (the runtime image
-# is a single layer, D151), so finding one is a reason to stop, not to work around.
-rm -f "$store/overlay/backingFsBlockDev"
-special=$(find "$store/overlay" "$store/overlay-images" "$store/overlay-layers" \( -type c -o -type b -o -type p -o -type s \) -print | head -3)
-[[ -z $special ]] || die "the image store holds special files that a build cannot copy:
-$special
-An image with whiteouts cannot be embedded this way. Use the fallback instead (docs/internal/FLEET-VMS.md, 'Images'): clones pull from the hub's registry"
-
-# ---- 2. the OS image, built in the build store. label=disable: the image store sits under /data/libvirt
-# (virt_image_t), which a confined build container may not read, and relabelling it would undo what restorecon
-# expects there.
+# ---- 1. the OS image, built in the build store. label=disable: that store sits under /data/libvirt, whose files
+# are virt_image_t - a confined build container may not be able to run from it, and relabelling it would undo
+# what restorecon expects there.
 t0=$(date +%s)
+install -d -m 0750 -o root -g qemu "$pool"; restorecon "$pool"
 install -d -m 0700 "$build"
 bp pull -q --authfile "$auth" "$base" >/dev/null || die "could not pull $base. 'unauthorized' means this pull secret is not entitled to it:  sudo podman login registry.redhat.io  with an account that is, then run this again"
 podman pull -q --authfile "$auth" "$bib" >/dev/null || die "could not pull $bib (same repair as above)"      # the builder itself runs from the host's store
-bp build --pull=never --security-opt label=disable -v "$store":/mnt/imagestore:ro \
+bp build --pull=never --security-opt label=disable \
     --build-arg "BASE=$base" --build-arg "AGENT_VER=$agent_ver" -t "$os" -f "$here/fleet/Containerfile" "$here/fleet" ||
     die "the image build failed - the lines above say where. 'no repositories' or 404s from dnf: the host's subscription is not reaching the build ( sudo subscription-manager status ). A failed signature or key check: the vendored key no longer matches what signs the agent - stop and find out why. Nothing was created but cached layers in $build"
 echo "OS image built in $(( $(date +%s) - t0 )) s: $(bp images --format '{{.Size}}' "$os")"
 
-# ---- 3. the disk. As Red Hat's image-mode guide runs the builder, except for WHICH store it is handed (the
+# ---- 2. the disk. As Red Hat's image-mode guide runs the builder, except for WHICH store it is handed (the
 # header says why) and no ':Z' on that mount (unconfined_t makes relabelling unnecessary).
 cfg=$(mktemp)
 printf '[[customizations.filesystem]]\nmountpoint = "/"\nminsize = "%s GiB"\n' "$disk_gib" > "$cfg"

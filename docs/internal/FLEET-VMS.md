@@ -7,6 +7,9 @@ and in pieces (seed rendering, the `libvirt-guests` edit). No image has been bui
 approved, the Fleet is not live. **UNVERIFIED** marks what could not be checked without running something on the
 host or the hub. `79-bootc-spike.sh` is with the operator; its result decides several of those marks. An
 independent security and operability review (2026-09-20) has been applied; what it changed is marked *(review)*.
+**The first real `80 build` (2026-09-20) stopped at the whiteout guard, correctly; embedding the policy's images in
+the OS image is dropped** (section 7): every robot pulls and verifies its images itself. That changed the disk
+size, what "scale up" means on stage, and the runbook.
 
 What stage A shows (`DECISIONS.md:5517-5519`): a fleet of RHEM-managed devices scaled up and down with one command
 per machine, enrolled and approved with labels, a Fleet with a canary-then-batches rollout, signature
@@ -18,7 +21,7 @@ verification on every device. No sim yet. **The base image is RHEL image mode (b
 | proof that image mode works on this host | `tools/host/fury/79-bootc-spike.sh up <key.pub> \| status \| remove` |
 | the OS image | `tools/host/fury/fleet/` — `Containerfile`, `flightctl.repo`, `RPM-GPG-KEY-flightctl` |
 | golden image | `tools/host/fury/80-fleet-golden.sh build \| status \| remove` |
-| scale, the enrolment config's home, guest shutdown | `tools/host/fury/81-fleet-scale.sh <N> \| status \| destroy-all \| enrol-config <file> \| guests-shutdown` |
+| scale (start / create / shut down), removal, the enrolment config's home, guest shutdown | `tools/host/fury/81-fleet-scale.sh <N> \| status \| remove <NN>… \| destroy-all \| enrol-config <file> \| guests-shutdown` |
 | enrolment config, made on the laptop | `tools/hub/fleet-enrol-config.sh [days]` |
 | approval | `tools/hub/fleet-approve.sh [--watch \| --dry-run]` |
 | fleet view, decommission, stale requests | `tools/hub/fleet-status.sh [decommission <NN>… \| decommission all --yes \| delete <NN>… \| drop-pending [<name>…]]` |
@@ -26,29 +29,25 @@ verification on every device. No sim yet. **The base image is RHEL image mode (b
 
 ## 1. Golden image → copy-on-write clones
 
-`80-fleet-golden.sh build`, three steps, no guest and no secret involved:
+`80-fleet-golden.sh build`, two steps, no guest and no secret involved (about 10–15 min):
 
-1. **An image store of its own** (`/data/libvirt/fleet/imagestore`): the two digests the Fleet draft names, pulled
-   by podman natively. The host's `policy.json` is the Fleet's (`DECISIONS.md:5091-5093`), so both are signature-
-   and Rekor-verified here — **and, for these two images, only here** (section 7). Kept between builds: it is what
-   spares a rebuild the download.
-2. **The OS image** `localhost/fleet-os`: `fleet/Containerfile` on `registry.redhat.io/rhel10/rhel-bootc:10.2`,
+1. **The OS image** `localhost/fleet-os`: `fleet/Containerfile` on `registry.redhat.io/rhel10/rhel-bootc:10.2`,
    following flightctl v1.3.0 `docs/user/building/building-images.md` for a virtual device — the agent from the
    project's repository (pinned, repository left disabled, no weak deps: as `40-device-provision.sh:132-137`;
    *(review)* repository file and signing key vendored and pinned, below), `podman skopeo cloud-init
    qemu-guest-agent firewalld`, cloud-init enabled the way that doc (`:404-406`) and Red Hat's
    image-mode guide do it, the agent enabled and ordered after cloud-init (section 4), RHEL's automatic image
-   updates masked (the doc asks for it, `:138`), the image store copied in (section 7), `bootc container lint`.
+   updates masked (the doc asks for it, `:138`), `bootc container lint`. No application image (section 7).
    *(review)* The build **fails** if the image holds anything per-device — a non-empty machine-id, an ssh host
    key, an agent key, an enrolment config: every clone is a copy of what the build leaves behind.
-3. **The disk**: `registry.redhat.io/rhel10/bootc-image-builder:10.2 --type qcow2`, run as the image-mode guide
+2. **The disk**: `registry.redhat.io/rhel10/bootc-image-builder:10.2 --type qcow2`, run as the image-mode guide
    runs it (rootful, `--privileged`, `label=type:unconfined_t`) — *(review)* except for **which store it is
    handed**. The documented form mounts the host's whole rootful store read-write into a privileged, unconfined
    container; on a machine other people build on, that is reach into everybody's images. `80` builds the OS image
    in a store of its own (`/data/libvirt/fleet/buildstore`) and mounts only that: read-only first, and — since
    the builder mounts the image, which writes under the store — most likely read-write on the second attempt,
    on a store that holds nothing but this script's base and OS image. (`79`, which had already run, used the
-   documented form.) Root filesystem 20 GiB. Result:
+   documented form.) Root filesystem **40 GiB**, thin (section 2). Result:
    `fleet-golden.qcow2`, mode 0440. Clones are `qemu-img create -b` overlays; `remove` refuses while one exists,
    `status` warns if the image is newer than a clone.
 
@@ -76,7 +75,7 @@ two people on this host cannot run them into each other.
 
 ## 2. Sizing
 
-Proposal: **2 vCPU / 3 GiB / 20 GiB thin disk** per VM, 24 VMs as the ceiling to aim at.
+Proposal: **2 vCPU / 3 GiB / 40 GiB thin disk** per VM, 24 VMs as the ceiling to aim at.
 
 - CPU: the policy's budget is p95 < 1000 ms per forward pass; 83 ms on 8 x86 P-core threads, 184 ms inside an
   8-vCPU guest (`docs/eval-records/cpu-spike.md:13`, `:100`). Two Grace vCPUs are **UNVERIFIED** —
@@ -89,7 +88,12 @@ Proposal: **2 vCPU / 3 GiB / 20 GiB thin disk** per VM, 24 VMs as the ceiling to
 - **The fleet's size is bounded by host CPU, not by the renderer**: the rendering tenant does about 228 camera
   pairs a second per 1g.31gb slice whatever the batch size (`DECISIONS.md:5507-5508`) — 7 robots at 30 fps, about
   20 at 480×480 and 15 fps.
-- Disk: the golden image is about 7 GB (OS + 4.5 GiB of embedded images); a clone starts at a few hundred MB.
+- Disk: the golden image is the OS alone, about 2–3 GB. A clone starts at a few hundred MB and **grows to about
+  16 GB** with its first pull: the runtime image is about 10.7 GB unpacked, and while it is pulled its 4.2 GiB
+  compressed layer sits in podman's temporary directory, `/var/tmp` — on a bootc guest that is the root filesystem,
+  as is `/var/lib/containers`. Hence a 40 GiB root (20 was too tight). A qcow2 does not shrink when the guest
+  deletes the temporary file, so 16 GB is what stays. 24 clones: about 384 GB of the 3.1 TB free; worst case
+  24 × 40 GiB = 960 GiB. `81` wants the 100 GB floor plus 16 GB per *new* clone, and prints both figures.
 
 ## 3. Names, addresses, DNS
 
@@ -175,47 +179,46 @@ Labels: `fleet=robots site=fury gpu=none policy_device=cpu arch=arm64 alias=flee
 `role=canary` on the lowest-numbered VM approved while the fleet has none (the count is re-read right before
 one is appointed). No `pull_default` (D150).
 
-## 7. Images: no 4 GB per device, and the fallback
+## 7. Images: every robot pulls and verifies its own
 
-The CPU branch needs the runtime image (`fleet-act-inference.yaml:236`; one 4.2 GiB layer, `DECISIONS.md:5066`) and
-the modelcar (`:224`), which the agent pre-pulls with `podman pull` (`:65-71`). **Chosen: both embedded in the OS
-image, in an additional read-only image store** at `/usr/lib/containers/storage`, listed in the image's
-`storage.conf` (`additionalimagestores` is empty by default on RHEL 10.2 — checked). Why not logically bound
-images: they live in `/usr/lib/bootc/storage`, podman sees them only per command, both docs say not to enable that
-store globally, and the agent pulls with podman's defaults. What the choice is: "physically bound" images are
-**not a finished bootc feature** (bootc issue 644, open). podman cannot make an overlay store inside a build
-container and a vfs store is unreadable by overlay, so the store is filled on the host and copied in with `cp -a`;
-`80` refuses images with whiteouts, which such a copy would lose (neither has one: the runtime image is a single
-layer).
+The CPU branch needs the runtime image (`fleet-act-inference.yaml:236`, about 4.2 GiB compressed, 10.7 GB unpacked)
+and the modelcar (`:224`), which the agent pre-pulls with `podman pull` (`:65-71`). **Each robot pulls both from
+quay under the Fleet's `policy.json`**: cosign signature and Rekor entry are checked on every device before
+anything runs — what D163 promises, and what the negative tests rely on. The OS image holds no application image.
 
-*(review)* **What this costs, stated plainly.** `policy.json` is applied when an image is *pulled*. An image podman
-finds in the embedded store is run **with no signature check on the device**. For these two digests the check
-happens exactly once — on the host, under the same `policy.json`, when `80` pulls them to embed them — and the
-trust anchor for them moves from each device to the golden-image build. An earlier version of this section and of
-the Fleet draft said each device "still verifies both"; that was wrong. Everything else a robot is ever told to
-run — a promoted modelcar, the negative tests — is pulled, and verified on the device, as before. (On the mirror
-fallback below, devices pull and therefore verify all of it again.)
+**Tried and dropped (2026-09-20): embedding the two images in the OS image** (an additional read-only image store
+under `/usr/lib/containers/storage`). Two reasons, either sufficient. (1) It does not work with this runtime image:
+an upper layer deletes files of a lower one (pip replacing apt's packages), which an overlay store records as
+whiteouts — 0:0 character devices — and a container build cannot carry those in a `COPY` or `cp`. `80`'s guard
+found them on the operator's first build and stopped before anything was built. "Physically bound" images are
+not a finished bootc feature (bootc issue 644, open). (2) `policy.json` is applied at *pull* time: an embedded
+image runs with no signature check on the device, so the trust anchor would have moved from each device to the
+image build *(review finding 7)*. Logically bound images do not help either: they live in
+`/usr/lib/bootc/storage`, which podman only sees per command, and the agent pulls with podman's defaults.
+The failed run left `/data/libvirt/fleet/imagestore` (about 4.5 GiB); `80 status` prints the three fixed-path
+commands that remove it, and `build` ignores it.
 
-**UNVERIFIED:** (a) that the agent's `podman pull` of a digest present in a read-only store skips the
-download; (b) the store's SELinux label — the policy has rules for `/var/lib/containers/storage/overlay*` only, so
-the image adds an equivalence line; (c) the list-digest reference resolving from the embedded store.
+**What pulling costs.** About 4.5 GiB per robot through the one uplink, once (the host pulled the same image in
+about two minutes today, some 35 MiB/s; D151 saw 2–11 MiB/s), about 16 GB of disk (section 2), and minutes before
+a *new* clone is healthy (section 10). The uplink is shared, so N clones pulling at once take as long as N in a
+row: **create the fleet ahead of the demo, a few at a time** — what throttles the first pull is how many clones
+are created together, not the Fleet's batches (a newly approved device gets the template at once,
+`DECISIONS.md:5095-5096`). `./81-fleet-scale.sh status` shows `images pulled: no | partly | yes (disk N GB)` per
+clone — an estimate from the clone's disk; RHEM's application status is what says the policy is up.
 
-**Which case am I in — one command, first VM:** `./81-fleet-scale.sh status`. A clone's own disk is the witness:
-a few hundred MB if the store was used; over 3 GB the line ends `<- PULLED its images`.
+**The local-speed answer is Phase 8b's mirror on the hub**, not stage A's job: the internal registry is up with a
+route and unused (`FURY-PLAN.md:138`); a pull-through cache is not set up. It would be one more inline file in the
+Fleet, `/etc/containers/registries.conf.d/50-fleet-mirror.conf`, naming the route's `fleet-mirror` namespace as a
+mirror of `quay.io/jary`. Image references unchanged; `policy.json` unchanged (the identity stays `quay.io/jary/…`,
+so the signatures still match `matchRepository`); `registries.d` one more entry for the mirror's host; plus the
+ingress CA under `/etc/containers/certs.d/`, anonymous pull on that namespace, and both images copied there *with*
+their signature attachments — 8b's open spike (`FURY-PLAN.md:416`). **UNVERIFIED:** that attachments are looked up
+at a mirror. Devices would still pull, and so still verify.
 
-**Fallback if it pulled: a mirror on the hub**, the simplest local source here — the internal registry is up with
-a route and unused (`FURY-PLAN.md:138`); a pull-through cache is not set up. One more inline file in the Fleet,
-`/etc/containers/registries.conf.d/50-fleet-mirror.conf`, names
-`default-route-openshift-image-registry.apps.sno-flywheel.local/fleet-mirror` as a mirror of `quay.io/jary`.
-**Image references: unchanged. `policy.json`: unchanged** — the identity stays `quay.io/jary/…`, so the existing
-signatures still match `matchRepository`. **`registries.d`: one more entry** enabling sigstore attachments for the
-mirror's host. Also: the ingress CA under `/etc/containers/certs.d/`, anonymous pull on that one namespace, and
-both images copied there *with* their signature attachments — the same open question as Phase 8b's spike
-(`FURY-PLAN.md:416`). Re-signing under the route name (8b's plan) would change all three instead. **UNVERIFIED:**
-that attachments are looked up at the mirror. Cost: 4.5 GiB per robot across the bridge and on its disk, no uplink.
-
-**A later model rollout:** the new modelcar only, small, N times from quay. A new *runtime* image is 4.2 GiB × N
-until it is built with `--layers` or mirrored: rebuild the golden image instead.
+**A later model rollout:** the new modelcar only, small, N times from quay. A new *runtime* image is 4.5 GiB × N,
+five at a time (`maxUnavailable: 5`): about 11 minutes a wave at today's 35 MiB/s, inside the 30m update timeout;
+at D151's rates it is not, and the answer is the mirror. The Fleet draft's header has the reasoning for keeping the
+batches as they are.
 
 ## 8. 4k guest on the 64k host
 
@@ -227,7 +230,7 @@ page size. New here is the *builder* (mkfs, loop devices) on a 64k host — the 
 ## 9. SELinux, firewall, ports
 
 Guests enforcing. The agent wrote `policy.json` on the host without denials (`DECISIONS.md:5109`); a bootc guest is
-**UNVERIFIED** — first VM: `ls -Zd /usr/lib/containers/storage/overlay`, `ausearch -m avc -ts boot`. Host
+**UNVERIFIED** — first VM: `sudo ausearch -m avc -ts boot`. Host
 firewall: `libvirt-to-host` rejects what it does not list (`15-camera-port.sh:6-7`). **No new host port in stage
 A**: DNS is open (`06-network.sh:36`), the hub is a neighbour on the bridge, quay goes out through the masquerade
 (`31-sno-hostprep.sh:34`), NTP is public (`:4`). **Stage C:** each robot's computer runs its own Zenoh router
@@ -245,21 +248,41 @@ its router over loopback, which firewalld does not filter. The rule is in the im
 delivered later needs a reload, and it does not vary per device. **UNVERIFIED** on a bootc guest; if ssh or 7447
 misbehave on VM 01: `sudo firewall-cmd --list-all`.
 
-## 10. Boot time
+## 10. How long things take
 
-D163 expects about half a minute; the spike measures it (virt-install to ssh). A pending request about a minute
-after `virt-install`, `Healthy` a few minutes after approval (start period 240 s, `fleet-act-inference.yaml:243`).
+All **UNVERIFIED** except the spike's boot time. **Starting a VM that exists** (the on-stage scale-up): boot about
+half a minute (D163; the spike measures virt-install to ssh), the agent reconnects with the identity it has, the
+policy starts from images already on its disk — reporting again in about a minute, healthy in one to two. No
+approval, no pull. **A new clone:** boot, a pending request after about a minute, approval, then the pull — two
+minutes alone at today's rate, N times that when N pull together — unpacking 10.7 GB on two vCPUs, a few minutes;
+then the health check (start period 240 s, `fleet-act-inference.yaml:243`). Reckon **8–12 minutes for one new
+clone, about 15 for a step of four, 1½–2 hours for 24** — bring-up time, not stage time.
 
-## 11. Scale-down, and shutting the host down
+## 11. Scaling, removal, and shutting the host down
 
-flightctl 1.3 has `decommission device/NAME` (only target `Unenroll`; local CLI help) and `delete`. The agent wipes
-its management certificate on request; lifecycle `Decommissioning` → `Decommissioned`; delete only then (v1.3.0
-`managing-devices.md`). The host holds no hub credential (`DECISIONS.md:5033`), so: laptop
+**`81-fleet-scale.sh <N>` means N running.** It starts `fleet-vm-01…N` that exist and are shut off (the fast
+path, lowest numbers first), creates only what is missing, and **shuts down** — never deletes, never forces — the
+running ones above N, highest first, all asked at once. The lowest number is the canary, so it is the last to go
+and the first back. On stage, "scale up" is `./81-fleet-scale.sh 16` against a fleet that was created and then
+scaled down beforehand: seconds to issue, about a minute until the robots report.
+
+**What a shut-off robot is in RHEM:** still enrolled, labels and all; its device stops reporting and after the
+hub's disconnection timeout shows as not reporting (the API's summary `Unknown`; `fleet-status.sh` prints
+`not-reporting` and counts them) — which is what a switched-off robot honestly looks like. It comes back by itself
+when its VM starts. Two consequences: a **rollout** cannot reach it — it is expected to sit in its batch until the
+30m timeout and count against that batch's threshold (**UNVERIFIED** on 1.3), so run the rollout beat with every
+enrolled robot running; and `fleet-status.sh delete` is **not** for it — started again, its agent would hold a
+certificate for a device the hub no longer knows.
+
+**Removing a robot for good** is separate and explicit. flightctl 1.3 has `decommission device/NAME` (only target
+`Unenroll`; local CLI help) and `delete`. The agent wipes its management certificate on request; lifecycle
+`Decommissioning` → `Decommissioned`; delete only then (v1.3.0 `managing-devices.md`). The agent has to answer, so
+the VM must be running. The host holds no hub credential (`DECISIONS.md:5033`), so: laptop
 `fleet-status.sh decommission 24 23 …` (`all` needs `--yes`; without it, it lists and stops), then host
-`81-fleet-scale.sh 22`. `81` removes only domains whose one disk is under its own pool — a same-named VM of
-somebody else's stops the run before anything changes. A VM that went first:
-`fleet-status.sh delete NN`, refused while `Online`. Highest number first, the canary last. **UNVERIFIED:**
-whether deleting a device removes its enrolment request.
+`81-fleet-scale.sh remove 24 23 …` (or `destroy-all`). `81` touches only domains whose one disk is under its own
+pool — a same-named VM of somebody else's stops the run before anything changes. A VM that was removed first:
+`fleet-status.sh delete NN`, refused while `Online`. **UNVERIFIED:** whether deleting a device removes its
+enrolment request.
 
 `81-fleet-scale.sh guests-shutdown` **(parallel shutdown: decided)**: `libvirt-guests` stops guests one after
 another, up to 300 s each (`32-sno-install.sh:113`). It sets `PARALLEL_SHUTDOWN=40`, shows before and after, keeps
@@ -274,9 +297,10 @@ in the first second and the hub keeps its full 300 s.
 |---|---|---|
 | pull secret not entitled to the bootc repositories | `unauthorized` in the spike or the build | `sudo podman login registry.redhat.io` with an account that is; run again |
 | `dnf` finds no repositories in the build | build fails at the first `RUN` | `sudo subscription-manager status`; the spike's `RESULT` line says early |
-| an embedded image has whiteouts | `80` stops before building and lists them | the mirror fallback (section 7) |
 | builder fails on this host | the spike, or `80`, stops with the builder's output | that output is the finding; `remove` clears up |
-| clones pull 4 GB anyway | `status`: `<- PULLED its images` | works, slowly; then the mirror fallback |
+| a new clone's pull is slow, or fails for lack of room | `status`: `images pulled: partly` for a long time; the agent's journal names the image | fewer clones at a time; `df -h /data`; the 40 GiB root leaves room — a clone built from an older 20 GiB image does not: rebuild |
+| the leftover image store of the dropped attempt | `80 status`: `LEFTOVER: …imagestore (4.5G)` | the three commands it prints |
+| a rollout stalls on shut-off robots | batch waits out the 30m timeout | run rollouts with every enrolled robot running (section 11) |
 | golden image rebuilt under clones | clones corrupt | `status` warns; `destroy-all`, `remove`, `build` |
 | Fleet digests changed after the build | clones pull the new image | rebuild, or accept it (small for a modelcar) |
 | enrolment certificate expired | `81` refuses to create VMs | `fleet-enrol-config.sh`, then `enrol-config` |
@@ -285,7 +309,7 @@ in the first second and the hub keeps its full 300 s.
 | the builder cannot use a dedicated store at all | `80` fails read-only **and** read-write | keep the output; the documented form (the host's main store) is the known-working fallback — a deliberate decision, not a quiet edit |
 | MAC or address already somebody's (the spike holds fleet-vm-32's pair, even shut off) | `81` refuses before creating anything and says whose | `79-bootc-spike.sh remove`; `ip neigh show <addr>` |
 | a VM named `fleet-vm-NN` that is not this script's | `81` stops before anything changes and shows its disk | rename or remove that VM |
-| `/data` short of space | `81` refuses: needs the 100 GB floor plus 6 GB per new clone; prints the worst case (N × 20 GiB) | free space, or fewer VMs |
+| `/data` short of space | `81` refuses: needs the 100 GB floor plus 16 GB per new clone; prints the worst case (N × 40 GiB) | free space, or fewer VMs |
 | two people run `80`/`81` at once | the second stops: "another run is in progress" | wait; `sudo fuser -v /run/fleet-stage-a.lock` |
 | create fails part-way | the message lists the VMs already up and says to re-run | the same command continues from the failed number |
 | a clone never answers, so its seed stays attached | `status`: `seed:ATTACHED` | `virsh console`; fix or remove the VM — the next `81` run ejects what is left |
@@ -294,8 +318,8 @@ in the first second and the hub keeps its full 300 s.
 | a real clone is "too old" or "not expected" | left pending with that reason | `MAX_AGE_MIN=…` or the right `FLEET_EXPECT` for one run |
 | the hub cuts the request list short | `WARNING: the hub cut the request list short` | `fleet-status.sh drop-pending`, delete the stale ones |
 | duplicate claim on a number | both printed, neither approved | find the stray VM; `delete` a dead device |
-| VM removed before decommission | device stays disconnected | `fleet-status.sh delete NN` |
-| host reboot | fleet VMs do not autostart | `81-fleet-scale.sh <N>` starts the existing ones |
+| VM removed before decommission | device stays `not-reporting` for ever | `fleet-status.sh delete NN` — only for a VM that is gone, not one that is shut off |
+| host reboot | fleet VMs do not autostart | `81-fleet-scale.sh <N>` starts the existing ones — seconds, no pull |
 
 ## 13. Decided, and still open
 
@@ -310,31 +334,35 @@ Adds: an **OS update rolled out by RHEM** as a later beat — build `fleet-os` v
 (the hub's registry, plus its trust entry in `policy.json`), set `spec.template.spec.os.image` in the Fleet; same
 canary and batches, each device stages it, reboots, and bootc rolls back a failed boot. The disruption budget then
 limits reboots. It also ends the agent's `/sysroot` log noise (`DECISIONS.md:5097`).
-Costs: a 7 GB image and a 20–30 min first build (about 10 after); an OS update re-ships the embedded 4.5 GiB to
-every robot unless that layer comes out byte-identical (issue 644's "timestamp churn"); physically bound images
-and their SELinux label are unproven here; nothing known-bad for aarch64 or a 64k host was found in either doc.
+Costs: a 10–15 min image build and a 2–3 GB image; application images cannot ride inside it with this runtime image
+(section 7), so they are pulled per robot; an OS update is itself a multi-GB pull per robot, through the same
+uplink until the mirror exists; nothing known-bad for aarch64 or a 64k host was found in either doc.
 
 ## 15. Bring-up runbook
 
 | # | Who, where | Command | Expect | Time |
 |---|---|---|---|---|
 | 0 | operator, host | `./79-bootc-spike.sh up <key.pub>`, paste; then `remove` | `RESULT` lines: repositories visible, ssh after N s, guest page size 4096, `bootc status` | 15 min |
-| 1 | operator, host | copy `80-`, `81-fleet-*.sh`, the whole directory `fleet/` (three files), and `gitops/rhem/fleet-robots.yaml.draft` as `fleet-robots.yaml` to `~/flywheel-setup`; check the scripts arrived executable (`ls -l`) | — | 1 min |
-| 2 | operator, host | `./80-fleet-golden.sh build` — paste the output | key and signature checks pass, `OS image built …`, whether the builder managed read-only or needed read-write, `golden image ready` | 20–30 min |
+| 1 | operator, host | copy `80-`, `81-fleet-*.sh` and the whole directory `fleet/` (three files) to `~/flywheel-setup`; check the scripts arrived executable (`ls -l`). Optional: `./80-fleet-golden.sh status` prints how to remove the 4.5 GiB left by the dropped embedding attempt | — | 2 min |
+| 2 | operator, host | `./80-fleet-golden.sh build` — paste the output | key and signature checks pass, `OS image built …`, whether the builder managed read-only or needed read-write, `golden image ready`, virtual size 40 GiB | 10–15 min |
 | 3 | operator, host | `./81-fleet-scale.sh guests-shutdown` | before: unset; a backup file; after: `PARALLEL_SHUTDOWN 40`, timeout unchanged, the file's last lines | 1 min |
 | 4 | main session, laptop | make the Fleet live (`git mv`, commit, push); `tools/hub/fleet-status.sh` | a line starting `Fleet robots:` instead of "does not exist on the hub yet" | 5 min |
 | 5 | laptop | `FURY_SSH=… tools/hub/fleet-enrol-config.sh` — **only when step 6 can follow at once** | `600 …` for the file, then "NOW, on the host" | 1 min |
 | 6 | operator, host, **back to back with 5** | `./81-fleet-scale.sh enrol-config fleet-agent-config.yaml`. If it cannot happen now: `shred -u ~/flywheel-setup/fleet-agent-config.yaml` and redo 5 later. **The enrolment config is never copied into the git checkout**, on the laptop or the host. Optional: an ssh public key as `/root/fleet/debug.pub` | `installed … shredded …`, an expiry date | 1 min |
-| 7 | operator, host | `./81-fleet-scale.sh 1` | the disk line (free space, worst case), `fleet-vm-01: seed ejected … and shredded`, `fleet-vm-01 running 10.20.0.21 ping:yes seed:gone` | 3 min |
+| 7 | operator, host | `./81-fleet-scale.sh 1` | the disk line (free space, 16 GB per new clone, worst case), `fleet-vm-01: seed ejected … and shredded`, `fleet-vm-01 running 10.20.0.21 ping:yes seed:gone images pulled: no` | 3 min |
 | 8 | laptop | `FLEET_EXPECT=1 tools/hub/fleet-approve.sh --dry-run`, then without `--dry-run` | `would approve fleet-vm-01 … role=canary`, then `approved … (the canary)`. If it says `PROPOSES-ITS-OWN-LABELS` for a real clone, the agent proposes more than `enrol` and `alias` — paste it, do not work around it | 2 min |
-| 9 | laptop, then host | `fleet-status.sh` until healthy; then **`./81-fleet-scale.sh status`** | `act-inference:Running`; disk a few hundred MB — or `<- PULLED its images` (section 7) | 5–10 min |
-| 10 | operator, first VM | with the debug key: the two SELinux checks of section 9; `sudo podman images --digests`; `sudo grep -rl client-key-data /var/lib/cloud /run/cloud-init` (section 5); `sudo firewall-cmd --list-all`; `ls -la /etc/flightctl/certs`; `/usr/libexec/podman/quadlet -dryrun`; the CPU benchmark and the container's memory (section 2) | both images listed; no denials; the grep prints nothing; 7447 only from `10.20.0.10`; no key under `/etc/flightctl/certs`; p95 under 1000 ms | 15 min |
+| 9 | laptop, then host | `fleet-status.sh` until healthy; meanwhile **`./81-fleet-scale.sh status`** | `images pulled:` goes `no` → `partly` → `yes (disk about 16 GB)`; then `act-inference:Running`, `Healthy`. Note the time from approval to healthy — it is the figure section 10 guesses at | 8–12 min |
+| 10 | operator, first VM | with the debug key: `sudo ausearch -m avc -ts boot` (section 9); `sudo podman images --digests`; `df -h /` (a 40 GiB root, about 16 GB used); `sudo grep -rl client-key-data /var/lib/cloud /run/cloud-init` (section 5); `sudo firewall-cmd --list-all`; `ls -la /etc/flightctl/certs`; `/usr/libexec/podman/quadlet -dryrun`; the CPU benchmark and the container's memory (section 2) | both images listed; no denials; the grep prints nothing; 7447 only from `10.20.0.10`; no key under `/etc/flightctl/certs`; p95 under 1000 ms | 15 min |
 | 10b | operator, host + VMs 01 and 02 | **before scaling past 2:** `./81-fleet-scale.sh 2`, approve 02, then on **both** VMs: `cat /etc/machine-id`; `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`; `sudo openssl x509 -noout -fingerprint -in /var/lib/flightctl/certs/agent.crt` | all three **differ** between the two VMs. If any is the same, stop: every clone would share it. Then `sudo rm -f /root/fleet/debug.pub` | 10 min |
-| 11 | laptop, then host | `FLEET_EXPECT="1-8" fleet-approve.sh --watch` (then `"1-16"`, `"1-24"`; it stops by itself after 30 min); `./81-fleet-scale.sh 8`, then `16`, then `24`, watching `free -g`, `df -h /data` and the hub | one `approved` line per VM; every VM `seed:gone` | 10 min a step |
-| 12 | laptop | the rollout beat: edit digest + `MODEL_VERSION` in the Fleet, merge; `fleet-status.sh` | RENDERED moves: canary, 25 %, 50 %, the rest | per rollout |
-| 13 | laptop, then host | `fleet-status.sh decommission 24 23 …`, then `./81-fleet-scale.sh 22` | `device … deleted`, then `removed fleet-vm-24` | 3 min |
+| 11 | laptop, then host — **bring-up, ahead of the demo** | create the fleet in steps of four: `FLEET_EXPECT="1-24" fleet-approve.sh --watch` (it stops by itself after 30 min — start it again); `./81-fleet-scale.sh 4`, wait until all four say `images pulled: yes`, then `8`, `12` … `24`, watching `free -g`, `df -h /data` and the hub | one `approved` line per VM; every VM `seed:gone`, then `images pulled: yes`; all `Healthy` in `fleet-status.sh` | about 15 min a step, 1½–2 h for 24 |
+| 11b | operator, host — **the last bring-up step** | `./81-fleet-scale.sh 4` (or whatever the demo opens with) | `asked 20 VM(s) above fleet-vm-04 to shut down; they stay defined`; `fleet-status.sh`: 4 reporting, 20 not reporting | 3 min |
+| 12 | operator, host — **on stage: scale up** | `./81-fleet-scale.sh 16` (then `24`) | `started fleet-vm-05` …; no approval, no pull; in `fleet-status.sh` and the RHEM UI the robots go from not reporting to `Online`, then `Healthy` | seconds to issue, 1–2 min to healthy |
+| 12b | laptop — **on stage: the rollout beat**, with every enrolled robot running | edit digest + `MODEL_VERSION` in the Fleet, merge; `fleet-status.sh` | RENDERED moves: canary, 25 %, 50 %, the rest | per rollout |
+| 13 | operator, host — **on stage: scale down** | `./81-fleet-scale.sh 8` | VMs above 08 shut down, none deleted; their devices go `not-reporting` after the hub's timeout | 1–2 min |
+| 14 | laptop, then host — **after the demo, or to retire a robot** | `fleet-status.sh decommission 24 23 …` (the VMs must be running), then `./81-fleet-scale.sh remove 24 23 …` | `device … deleted`, then `removed fleet-vm-24` | 3 min |
 | — | laptop, any time | `fleet-status.sh drop-pending` | the pending requests with full names; delete stale ones by name | 1 min |
 
-At demo time the operator's path is steps 11–13 only: wrapped commands, no raw `flightctl`, `oc` or `virsh`.
+At demo time the operator's path is steps 12–13 only: wrapped commands, no raw `flightctl`, `oc` or `virsh`, and
+nothing that downloads. Everything slow — the build, the 24 first pulls — is bring-up.
 The agent's certificate path in step 10b is the one the host's own script relies on with this agent version
 (`40-device-provision.sh:32`).
