@@ -5411,3 +5411,12 @@ dashboard's backend for the chat panel, a developer workspace for the editor. Th
 question for in-cluster clients (plain http on the cluster network to the host bridge). Known and accepted: peers
 on the operator's tailnet reach `10.20.0.1:8001` directly, as they do every port on that address. If the API is ever
 given a Route or a wider network, it gets a key first (`--api-key`, held server-side).
+
+**Addendum, same day - the forwarder did not survive SELinux, and the panel is dropped.** The socket unit failed at
+once: `Failed to create listening socket (10.20.0.1:8001): Permission denied` - systemd is not allowed that bind
+for socket activation here, and the port's label cannot be read without root. No relabelling by guesswork: the
+assistant's container now listens on `10.20.0.1:8000` itself, the pattern the camera bridge and the metrics
+exporter already prove on this host (`2b805c3`); `64-assistant-expose.sh` only lists the port and removes the failed
+forwarder. Cost: the API is no longer loopback-only by construction - what keeps the uplink out is the address it
+binds and the firewall, as for the other two. Operator, same day: **no chat panel** - the tenant is shown doing
+coding in a developer workspace, which is enough; the Service's only clients are workspaces.
