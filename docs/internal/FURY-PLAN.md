@@ -94,6 +94,8 @@ attempt fails, consoles freeze briefly and tailscaled rebinds. Fixed in Phase 0 
 | `nvidia.com/gpu=0:2` | 1g.31gb | **T3 — flywheel training + eval** (host runner: ACT fine-tune, paired eval) | host runner container, this slice |
 | `nvidia.com/gpu=0:3` | 1g.31gb | **T4 — parallel sweeps / spare** (training sweeps, second eval, DCGM headroom) | ad hoc |
 
+**Tenant map as decided 2026-09-20 (D164), replacing the table above for tenants mode:** `0:0` coding assistant (done) · `0:1` robot zero - the host's RHEM-managed policy pinned to the slice · `0:2` training · `0:3` the fleet's rendering tenant (D163). In flywheel mode MIG is off and the whole GPU is the flywheel's.
+
 Verify the index→profile mapping with `nvidia-smi -L` and `nvidia-ctk cdi list` after creation;
 do not assume it. vLLM rejects MIG UUIDs in `CUDA_VISIBLE_DEVICES` — give the container the
 slice via CDI and leave `CUDA_VISIBLE_DEVICES` unset. PyTorch (host runner) accepts

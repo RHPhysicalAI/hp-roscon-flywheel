@@ -5508,3 +5508,30 @@ as Gazebo to 0.09 px on cube centroids and 0.99 IoU on the arm, with the two cor
 **Staging, each stage showable on its own:** (A) the micro-VM factory, enrolment and approval tooling, the robots'
 Fleet - RHEM at scale, no sim yet; (B) world pods + the rendering tenant + the wall, the arms driven by recorded
 motion; (C) the policy on each device closes the loop with its world.
+
+## D164 — Tenants mode's four slices: coding assistant, robot zero, training, fleet rendering
+
+**Date:** 2026-09-20. **Status:** decided with the operator; `0:0` runs, the other three are to build.
+
+| Slice | Size | Tenant |
+|---|---|---|
+| `0:0` | 3g.126gb | the coding assistant, shown through a Dev Spaces workspace (D160-D162) |
+| `0:1` | 1g.31gb | **robot zero**: the enrolled GPU host's own policy, delivered by RHEM and pinned to this slice |
+| `0:2` | 1g.31gb | training: real ACT fine-tunes while everything else serves |
+| `0:3` | 1g.31gb | the fleet's rendering tenant (D163; about 228 camera pairs a second) |
+
+**Why robot zero and not a second renderer.** The fleet is bounded by host CPU (16-24 micro-VMs), and one rendering
+slice already covers about twenty robots at 480x480 and 15 fps, so a second one would only smooth the wall - more
+of the same. Robot zero adds what no other candidate does: **RHEM delivering a signed GPU workload and placing it on
+a specific MIG slice** - governance of the partitioning itself, through the Fleet's `gpu_device` label, which was
+built for this (D148) and never exercised - and **continuity between the acts**: the device and the signed model
+the audience watched being promoted in act 1 keep serving in act 2 instead of going dark when MIG turns on. Robot
+zero is the fleet's first robot: its world is a physics-only sim like the others, its cameras come from the
+rendering tenant, it is on the wall; only its policy runs on a slice instead of a CPU. Considered and set aside: a
+second training job (runner-up, cheap), a second served model (needs a purpose on stage), perception over the
+fleet's camera streams (worth revisiting with time), a robot foundation model (days of risk). If robot zero slips,
+`0:1` becomes a second renderer or a second training job at almost no cost.
+
+**What it takes, after the renderer exists:** the host device gets `gpu_device=<MIG uuid of 0:1>` (MIG UUIDs are
+stable across mode switches here); `fury-switch.sh tenants` starts the policy app instead of leaving it stopped;
+`fury-mode` stops refusing a policy on a slice; the host's sim unit gains the physics-only variant for tenants mode.
