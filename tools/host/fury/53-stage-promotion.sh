@@ -76,14 +76,14 @@ def merge(prefix, model_version):
         e["index"] = i
     return {
         "model_version": model_version, "policy_path": parts[0].get("policy_path"),
-        "served_model_version": parts[0].get("served_model_version"), "timestamp": parts[-1].get("timestamp"),
+        "served_model_version": model_version, "timestamp": parts[-1].get("timestamp"),
         "eval_config": {"episodes": len(eps), "seed_base": seeds[0], **scene},
         "aggregate": {"n": len(eps), "successes": ok, "success_rate": round(ok / len(eps), 4),
                       "mean_cubes": round(sum(e["cubes_placed"] for e in eps) / len(eps), 4), "cubes_hist": hist,
                       "mean_smoothness": round(sum(e.get("avg_smoothness") or 0 for e in eps) / len(eps), 6),
                       "goal_rejected": sum(p["aggregate"].get("goal_rejected", 0) for p in parts)},
         "episodes": eps,
-        "merged_from": [os.path.basename(f) for f in files],
+        "merged_chunks": len(files),
     }
 
 
