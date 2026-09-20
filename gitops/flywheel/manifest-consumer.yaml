@@ -10,6 +10,7 @@ metadata:
 data:
   consumer.py: |
     import json, os, time, urllib.request, ssl
+    from datetime import datetime, timezone
     from kafka import KafkaConsumer, KafkaProducer
     BOOT = os.environ.get("KAFKA_BOOTSTRAP", "edge-kafka.flywheel.svc:9092")
     # DSP's oauth-proxy serves an OpenShift service-serving cert; verify it against the service CA
@@ -20,6 +21,14 @@ data:
     DSP_URL = os.environ.get("DSP_URL", ""); PIPELINE_NAME = os.environ.get("TRAINING_PIPELINE_NAME", "")
     INCUMBENT = os.environ.get("INCUMBENT", "upstream-act-teacher"); COLLECTOR = os.environ.get("COLLECTOR", INCUMBENT)
     INCUMBENT_CKPT = os.environ.get("INCUMBENT_CHECKPOINT", "hf")  # "hf" = upstream teacher; else s3://... tarball
+    # Episodes recorded before this moment are not counted (ISO-8601). Set when records were taken out of the
+    # training set after the fact: the dataset is built from the curated bucket, and the count has to mean the same.
+    def when(v):
+        try:
+            t = datetime.fromisoformat(str(v).strip().replace("Z", "+00:00"))
+            return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+        except Exception: return None
+    COUNT_SINCE = when(os.environ.get("COUNT_SINCE", ""))
     def token():
         return open("/var/run/secrets/kubernetes.io/serviceaccount/token").read().strip()
     def get(path):
@@ -56,6 +65,8 @@ data:
         print(f"[consumer] threshold={THRESH} cooldown={COOLDOWN}s pipeline={PIPELINE_NAME if armed else 'UNSET (counting only)'}", flush=True)
         for m in c:
             if m.value.get("model_version") != COLLECTOR: continue
+            # a manifest without a readable timestamp is counted: better an early trigger than a lost episode
+            if COUNT_SINCE and (when(m.value.get("timestamp")) or COUNT_SINCE) < COUNT_SINCE: continue
             pending += 1
             print(f"[consumer] pending={pending}/{THRESH} collector={COLLECTOR}", flush=True)
             now = time.time()
@@ -95,7 +106,9 @@ spec:
             # consumer.py is mounted from a ConfigMap and read once at process start (like
             # dashboard.yaml's DASHBOARD_CODE_REV, D097) — bump this alongside code changes so
             # Argo rolls the pod instead of leaving the old code running against a new ConfigMap.
-            - {name: CONSUMER_CODE_REV, value: "2026-09-19-durable-count"}
+            - {name: CONSUMER_CODE_REV, value: "2026-09-20-count-since"}
+            # the collection scene was fixed at 12:08 UTC that day; earlier episodes were archived out of the curated bucket
+            - {name: COUNT_SINCE, value: "2026-09-20T12:00:00Z"}
             - {name: KAFKA_BOOTSTRAP, value: "edge-kafka.flywheel.svc:9092"}
             - {name: TRIGGER_THRESHOLD, value: "160"}
             - {name: TRIGGER_COOLDOWN, value: "3600"}
