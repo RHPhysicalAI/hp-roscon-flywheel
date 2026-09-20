@@ -100,9 +100,9 @@ spec:
             - {name: TRIGGER_THRESHOLD, value: "160"}
             - {name: TRIGGER_COOLDOWN, value: "3600"}
             # Round B (after PR #1): v2 collects; the next candidate is fine-tuned FROM v2 and gated against it.
-            - {name: INCUMBENT, value: "upstream-act-teacher"}
-            - {name: COLLECTOR, value: "upstream-act-teacher"}
-            - {name: INCUMBENT_CHECKPOINT, value: "s3://episodes-data/checkpoints/upstream-act-teacher/pretrained_model.tar.gz"}
+            - {name: INCUMBENT, value: "act-v2-ft160"}
+            - {name: COLLECTOR, value: "act-v2-ft160"}
+            - {name: INCUMBENT_CHECKPOINT, value: "s3://episodes-data/checkpoints/act-v2-ft160/pretrained_model.tar.gz"}
             - {name: DSP_URL, value: "https://ds-pipeline-dspa.flywheel.svc:8443"}
             # Armed 2026-09-19, once the host runner, the eval rig, the incumbent checkpoint and the registry step
             # were in place (D155). Remove this line to count without triggering: the count is kept (see main()).
