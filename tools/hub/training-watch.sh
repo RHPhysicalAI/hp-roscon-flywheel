@@ -67,9 +67,14 @@ if [[ -t 1 && -z ${NO_COLOR:-} ]]; then
     bold=$'\033[1m' dim=$'\033[2m' green=$'\033[32m' red=$'\033[31m' reset=$'\033[0m'
 fi
 
+# ssh -tt puts THIS terminal in raw mode for as long as it runs: a bare newline then moves down without going back
+# to the left edge, and every line starts where the last one ended. So over ssh, onto a terminal, lines end CR LF.
+crlf=no
+if [[ $where == ssh && -t 1 ]]; then crlf=yes; fi
+
 # awk of any make, the one on a Mac included: no gawk extensions. No apostrophe inside the program: it ends the quote
 show() {
-    awk -v B="$bold" -v D="$dim" -v G="$green" -v E="$red" -v R="$reset" -v RAW="$raw" '
+    awk -v B="$bold" -v D="$dim" -v G="$green" -v E="$red" -v R="$reset" -v RAW="$raw" -v CRLF="$crlf" '
     # the value after "key:" in a loss line
     function field(s, key,    v) {
         s = " " s
@@ -90,6 +95,9 @@ show() {
     # projected screen. In the formatted view every CSI sequence goes, then every control character but the tab -
     # which takes the ESC of any other sequence with it and leaves its text harmless. --raw is as it arrives.
     BEGIN {
+        # built here: an awk of the BSD make refuses a newline inside a -v value
+        NL = (CRLF == "yes") ? sprintf("%c%c", 13, 10) : sprintf("%c", 10)
+        ORS = NL
         CSI = sprintf("%c", 27) "\\[[0-9:;<=>?]*[ -/]*[@-~]"
         CTL = "["; for (i = 1; i < 32; i++) if (i != 9 && i != 10) CTL = CTL sprintf("%c", i); CTL = CTL sprintf("%c", 127) "]"
     }
@@ -98,6 +106,9 @@ show() {
     { sub(/\r$/, "") }
     RAW != "yes" { gsub(CSI, ""); gsub(CTL, "") }
     /^$/ { next }
+    # Ctrl-C reaches the follower on the far side; an ssh server of the tailnet says so in a line of its own and
+    # ends with status 1. That is the way out, not a failure: say nothing, and tell the caller with 99.
+    /tailscale-ssh: process died: signal: interrupt/ { left = 1; next }
     /^\[watch\] unit: / {
         if ($3 != "active") {
             print E "the training tenant is not running (" $3 "). It runs in tenants mode; on the host:  sudo systemctl start training-tenant.service" R
@@ -134,14 +145,15 @@ show() {
             step = part[1] + 0; total = part[2] + 0
             # the bar is drawn just before the step it belongs to is counted: 1099 on the line of step 1100
             if ((step + 1) % 100 == 0) step++
-            printf "  step %5d / %d  %s %3d%%   %sloss %s%s   %5s steps/s   data wait %s s\n", step, total, bar(step / total), int(100 * step / total), B, loss, R, rate, (w == "" ? "?" : w)
+            printf "  step %5d / %d  %s %3d%%   %sloss %s%s   %5s steps/s   data wait %s s%s", step, total, bar(step / total), int(100 * step / total), B, loss, R, rate, (w == "" ? "?" : w), NL
         } else {
-            printf "  step %s   %sloss %s%s   %5s steps/s   data wait %s s\n", field($0, "step"), B, loss, R, rate, (w == "" ? "?" : w)
+            printf "  step %s   %sloss %s%s   %5s steps/s   data wait %s s%s", field($0, "step"), B, loss, R, rate, (w == "" ? "?" : w), NL
         }
         fflush(); next
     }
     /End of training/ { next }
     { print; fflush() }
+    END { if (left) exit 99 }
     '
 }
 
@@ -151,6 +163,8 @@ if [[ $where == ssh ]]; then on=" on ${FURY_SSH#*@}"; else on=''; fi
 # both sides of the pipe: the follower's status, and the formatter's
 ends=(0 0)
 stream | show || ends=("${PIPESTATUS[@]}")
+# 99: the formatter saw the far side say that Ctrl-C ended the follower
+if [[ ${ends[1]} -eq 99 ]]; then printf '\r\n'; exit 0; fi
 [[ ${ends[1]} -eq 0 ]] || die "the formatter (awk) ended with status ${ends[1]} (above) - the lines as they are:  $0 --raw"
 # 130: Ctrl-C reached the far side's journalctl, which is the way out
 case ${ends[0]} in
