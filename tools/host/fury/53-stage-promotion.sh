@@ -14,6 +14,7 @@
 #   ./53-stage-promotion.sh [staging-dir]        default /data/models/import-dev, holding eval-360/ (the chunk files and
 #                                                paired-report.md), teacher-ckpt/ and flywheel-ladder-160/
 #   ./53-stage-promotion.sh [staging-dir] force  replace evaluation records that are already there
+#                                                ("force" is recognised in any position, also on its own)
 #
 # Then, from a laptop:  tools/hub/start-promotion-run.sh act-v2-ft160 0.25 360   (incumbent upstream-act-teacher)
 # Refuses to run while a training or an evaluation is in progress: a live run writes the same record names.
@@ -25,8 +26,10 @@ here=$(dirname "$(readlink -f "$0")")
 mkdir -p "$here/log"
 exec > >(tee -a "$here/log/$(basename "$0" .sh).log") 2>&1
 
-stage=${1:-/data/models/import-dev}
-force=no; [[ ${2:-} == force ]] && force=yes
+stage=/data/models/import-dev; force=no
+for a in "$@"; do
+    if [[ $a == force ]]; then force=yes; else stage=$a; fi
+done
 rt=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837
 car=quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b
 envf=/etc/flywheel-runner/env
