@@ -5343,3 +5343,28 @@ pins must own a tag that no later run will move; a moving tag is a convenience, 
 sudo, lost the refusal message with the terminal - both fixed; 28 other host scripts share the second pattern
 (inbox). zsh expands `$VAR:a...` as a path modifier - braces, or a script file, for anything with a colon after a
 variable. `oc run --rm` trips the local guard's recursive-delete pattern - create, read the log, delete by name.
+
+## D159 — The sim's camera streams reach the browser through the hub's router, over https
+
+**Date:** 2026-09-20. **Status:** built; needs one privileged step on the host (`tools/host/fury/15-camera-port.sh open`).
+**Supersedes, on this hub, the viewer-side half of D124.**
+
+**Problem.** The flywheel dashboard made the viewer's browser fetch the two MJPEG streams straight from the camera
+bridge next to the sim (`http://<CAMERA_HOST>:8081`, D124). That design came from a dashboard that was itself served
+over plain http on a NodePort. On this hub the dashboard is opened through its https Route, and a browser does not
+load an http stream into an https page: the panels stayed at "Waiting for sim…" with the bridge up and answering
+(checked from the host and from a laptop). The `sim-cameras` Route that already existed pointed at the in-cluster
+sim Deployment, which has zero replicas here - 503.
+
+**Decision.** The streams go through the router like everything else: Service `sim-cameras-host` without a selector,
+an EndpointSlice naming the host's bridge (`10.20.0.1:8081`), the existing https Route `sim-cameras` in front, and
+the dashboard takes the streams' base URL from `CAMERA_URL` (falling back to `http://CAMERA_HOST:8081`, so the
+development arrangement is unchanged). One origin scheme for the whole demo, nothing to reach on the host from a
+viewer's laptop, and it keeps working when the only path to the machine is the apps domain (Phase 8b). Cost: the
+hub has to be allowed to open connections to the host on that one port - guests are refused by default
+(`libvirt-to-host`, 06-network.sh). `15-camera-port.sh` adds `8081/tcp` to that policy, runtime and permanent,
+without a reload (a reload drops libvirt's runtime zone binding under the running hub VM - the same care as the
+metrics port).
+
+**Stop-gap that worked meanwhile:** the dashboard's plain-http NodePort (`:30801`), where the http streams are not
+mixed content.
