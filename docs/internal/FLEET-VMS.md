@@ -25,7 +25,7 @@ verification on every device. No sim yet. **The base image is RHEL image mode (b
 | enrolment config, made on the laptop | `tools/hub/fleet-enrol-config.sh [days]` |
 | approval | `tools/hub/fleet-approve.sh [--watch \| --dry-run]` |
 | fleet view, decommission, stale requests | `tools/hub/fleet-status.sh [decommission <NN>… \| decommission all --yes \| delete <NN>… \| drop-pending [<name>…]]` |
-| the robots' Fleet, **not live** | `gitops/rhem/fleet-robots.yaml.draft` |
+| the robots' Fleet, live since 2026-09-20 | `gitops/rhem/fleet-robots.yaml` |
 
 ## 1. Golden image → copy-on-write clones
 

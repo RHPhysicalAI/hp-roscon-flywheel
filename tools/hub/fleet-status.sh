@@ -75,7 +75,7 @@ if [[ $verb == table ]]; then
         | ([$d[] | select((.status.summary.status // "Unknown") | . == "Unknown" or . == "PoweredOff")] | length) as $off
         | "\($d | length) devices in fleet=robots: \(($d | length) - $off) reporting, \($off) not reporting (a shut-off VM - still enrolled, back when it is started), \([$d[] | select(.status.applicationsSummary.status == "Healthy")] | length) with healthy applications, canary: \([$d[] | select(.metadata.labels.role == "canary") | .metadata.labels.alias] | join(",") | if . == "" then "NONE - the next fleet-approve.sh pass appoints one" else . end)"' <<<"$devs"
     "$fc" get fleet/robots -o json 2>/dev/null | jq -r '"Fleet robots: \([.status.conditions[]? | "\(.type)=\(.status)"] | join(" "))"' ||
-        echo "Fleet robots does not exist on the hub yet (gitops/rhem/fleet-robots.yaml.draft is not live)"
+        echo "Fleet robots does not exist on the hub yet (gitops/rhem/fleet-robots.yaml has not synced)"
     exit 0
 fi
 

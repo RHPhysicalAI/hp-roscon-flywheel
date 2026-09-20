@@ -2,7 +2,7 @@
 # This project was developed with assistance from AI tools.
 #
 # Approve the enrolment requests that come from fleet VMs - and only those - with the labels the robots' Fleet
-# reads (gitops/rhem/fleet-robots.yaml.draft). From a laptop on the tailnet, logged in with flightctl.
+# reads (gitops/rhem/fleet-robots.yaml). From a laptop on the tailnet, logged in with flightctl.
 #
 #   tools/hub/fleet-approve.sh              one pass over the pending requests
 #   tools/hub/fleet-approve.sh --watch      keep going every 10 s until Ctrl-C (while 81-fleet-scale.sh brings VMs up)
