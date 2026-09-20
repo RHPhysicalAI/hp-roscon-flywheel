@@ -5420,3 +5420,39 @@ exporter already prove on this host (`2b805c3`); `64-assistant-expose.sh` only l
 forwarder. Cost: the API is no longer loopback-only by construction - what keeps the uplink out is the address it
 binds and the firewall, as for the other two. Operator, same day: **no chat panel** - the tenant is shown doing
 coding in a developer workspace, which is enough; the Service's only clients are workspaces.
+
+## D162 — Act 2's coding tenant is shown doing coding: a Dev Spaces workspace whose agent uses the model on the slice
+
+**Date:** 2026-09-20. **Status:** working end to end, walked through by the operator; polish items below.
+
+**Decision (operator).** The large-model tenant is not shown as a chat box. It is shown doing the work it is for: a
+coding agent in a developer workspace closes a failing test in this repository, with the model served from MIG slice
+`0:0` of the same machine. The Red Hat way to show that is **OpenShift Dev Spaces** - the workspace is the product,
+the assistant is brought along and pointed at a privately served OpenAI-compatible endpoint, which is also what Dev
+Spaces 3.30 documents (its "AI provider" feature, Technology Preview, uses a terminal coding agent as the worked
+example). No chat panel is built.
+
+**What was checked before building.** A spike from a laptop first: the same agent against the slice (vLLM 0.24,
+`qwen3_coder` tool parser, streaming, 131k context) finished a real multi-file task in a scratch clone in 166 s -
+40+ tool calls, none malformed, recovered by itself from a regression it introduced, 349 tests green when re-run
+independently. That retired the one risk that could not be engineered around (tool-call parsing between this
+server and this client).
+
+**What runs.** Dev Spaces 3.30.1 on the arm64 hub through GitOps (`argocd/devspaces-app.yaml`,
+`gitops/devspaces/checluster.yaml`): both operators installed in under a minute, every operator image has an arm64
+build, the gateway needed no patch; workspaces never idle, the extension registry is the embedded one, nothing is
+fetched from outside. The workspace image (`src/dev-workspace`, built and signed by the hub's pipeline through
+`tools/hub/build-dev-workspace.sh`) is UBI 9 Python with the agent and its search tool baked in by pinned,
+checksum-verified release, its offline switches on, its state under `/tmp` for an arbitrary uid, the evaluation
+dashboard's test dependencies installed, and a permission list: edit files, run pytest and a few read-only
+commands, nothing else, no web. The model is `http://assistant.flywheel.svc:8000/v1` (D161). `devfile.yaml` pins
+the image and carries `run-tests`, `start-agent`, `reset-demo`. The scenario is branch **`demo/coding-task`**:
+`fury` plus one failing test file (seven tests for "longest failure streak" - how long a policy was stuck failing
+before it recovered), `DEMO-TASK.md` (the task as the agent reads it) and `DEMO-RUNBOOK.md` (the presenter's
+notes). The prompt on stage is one line: *Read DEMO-TASK.md and do what it says.* The operator ran it in the
+workspace: all tests passing.
+
+**Still to do.** Time the task on the hub and note terminal quirks in the runbook; pre-pull the image and the
+editor for a cold node; an in-cluster git remote for the no-internet mode (Phase 8b) - a workspace start clones
+from GitHub today; the link from the demo's landing page; the agent binary and its search tool are third-party
+dependencies whose terms are the operator's to vet.

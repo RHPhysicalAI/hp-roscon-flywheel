@@ -360,6 +360,8 @@ gated on, and live episodes from the loop on this machine.
 
 ### Phase 6 — Tenant T1: large-model inference on RHAIIS
 
+> **Shown doing coding 2026-09-20 (D161, D162):** reachable in-cluster as `assistant.flywheel.svc:8000` (no Route); OpenShift Dev Spaces 3.30.1 on the hub; a workspace whose coding agent closes a failing test on branch `demo/coding-task` - walked through by the operator, all tests passing. Open: timing on the hub, pre-pull, in-cluster git for Phase 8b, the isolation beat, shred the pull secret.
+>
 > **Measured on the slice 2026-09-20 (D160): 245.7 tokens/s decode, 0.132 s to first token, ready in under three minutes after `fury-switch.sh tenants`.** Open: reaching it from the booth, the isolation beat.
 >
 > **Status 2026-09-19 (D154, D156).** The model serves on this GPU with tool calling (about 140 tokens/s single stream, MIG off, beside the flywheel). The host service for tenants mode is built and not yet run (`63-assistant-install.sh`, `flywheel/llm-assistant.container`, started by `fury-mode tenants` on slice `0:0`). Still to do: the run on the slice, exposure beyond loopback, the isolation test (step 4).
