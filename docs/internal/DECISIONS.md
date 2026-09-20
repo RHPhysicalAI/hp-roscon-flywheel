@@ -5661,3 +5661,28 @@ renderer). Not before the number is in.
 recording is a fallback for the network-dependent promotion, not a required part. Two runbooks replace the act
 structure: *setup* (a fresh RHEL install to tenants running) and *show* (what to present, what to say, how to
 reset each piece). FURY-PLAN's phase text still speaks of two acts and is reworded when those runbooks are written.
+
+## D167 — Tenant numbers beside GPU numbers: each slice is shown with what its tenant is doing
+
+**Date:** 2026-09-20. **Status:** built, installed, verified end to end (`8dc87a3`).
+
+The GPU tenants dashboard showed four slices being busy; "the training slice is actually learning" was visible only
+in a terminal. Now each tenant has a headline beside its GPU panels, and the dashboard names each slice by its
+tenant. A small exporter on the host (`75-tenant-metrics-install.sh`, `10.20.0.1:9401`; unprivileged, read-only
+root, no capabilities, no GPU, not owned by `fury-mode`) publishes the training tenant's loss, step, steps per
+second, update and data-wait seconds and round - read from the tenant's own round log and ledger, mounted read-only,
+never the journal - and the rendering tenant's frames per second and robots live from its status page. The step
+comes from the progress bar, because the trainer abbreviates `step:` above 999. The hub scrapes it like the GPU
+exporter (a static target, no Service), and scrapes the assistant's own vLLM metrics on its existing port through
+a keep-list of four series - configuration only. The loss curve is a sawtooth, one line per round, titled
+"Training tenant - loss (round N)": these rounds are real fine-tunes, nothing from them is promoted, and nothing on
+the page calls them the governed run. The slice names are a static map of GPU instance ids (1, 11, 12, 13), which
+follow from the fixed MIG layout; because a changed layout would shift ids and put a wrong name on a slide rather
+than blank a panel, the installer's `slices` verb prints instance id, MIG device, profile, the tenant on it and the
+dashboard's name for it, row by row - a pre-demo check. `tools/hub/training-watch.sh` follows the training output
+in a terminal for a projector (step and bar, loss, steps per second, data wait; control sequences stripped;
+`--raw` for the untouched lines). First readings through the hub: round 28 ending at loss 0.061, 8-9 steps a
+second with three other tenants working, renderer 15 of 15 frames a second with 13 robots live. An independent
+review found nothing that had to be fixed before it ran; its four smaller findings (a slow client holding the only
+thread, the mount exposing the path where a model-hub token would live, raw journal bytes reaching a projected
+terminal, the id map) were fixed first.
