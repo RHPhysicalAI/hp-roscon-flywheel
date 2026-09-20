@@ -118,6 +118,10 @@ spec:
               value: "30"
             - name: TRAJECTORIES
               value: /trajectories/trajectories.npz
+            # Only the green cube moves between episodes; the other two stay where the policy has always seen
+            # them (the collection scene). Read by the image's sim_reset.py.
+            - name: RANDOMIZE_ONLY
+              value: cube_medium
             # The image's user is root with HOME=/root; under restricted-v2 the uid is arbitrary and only the
             # two emptyDirs are writable: Gazebo's ~/.gz and the ROS logs go to the first, the entrypoint's
             # files and the generated world to /tmp.
