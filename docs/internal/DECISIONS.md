@@ -5493,6 +5493,18 @@ host with its 64k-page kernel. OpenShift Virtualization was looked at for the VM
 evidence: the operator is offered for arm64, but the hub is itself a VM and its node has no `/dev/kvm` -
 guests there would run under software emulation.
 
+**Addendum, same day - what one slice renders, measured** (`tools/host/fury/25-mjwarp-batch.sh`, slice `0:3`, the real
+scene, two 640x480 cameras per robot, shadows on, every world with its own arm motion and cube placement, RGB
+copied back): **about 228 camera pairs a second, whatever the batch size** - 195 with one world per call, 221 with
+4, 226 with 8, 227 with 16, 228 with 32. The renderer is compute bound at about 4.3 ms per world; batching buys
+15 %, not a multiple. That is **7 robots at 30 fps from one 1g.31gb slice**, 15 at 15 fps, and the slice's memory
+is almost untouched (477 MiB of 31 GiB at 32 worlds; read-back 75 MB per batch in 4.6 ms). So the fleet's size is
+set by render rate, resolution and how many slices render, not by memory: the policy looks at 480x480 and
+decides about once every 1.7 s, so 480x480 at 15 fps serves about 20 robots from one slice, and a second slice
+doubles whatever is chosen. The earlier geometry check (rootless, CPU device): the renderer draws the same state
+as Gazebo to 0.09 px on cube centroids and 0.99 IoU on the arm, with the two corrections of the design plan
+(field of view, wrist-roll offset) both confirmed necessary.
+
 **Staging, each stage showable on its own:** (A) the micro-VM factory, enrolment and approval tooling, the robots'
 Fleet - RHEM at scale, no sim yet; (B) world pods + the rendering tenant + the wall, the arms driven by recorded
 motion; (C) the policy on each device closes the loop with its world.
