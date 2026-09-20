@@ -5456,3 +5456,33 @@ workspace: all tests passing.
 editor for a cold node; an in-cluster git remote for the no-internet mode (Phase 8b) - a workspace start clones
 from GitHub today; the link from the demo's landing page; the agent binary and its search tool are third-party
 dependencies whose terms are the operator's to vet.
+
+## D163 — The fleet tenant: micro-VM devices under RHEM, robots' worlds as pods, one slice rendering every camera
+
+**Date:** 2026-09-20. **Status:** decided with the operator; nothing built yet. Builds on D142's addendum and D143
+(MIG on, one slice is the rendering tenant, physics on CPU, a showcase and not a second flywheel).
+
+**What the tenant is for (operator, restated):** show a fleet that is **scaled, running, and managed by RHEM in
+correct ways**, with CUDA visibly at work. It is not a flywheel, and how well the existing policy does the task on
+the ray-traced pixels does not matter. The five-seed zero-shot measurement D143's second addendum left open is
+therefore no longer a gate, and look tuning and a separate evaluation rig are dropped
+(`docs/internal/CUDA-RENDERER-PLAN.md` keeps its findings; its sections on tuning and the rig are not the plan).
+
+**Shape.**
+- **Devices are micro-VMs**, because a RHEM device is an operating system with an agent on it, and a pod is not:
+  clones of one prepared RHEL base image on copy-on-write overlays (1-2 vCPU, about 2 GiB, boot in about half a
+  minute), each the robot's *computer* - flightctl agent, the policy as a Fleet-delivered workload, labels, staged
+  rollout (canary, then batches), signature verification on every device. One command scales the fleet up or down.
+  The policy image is in the base image's store or comes from the hub's registry, never 4 GB per device from
+  outside.
+- **The robots' worlds are pods on the hub:** physics-only sims (no camera sensors), one per robot, scaled with
+  `oc scale`, each in its own network namespace (no `/run_policy` collision, D132). The world is not the device.
+- **One MIG slice is the rendering tenant:** MuJoCo-Warp ray-traces every robot's two cameras in a batch; frames go
+  to the robots' computers and to a "fleet wall" page that shows every robot's view.
+- Expected scale: 16-24 robots on this machine beside the hub (CPU bound). flightctl's device simulator stays a
+  possibility for a bigger number in the fleet view, clearly labelled, **not** pursued until the real fleet's
+  ceiling is known.
+
+**Staging, each stage showable on its own:** (A) the micro-VM factory, enrolment and approval tooling, the robots'
+Fleet - RHEM at scale, no sim yet; (B) world pods + the rendering tenant + the wall, the arms driven by recorded
+motion; (C) the policy on each device closes the loop with its world.

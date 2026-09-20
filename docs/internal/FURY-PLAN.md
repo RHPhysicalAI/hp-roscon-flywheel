@@ -377,6 +377,8 @@ Next, in order (needs the flywheel paused for about an hour; ledger L9): install
 
 ### Phase 7 — Fleet scaling on the box
 
+> **Shape decided 2026-09-20 (D163):** micro-VM devices under RHEM (clones of one base image, the robot's computer: agent + policy), the robots' worlds as physics-only pods on the hub, one MIG slice ray-tracing every camera, a fleet wall. Purpose: a fleet that is scaled, running and correctly managed, with CUDA visibly at work - not a flywheel. Stages: A the VM factory + enrolment + Fleet; B worlds + renderer + wall; C the policy closes the loop. Device simulator parked, not ruled out. The note below is the earlier state.
+>
 > **Shape not decided (2026-09-19).** The operator's direction: the fleet is where RHEM management is shown in act 2, as a CUDA-based scaled fleet on one of the tenant slices, kept separate from the assistant (which is why the assistant is a plain host service, D156). Candidates: the CPU-policy VMs below; a fleet whose cameras are rendered with CUDA on one slice (Warp / MuJoCo-Warp ran in a 1g slice — unknowns 11 and 12; the policy's gap to those pixels is open); a simulated large fleet in the RHEM UI. Underneath all of them: every policy server offers the same `/run_policy` name (D132), so more than one served policy on one ROS graph needs namespacing or separate routers. To decide before building; record as a D-entry. Still needed from a human either way: the RHEL 10 aarch64 guest image.
 
 - RHEL 10 aarch64 KVM guest image (human downloads from access.redhat.com) + cloud-init; N=4–6 VMs, 6 vCPU / 12 GiB each on `fury-net` (`10.20.0.21+`), registered via activation key.
