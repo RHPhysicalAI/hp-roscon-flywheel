@@ -343,8 +343,11 @@ uplink until the mirror exists; nothing known-bad for aarch64 or a 64k host was 
 **As run on 2026-09-20 (D163 addendum):** steps 1-2, 4-9 and 11 for a fleet of **twelve** - the hub's cpu carries
 twelve worlds, and the fleet matches the wall. Measured: OS image 34 s + disk 65 s; the canary Healthy in under
 ten minutes from approval; all twelve Healthy about 25 minutes after the first clone booted, approved in batches of
-four. **Not run yet: steps 3, 10 and 10b** (parallel guest shutdown, the first-VM checks and benchmark, the
-two-VM identity check) - 10b is the one that matters before the fleet is called done.
+four. Step 10b's question - does every clone have its own identity - was answered from outside, with nobody logged
+in to a clone: twelve distinct ssh host keys (`ssh-keyscan` from the host), twelve distinct device identities on
+the hub (a device's name is the hash of its agent key), twelve distinct product UUIDs and boot ids; the machine-id
+is not reported, but the image build refuses to finish unless it is uninitialised. **Not run yet: steps 3 and 10**
+(parallel guest shutdown; the first-VM checks and the CPU benchmark, which need the debug key).
 **How it is shown:** the demo stays in tenants mode with the whole fleet running; nothing on stage waits for a mode
 switch, a build or a download. The fleet's beats are steps 12-13: stop some robots, start them again, walk a
 rollout through the batches.
