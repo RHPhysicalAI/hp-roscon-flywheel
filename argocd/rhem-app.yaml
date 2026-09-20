@@ -1,9 +1,15 @@
 # This project was developed with assistance from AI tools.
 #
 # Bootstrap once: oc apply -f argocd/rhem-app.yaml
-# (apply argocd/repo-flightctl-charts.yaml first — the OCI registry Secret)
 #
-# RHEM hub (flightctl 1.3.0) on the SNO, under GitOps (D024). Chart kubeVersion is >= 1.32,
+# Red Hat Edge Manager 1.3.0 from Red Hat's own chart, `redhat-rhem` on charts.openshift.io (D168). Its templates
+# are the same as the project chart's; what differs is every image (registry.redhat.io) and the chart's NAME - and
+# the UI takes its branding from that name (IS_RHEM is true only for a chart called redhat-rhem): installed from
+# the project chart the page reads "Flight Control", from this one "Red Hat Edge Manager". Release name and values
+# are unchanged from the project chart, so the same objects are updated in place.
+# argocd/repo-flightctl-charts.yaml (the project chart's OCI registry) is only needed to go back.
+#
+# RHEM hub on the SNO, under GitOps (D024). Chart kubeVersion is >= 1.32,
 # so the SNO must be on OCP 4.19+ before this app can sync; no helm.kubeVersion override.
 #
 # Why the values below are explicit rather than the chart's "auto" defaults: Argo CD renders
@@ -28,8 +34,8 @@ spec:
     server: https://kubernetes.default.svc
   project: default
   source:
-    repoURL: quay.io/flightctl/charts
-    chart: flightctl
+    repoURL: https://charts.openshift.io
+    chart: redhat-rhem
     targetRevision: 1.3.0
     helm:
       releaseName: flightctl
@@ -54,10 +60,7 @@ spec:
               tokenUrl: https://oauth-openshift.apps.sno-flywheel.local/oauth/token
         ui:
           enabled: true
-          # The upstream quay UI image for 1.3.0 is amd64-only; the product image is multi-arch.
-          image:
-            image: registry.redhat.io/rhem/flightctl-ui-rhel9
-            tag: "1.3.0"
+          # no image override: the product chart's UI image is multi-arch (the project chart's was amd64-only)
           auth:
             insecureSkipTlsVerify: true
         # The chart's setup jobs run `oc` from quay.io/openshift/origin-cli, which has no arm64 build
