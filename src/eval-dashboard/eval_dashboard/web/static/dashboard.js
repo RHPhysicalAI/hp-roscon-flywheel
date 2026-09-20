@@ -1,3 +1,4 @@
+// This project was developed with assistance from AI tools.
 const SERIES_VARS = ['--series-1', '--series-2', '--series-3'];
 const REFRESH_MS = 5000;
 const POLICY_LABELS = ['Policy A', 'Policy B', 'Policy C'];
@@ -65,7 +66,30 @@ function finetuneEpisodesLabel(datasetSize) {
   return String(datasetSize);
 }
 
-function pct(x) { return x == null ? '--' : (x * 100).toFixed(0) + '%'; }
+function pct(x) { return x == null ? '--' : (x * 100).toFixed(1) + ' %'; }
+
+function signedPts(fraction) {
+  if (fraction == null) return '--';
+  const pts = fraction * 100;
+  return `${pts > 0 ? '+' : ''}${pts.toFixed(1)} pts`;
+}
+
+function notScoredTotal(s) {
+  return Object.values((s && s.not_scored) || {}).reduce((sum, n) => sum + (n || 0), 0);
+}
+
+// Rows the evidence table can list: a not-scored record is still a record.
+function recordsHeld(s) {
+  return ((s && s.episode_count) || 0) + notScoredTotal(s);
+}
+
+// Mirrors aggregate.not_scored_reason so a row says why it is outside the rate.
+function notScoredReason(r) {
+  if (r.task_success) return null;
+  if (r.cubes_placed == null) return 'sensor_unavailable';
+  if (r.rollout_status && r.rollout_status !== 'ok') return 'rollout_incomplete';
+  return null;
+}
 
 function ciSentence(s) {
   const [lo, hi] = s.success_ci || [null, null];
@@ -85,12 +109,19 @@ function fmtDuration(s) { return s == null ? '--' : `${Number(s).toFixed(1)}s`; 
 function originLabel(origin) {
   if (!origin) return '';
   if (origin.startsWith('files:')) return origin.slice(6);
+  if (origin.startsWith('eval:')) return 'run ' + origin.slice(5);
   if (origin.startsWith('live')) return 'Kafka + MinIO';
   return origin;
 }
 
 async function fetchStats() {
   const r = await fetch('/api/stats');
+  return r.json();
+}
+
+async function fetchPaired() {
+  const r = await fetch('/api/paired');
+  if (!r.ok) throw new Error(`paired request failed (${r.status})`);
   return r.json();
 }
 
@@ -102,14 +133,71 @@ async function fetchEpisodes(versions, offset = 0) {
   return response.json();
 }
 
+// A header link with no URL is hidden rather than left pointing nowhere.
+function setHeaderLink(id, url, label) {
+  const link = document.getElementById(id);
+  link.hidden = !url;
+  if (!url) {
+    link.removeAttribute('href');
+    return;
+  }
+  link.href = url;
+  if (label != null) link.textContent = label;
+}
+
 function renderHeader(stats) {
-  const isLive = stats.source_mode === 'live';
-  document.getElementById('source-label').textContent = isLive ? 'Live via Tailscale' : 'Saved files';
-  document.getElementById('source-chip').classList.toggle('live', isLive);
+  document.getElementById('source-label').textContent = stats.source_label || '--';
+  document.getElementById('source-chip').classList.toggle('live', stats.source_mode === 'live');
   document.getElementById('loaded-chip').textContent = 'Loaded ' + new Date().toLocaleTimeString();
-  const back = document.getElementById('backlink');
-  back.href = stats.live_dashboard_url;
+  setHeaderLink('backlink', stats.live_dashboard_url);
+  const otherView = stats.other_view_url && stats.other_view_label;
+  setHeaderLink('other-view-link', otherView ? stats.other_view_url : '', stats.other_view_label);
   document.getElementById('origin-label').textContent = originLabel(stats.snapshot.origin);
+}
+
+function seedListMarkup(title, seeds) {
+  const list = seeds || [];
+  return `
+    <details class="seed-list">
+      <summary>${esc(title)} (${list.length})</summary>
+      <div class="seed-list-body">${list.length ? list.map(s => `<span>${esc(s)}</span>`).join('') : 'none'}</div>
+    </details>`;
+}
+
+function fmtP(p) {
+  if (p == null) return '--';
+  return p === 0 ? 'p < 0.0001' : `p = ${Number(p).toFixed(4)}`;
+}
+
+function renderPaired(paired) {
+  const panel = document.getElementById('paired-panel');
+  if (!paired || !paired.available) {
+    panel.hidden = true;
+    return;
+  }
+  // Every figure here is the pipeline's report as written; nothing is recomputed for display.
+  const verdict = String(paired.verdict || '').toUpperCase();
+  const verdictClass = verdict === 'PASS' ? 'pass' : verdict === 'FAIL' ? 'fail' : 'unknown';
+  const net = paired.net == null ? '--' : `${paired.net > 0 ? '+' : ''}${paired.net}`;
+  const open = new Set([...panel.querySelectorAll('details[open]')].map(d => d.querySelector('summary').textContent));
+  document.getElementById('paired-body').innerHTML = `
+    <div class="paired-head">
+      <span class="badge verdict ${verdictClass}">${esc(verdict || 'no verdict')}</span>
+      <span class="paired-policies"><strong>${esc(paired.candidate ?? '--')}</strong> <span class="vs">candidate vs incumbent</span> <strong>${esc(paired.incumbent ?? '--')}</strong></span>
+    </div>
+    <div class="paired-grid">
+      <div><span>Fixed</span><strong class="up">${esc(paired.fixed ?? '--')}</strong><span>incumbent failed, candidate succeeded</span></div>
+      <div><span>Broken</span><strong class="down">${esc(paired.broken ?? '--')}</strong><span>incumbent succeeded, candidate failed</span></div>
+      <div><span>Net</span><strong>${esc(net)}</strong><span>${esc(fmtP(paired.sign_test_p))} (sign test)</span></div>
+      <div><span>Success rate</span><strong>${pct(paired.candidate_success_rate)} <span class="vs">vs</span> ${pct(paired.incumbent_success_rate)}</strong><span>${esc(signedPts(paired.delta))}</span></div>
+    </div>
+    <p class="paired-rule">${esc(paired.rule ?? '')}</p>
+    <p class="paired-meta">${esc(paired.n_paired ?? '--')} paired episodes &middot; run ${esc(paired.run_id ?? '--')}</p>
+    ${seedListMarkup('Fixed seeds', paired.fixed_seeds)}
+    ${seedListMarkup('Broken seeds', paired.broken_seeds)}`;
+  // The panel is rebuilt on every refresh; keep whichever seed lists the viewer had open.
+  panel.querySelectorAll('details').forEach(d => { d.open = open.has(d.querySelector('summary').textContent); });
+  panel.hidden = false;
 }
 
 function renderPicker(elId, allVersions, versionsObj, state) {
@@ -202,6 +290,11 @@ function renderCards(containerId, versionsObj, versionList) {
     const color = slot >= 0 ? seriesColor(slot) : 'var(--text-muted)';
     const isBaseline = v === baselineKey;
     const role = roleFor(s, isBaseline);
+    const unscored = notScoredTotal(s);
+    const notScoredLine = unscored === 0 ? '' : `
+        <div class="not-scored" title="Sensor unavailable: ${(s.not_scored || {}).sensor_unavailable || 0} · rollout incomplete: ${(s.not_scored || {}).rollout_incomplete || 0}. Not a verdict on the policy, so outside the rate.">
+          ${unscored === 1 ? '1 episode not scored' : `${unscored} episodes not scored`}
+        </div>`;
 
     if (s.success_rate_incomplete) {
       return `
@@ -216,16 +309,15 @@ function renderCards(containerId, versionsObj, versionList) {
           <p style="color:var(--text-muted);font-size:11px;margin:4px 0 0 20px">
             Curated records only. Rejected episodes are required for success rate &mdash;
             a curated-only population is ~100% success by construction, not a real rate.
-          </p>
+          </p>${notScoredLine}
         </article>`;
     }
 
     let delta = '';
     if (baselineKey && !isBaseline && baselineRate != null && s.success_rate != null) {
-      const pts = (s.success_rate - baselineRate) * 100;
-      const cls = pts > 0 ? 'up' : pts < 0 ? 'down' : 'same';
-      const sign = pts > 0 ? '+' : '';
-      delta = `<div class="delta ${cls}">${sign}${pts.toFixed(0)} pts observed vs baseline</div>`;
+      const diff = s.success_rate - baselineRate;
+      const cls = diff > 0 ? 'up' : diff < 0 ? 'down' : 'same';
+      delta = `<div class="delta ${cls}">${signedPts(diff)} observed vs baseline</div>`;
     } else if (isBaseline) {
       delta = `<div class="delta same">reference policy</div>`;
     }
@@ -246,7 +338,7 @@ function renderCards(containerId, versionsObj, versionList) {
           ${delta}
         </div>
         <div class="bar-track"><div class="bar-fill" style="width:${s.success_rate != null ? s.success_rate * 100 : 0}%"></div></div>
-        <div class="ci-text">${esc(ciSentence(s))}${exactly100}</div>
+        <div class="ci-text">${esc(ciSentence(s))}${exactly100}</div>${notScoredLine}
         <div class="mini-grid">
           <div title="Average of each episode’s peak cubes on the tray, including failures">
             <span>Mean cubes on tray</span>
@@ -478,11 +570,19 @@ function renderIntegrity(snapshot) {
     </div>`;
 }
 
+function resultCellMarkup(r) {
+  const reason = notScoredReason(r);
+  if (reason) return `<td class="not-scored-cell" title="${esc(reason)}: outside the success rate">– Not scored</td>`;
+  return `<td class="${r.task_success ? 'success' : 'failed'}">${r.task_success ? '✓ Success' : '× Failed'}</td>`;
+}
+
 function evidenceRowsMarkup(rows) {
+  // Evaluation ids share the policy name as their prefix; the seed is what tells rows apart.
+  const rowLabel = r => (r.origin === 'eval' && r.seed != null ? `seed ${r.seed}` : (r.episode_id || '').slice(0, 8));
   return rows.map(r => `
     <tr>
-      <td>${esc((r.episode_id || '').slice(0, 8))}</td>
-      <td class="${r.task_success ? 'success' : 'failed'}">${r.task_success ? '✓ Success' : '× Failed'}</td>
+      <td title="${esc(r.episode_id || '')}">${esc(rowLabel(r))}</td>
+      ${resultCellMarkup(r)}
       <td>${r.cubes_placed != null ? r.cubes_placed + ' / 3' : '--'}</td>
       <td title="${r.task_success ? '' : 'Excluded from success-only mean'}">${r.task_success ? fmtNum(r.avg_smoothness) : '--'}</td>
       <td>${r.rollout_steps != null ? r.rollout_steps : '--'}</td>
@@ -497,7 +597,7 @@ function groupMetaMarkup(version, versionsObj) {
   const s = versionsObj[version] || {};
   const isBaseline = findBaselineKey(versionsObj) === version;
   const role = roleFor(s, isBaseline);
-  const n = s.episode_count || 0;
+  const n = recordsHeld(s);
   return `<span class="badge ${role.badge}">${esc(role.label)}</span><span class="evidence-group-count">${esc(role.meta)} · ${n} episode(s)</span>`;
 }
 
@@ -614,7 +714,7 @@ function renderEvidenceGroups(versionsObj) {
         noteEl: el.querySelector('.evidence-group-note'),
         metaEl: el.querySelector('.evidence-group-meta'),
         offset: 0, loaded: 0, loading: false, loadError: false, opened: false,
-        totalEligible: (versionsObj[version] || {}).episode_count || 0,
+        totalEligible: recordsHeld(versionsObj[version]),
       };
       group.exhausted = group.totalEligible === 0;
       updateGroupNote(group);
@@ -626,7 +726,7 @@ function renderEvidenceGroups(versionsObj) {
       });
       evidenceGroups.set(version, group);
     } else {
-      group.totalEligible = (versionsObj[version] || {}).episode_count || 0;
+      group.totalEligible = recordsHeld(versionsObj[version]);
       group.metaEl.innerHTML = groupMetaMarkup(version, versionsObj);
       if (group.loaded >= group.totalEligible) group.exhausted = true;
       updateGroupNote(group);
@@ -635,7 +735,7 @@ function renderEvidenceGroups(versionsObj) {
     prevEl = group.el;
   });
 
-  const totalEligible = orderedVersions.reduce((n, v) => n + ((versionsObj[v] || {}).episode_count || 0), 0);
+  const totalEligible = orderedVersions.reduce((n, v) => n + recordsHeld(versionsObj[v]), 0);
   document.getElementById('evidence-note').textContent =
     `${totalEligible} eligible episode(s) across ${orderedVersions.length} selected polic${orderedVersions.length === 1 ? 'y' : 'ies'} — expand a version below to view its episodes.`;
 }
@@ -661,6 +761,8 @@ function renderViews(stats) {
 
   const allSorted = sortedVersions(snap.versions);
   document.getElementById('empty-state').style.display = allSorted.length === 0 ? 'block' : 'none';
+  document.getElementById('empty-records').hidden = stats.source_mode === 'eval';
+  document.getElementById('empty-eval').hidden = stats.source_mode !== 'eval';
   renderPicker('version-picker', allSorted, snap.versions, selection);
   const shown = activeSelected(selection);
   renderCards('version-cards', snap.versions, shown);
@@ -674,15 +776,20 @@ function renderViews(stats) {
 async function render() {
   const generation = ++renderGeneration;
   try {
-    const stats = await fetchStats();
+    // The paired block is optional: its failure must not blank the rest of the page.
+    const [stats, paired] = await Promise.all([
+      fetchStats(),
+      fetchPaired().catch(err => { console.error('paired result request failed', err); return null; }),
+    ]);
     if (generation !== renderGeneration) return;
     lastStats = stats;
+    renderPaired(paired);
     renderViews(stats);
     renderEvidenceGroups(stats.snapshot.versions);
   } catch (err) {
     if (generation !== renderGeneration) return;
     document.getElementById('status-line').textContent =
-      'Cannot reach dashboard API — container may still be starting after ./run.sh live. Retrying…';
+      'Cannot reach the dashboard API — the service may still be starting. Retrying…';
     console.error('dashboard render failed', err);
   }
 }

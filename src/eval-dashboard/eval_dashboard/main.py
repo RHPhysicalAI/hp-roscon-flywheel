@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 """Entrypoint: wires a configured source to one in-memory population and a
 read-only Flask API/UI.
 
@@ -6,6 +7,9 @@ One view, per `model_version`, fed by whichever source is active:
 - SOURCE_MODE=files -- a directory of episode JSON records (RECORDS_DIR).
 - SOURCE_MODE=live -- Kafka+MinIO curated episodes, merged with the MinIO
   rejected bucket (Kafka never notifies for rejects).
+- SOURCE_MODE=eval -- one promotion run's paired evaluation: the pipeline's
+  report plus both policies' harness records (EVAL_DIR, or the evaluation
+  bucket). No Kafka.
 
 Persists nothing of its own: rebuilt from source on every process start, so
 a restart or a fresh file-directory replay reproduces the same numbers.
@@ -15,23 +19,28 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable
 
+import boto3
 import yaml
 
 from . import aggregate, schema
+from .sources.eval_source import DirEvalReader, EvalSource, S3EvalReader, paired_block
 from .sources.file_source import FileSource
 from .sources.kafka_source import KafkaSource
-from .sources.minio_source import MinioSource
+from .sources.minio_source import MinioSource, uri_in_buckets
 from .web.app import create_app
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("eval_dashboard")
 
 REJECTED_POLL_SECONDS = 30
+DEFAULT_VERSIONS_FILE = "/app/config/versions.yaml"
+VERSIONS_EXAMPLE_NAME = "versions.example.yaml"
 
 
 class Store:
@@ -51,8 +60,13 @@ class Store:
         self.dropped_invalid = 0
         self.duplicate_episode_ids = 0
         self.conflicting_episode_ids = 0
+        self.kafka_skipped_other_bucket = 0
         self.rejected_last_checked: float | None = None
         self._seed_complete = True
+
+    def count_kafka_skip(self) -> None:
+        with self._lock:
+            self.kafka_skipped_other_bucket += 1
 
     def merge(self, records: Iterable[dict]) -> None:
         with self._lock:
@@ -116,11 +130,16 @@ class Store:
             rejected_last_checked = self.rejected_last_checked
             origin = self.origin
             seed_complete = self._seed_complete
+            kafka_skipped = self.kafka_skipped_other_bucket
         stats = aggregate.aggregate(records)
         versions = {}
         for v, s in stats.items():
             ci_low, ci_high = s.success_ci
-            meta = self._version_meta.get(v) or {}
+            # The versions file always wins; a size is read off the name only for a version it omits.
+            if v in self._version_meta:
+                meta = self._version_meta[v] or {}
+            else:
+                meta = {"size": infer_size(v)}
             versions[v] = {
                 "episode_count": s.episode_count,
                 "success_count": s.success_count,
@@ -134,6 +153,7 @@ class Store:
                 "smoothness_hist": s.smoothness_hist,
                 "cube_bins_reconcile": s.cube_bins_reconcile,
                 "success_matches_full_cubes": s.success_matches_full_cubes,
+                "not_scored": s.not_scored,
                 "dataset_size": meta.get("size"),
                 "parent": meta.get("parent"),
             }
@@ -144,6 +164,7 @@ class Store:
             "dropped_invalid": self.dropped_invalid,
             "duplicate_episode_ids": duplicates,
             "conflicting_episode_ids": self.conflicting_episode_ids,
+            "kafka_skipped_other_bucket": kafka_skipped,
             "rejected_last_checked": rejected_last_checked,
             "seed_complete": seed_complete,
             "smoothness_bin_edges": aggregate.SMOOTHNESS_BINS,
@@ -158,7 +179,10 @@ def load_version_meta(path: str) -> dict[str, dict]:
     parent is known. Both shapes coexist in the same file."""
     p = pathlib.Path(path)
     if not p.exists():
-        return {}
+        # An image ships only the example; a deployment mounts the real file.
+        p = p.with_name(VERSIONS_EXAMPLE_NAME)
+        if not p.exists():
+            return {}
     raw = yaml.safe_load(p.read_text()) or {}
     meta: dict[str, dict] = {}
     for version, entry in raw.items():
@@ -167,6 +191,12 @@ def load_version_meta(path: str) -> dict[str, dict]:
         else:
             meta[version] = {"size": entry, "parent": None}
     return meta
+
+
+def infer_size(model_version: str) -> int | None:
+    """Training-set size read off a `-ft<N>` name, for versions the versions file omits."""
+    match = re.search(r"-ft(\d+)", model_version) if isinstance(model_version, str) else None
+    return int(match.group(1)) if match else None
 
 
 def watch_files(store: Store, directory: str, transform=lambda records: records) -> None:
@@ -250,23 +280,117 @@ def run_live(store: Store) -> None:
             topic=os.environ.get("KAFKA_TOPIC", "episode-manifests"),
         )
         for notification in kafka.read():
-            s3_uri = notification.get("s3_uri")
-            if not s3_uri:
-                continue
-            try:
-                record = minio.get_by_uri(s3_uri)
-            except Exception:
-                log.exception("failed to resolve %s from MinIO", s3_uri)
-                continue
-            if record:
-                store.merge(schema.apply_lineage_rules([record]))
+            merge_manifest(store, minio, notification, (curated_bucket, rejected_bucket))
 
     threading.Thread(target=consume_kafka, daemon=True).start()
 
 
+def merge_manifest(store: Store, minio, notification: dict, buckets: Iterable[str]) -> None:
+    """Fetch and merge the episode a Kafka manifest points at, if it sits in a configured bucket."""
+    s3_uri = notification.get("s3_uri") if isinstance(notification, dict) else None
+    if not s3_uri:
+        return
+    # The topic is shared and append-only: a manifest may name a bucket this
+    # instance was never pointed at. Those are counted, not fetched.
+    if not uri_in_buckets(s3_uri, buckets):
+        store.count_kafka_skip()
+        return
+    try:
+        record = minio.get_by_uri(s3_uri)
+    except Exception:
+        log.exception("failed to resolve %s from MinIO", s3_uri)
+        return
+    if record:
+        store.merge(schema.apply_lineage_rules([record]))
+
+
+class PairedResult:
+    """The shown run's paired block, kept beside the store (which holds only that run's records)."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._payload: dict | None = None
+        self.shown: tuple | None = None
+
+    def set(self, shown: tuple, payload: dict) -> None:
+        with self._lock:
+            self.shown = shown
+            self._payload = payload
+
+    def get(self) -> dict | None:
+        with self._lock:
+            return self._payload
+
+
+def build_eval_reader():
+    """A directory reader when EVAL_DIR is set, else the evaluation bucket over S3."""
+    eval_dir = os.environ.get("EVAL_DIR")
+    if eval_dir:
+        return DirEvalReader(eval_dir)
+    absent = [name for name in ("S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY") if not os.environ.get(name)]
+    if absent:
+        raise ValueError(f"SOURCE_MODE=eval needs EVAL_DIR, or S3_ENDPOINT + S3_ACCESS_KEY + S3_SECRET_KEY (unset: {', '.join(absent)})")
+    client = boto3.client(
+        "s3",
+        endpoint_url=os.environ["S3_ENDPOINT"],
+        aws_access_key_id=os.environ["S3_ACCESS_KEY"],
+        aws_secret_access_key=os.environ["S3_SECRET_KEY"],
+    )
+    return S3EvalReader(
+        client,
+        bucket=os.environ.get("EVAL_BUCKET", "episodes-data"),
+        prefix=os.environ.get("EVAL_PREFIX", "eval/"),
+    )
+
+
+def refresh_eval(store: Store, source: EvalSource, paired: PairedResult) -> bool:
+    """Show the pinned or newest run; replaces the store only when what is shown would change."""
+    loaded = source.load()
+    if loaded is None:
+        return False
+    # A run can be listed before all three objects have landed, so a change
+    # in what is missing counts as a change, not only a new run id.
+    shown = (loaded["run_id"], loaded["report"].get("timestamp"), tuple(loaded.get("missing", ())))
+    if shown == paired.shown:
+        return False
+    store.replace(loaded["records"])
+    store.origin = f"eval:{loaded['run_id']}"
+    paired.set(shown, paired_block(loaded))
+    if loaded.get("missing"):
+        log.warning("run %s is incomplete, missing %s", loaded["run_id"], loaded["missing"])
+    log.info("showing run %s: %d episode(s)", loaded["run_id"], len(loaded["records"]))
+    return True
+
+
+def run_eval(store: Store, paired: PairedResult) -> None:
+    source = EvalSource(build_eval_reader(), os.environ.get("EVAL_RUN_ID") or None)
+    interval = float(os.environ.get("EVAL_POLL_SECONDS", "30"))
+
+    def check() -> None:
+        try:
+            refresh_eval(store, source, paired)
+        except Exception:
+            log.exception("evaluation run check failed")
+
+    # A storage outage at start must not keep the page (and the readiness probe) from coming up.
+    check()
+    if paired.shown is None:
+        log.info("no evaluation run found yet")
+    if interval <= 0:
+        return
+
+    def loop() -> None:
+        while True:
+            time.sleep(interval)
+            check()
+
+    threading.Thread(target=loop, daemon=True, name="eval-poll").start()
+
+
 def main() -> None:
-    version_meta = load_version_meta(os.environ.get("VERSIONS_FILE", "config/versions.yaml"))
+    version_meta = load_version_meta(os.environ.get("VERSIONS_FILE", DEFAULT_VERSIONS_FILE))
     store = Store(version_meta)
+    paired = PairedResult()
 
     source_mode = os.environ.get("SOURCE_MODE", "files")
     records_dir = os.environ.get("RECORDS_DIR", "/records")
@@ -281,10 +405,12 @@ def main() -> None:
             watch_files(store, records_dir, transform=schema.apply_lineage_rules)
         else:
             log.info("no episode files at RECORDS_DIR=%s", records_dir)
+    elif source_mode == "eval":
+        run_eval(store, paired)
     else:
-        raise ValueError(f"Unknown SOURCE_MODE={source_mode!r}, expected live|files")
+        raise ValueError(f"Unknown SOURCE_MODE={source_mode!r}, expected live|files|eval")
 
-    app = create_app(store, source_mode)
+    app = create_app(store, source_mode, paired_provider=paired.get if source_mode == "eval" else None)
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))
 
 

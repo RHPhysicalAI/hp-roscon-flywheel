@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 """Read-only Flask app: JSON API + a static comparison UI.
 
 No write endpoints -- this process only ever reads from its configured
@@ -12,8 +13,10 @@ from flask import Flask, jsonify, request, send_from_directory
 
 STATIC_DIR = pathlib.Path(__file__).parent / "static"
 
+SOURCE_LABELS = {"files": "Saved files", "live": "Live", "eval": "Paired evaluation"}
 
-def create_app(store, source_mode: str) -> Flask:
+
+def create_app(store, source_mode: str, paired_provider=None) -> Flask:
     app = Flask(__name__, static_folder=None)
 
     @app.route("/")
@@ -29,10 +32,20 @@ def create_app(store, source_mode: str) -> Flask:
         return jsonify(
             {
                 "source_mode": source_mode,
-                "live_dashboard_url": os.environ.get("LIVE_DASHBOARD_URL", "http://10.0.0.49:30801"),
+                "source_label": os.environ.get("SOURCE_LABEL") or SOURCE_LABELS.get(source_mode, source_mode),
+                "live_dashboard_url": os.environ.get("LIVE_DASHBOARD_URL", ""),
+                "other_view_url": os.environ.get("OTHER_VIEW_URL", ""),
+                "other_view_label": os.environ.get("OTHER_VIEW_LABEL", ""),
                 "snapshot": store.snapshot(),
             }
         )
+
+    @app.route("/api/paired")
+    def api_paired():
+        payload = paired_provider() if paired_provider is not None else None
+        if payload is None:
+            return jsonify({"available": False})
+        return jsonify({**payload, "available": True})
 
     @app.route("/api/episodes")
     def api_episodes():

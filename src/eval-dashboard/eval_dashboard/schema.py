@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 """Normalizes episode/manifest records from any source into one shape.
 
 Every EpisodeSource funnels its raw JSON through `normalize()` before
@@ -9,11 +10,16 @@ record looks like.
 `dataset_path` is present on real records but intentionally unused here.
 The Kafka manifest's reduced field set (sync-agent publishes a subset of
 the full episode JSON) is tolerated -- missing optional fields become None.
+
+The evaluation harness writes one record per policy with its episodes
+inline; `explode_harness_record()` turns that into the raw per-episode
+shape, so those go through `normalize()` like everything else.
 """
 from __future__ import annotations
 
 REQUIRED = ("episode_id", "model_version")
 CUBE_BUCKETS = (0, 1, 2, 3)
+EVAL_PREFIX = "eval-"
 
 # Fields compared when deciding whether two records with the same episode_id
 # are an idempotent re-list or a true conflict.
@@ -58,6 +64,46 @@ def validate_normalized(record: dict) -> str | None:
     return None
 
 
+def _is_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def clean_model_version(label: str) -> str:
+    """Strip the one leading `eval-` the harness puts on a record's label."""
+    if isinstance(label, str) and label.startswith(EVAL_PREFIX):
+        return label[len(EVAL_PREFIX):]
+    return label
+
+
+def explode_harness_record(record: dict) -> list[dict]:
+    """One raw per-episode record, in the shape `normalize()` takes, per scored harness episode."""
+    if not isinstance(record, dict) or not isinstance(record.get("episodes"), list):
+        return []
+    model_version = clean_model_version(record.get("model_version"))
+    if not model_version or not isinstance(model_version, str):
+        return []
+    exploded = []
+    for item in record["episodes"]:
+        if not isinstance(item, dict) or not _is_int(item.get("seed")) or "task_success" not in item:
+            continue
+        seed = item["seed"]
+        exploded.append(
+            {
+                "model_version": model_version,
+                # The policy is part of the id: the store de-duplicates by id across versions.
+                "episode_id": f"{model_version}-seed{seed}",
+                "seed": seed,
+                "origin": "eval",
+                "task_success": item["task_success"],
+                "cubes_placed": item.get("cubes_placed"),
+                "avg_smoothness": item.get("avg_smoothness"),
+                "rollout": {k: item[k] for k in ("steps", "duration_s") if k in item},
+                "timestamp": record.get("timestamp"),
+            }
+        )
+    return exploded
+
+
 def normalize(record: dict) -> dict | None:
     if not isinstance(record, dict) or not record.get("episode_id") or not record.get("model_version"):
         return None
@@ -75,6 +121,9 @@ def normalize(record: dict) -> dict | None:
         if isinstance(cubes, bool) or not isinstance(cubes, int) or cubes not in CUBE_BUCKETS:
             return None
 
+    seed = record.get("seed")
+    rollout = record.get("rollout")
+
     normalized = {
         "episode_id": record["episode_id"],
         "model_version": record["model_version"],
@@ -87,6 +136,9 @@ def normalize(record: dict) -> dict | None:
         "curation_verdict": record.get("curation_verdict"),
         "rollout_steps": (record.get("rollout") or {}).get("steps") if isinstance(record.get("rollout"), dict) else record.get("rollout_steps"),
         "rollout_duration_s": (record.get("rollout") or {}).get("duration_s") if isinstance(record.get("rollout"), dict) else record.get("rollout_duration_s"),
+        "rollout_status": rollout.get("status") if isinstance(rollout, dict) else record.get("rollout_status"),
+        "seed": seed if _is_int(seed) else None,
+        "origin": "eval" if record.get("origin") == "eval" else "live",
     }
     if record.get("raw_model_version"):
         normalized["raw_model_version"] = record["raw_model_version"]

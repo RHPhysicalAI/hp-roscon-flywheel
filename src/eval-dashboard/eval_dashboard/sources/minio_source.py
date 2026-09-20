@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 """Reads full episode records from MinIO.
 
 Read-only: only ListObjectsV2 and GetObject are ever called. MinIO is the
@@ -16,7 +17,7 @@ import json
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
-from typing import Iterator
+from typing import Iterable, Iterator
 from urllib.parse import urlparse
 
 import boto3
@@ -26,9 +27,23 @@ from eval_dashboard import schema
 
 log = logging.getLogger("eval_dashboard.minio")
 
+
+def uri_in_buckets(s3_uri: str, buckets: Iterable[str]) -> bool:
+    """True when `s3_uri` is a well-formed s3://bucket/key naming one of `buckets`."""
+    if not isinstance(s3_uri, str) or not s3_uri:
+        return False
+    try:
+        parsed = urlparse(s3_uri)
+    except ValueError:
+        return False
+    if parsed.scheme != "s3" or not parsed.netloc or not parsed.path.strip("/"):
+        return False
+    return parsed.netloc in {b for b in buckets if b}
+
+
 # Each GetObject is one independent, read-only round trip -- fetching them
 # one at a time makes startup take (episode count * round-trip time), which
-# over Tailscale (~300ms) turns a few thousand episodes into minutes. They
+# over a high-latency link (~300ms) turns a few thousand episodes into minutes. They
 # have no ordering dependency (Store dedupes by episode_id regardless of
 # arrival order), so fetch concurrently instead. Pool size must match worker
 # count -- boto3 defaults to 10, which caps real parallelism below the thread

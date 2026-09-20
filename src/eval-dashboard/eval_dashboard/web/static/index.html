@@ -1,10 +1,11 @@
+<!-- This project was developed with assistance from AI tools. -->
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SO-ARM Policy Evaluation</title>
-  <link rel="stylesheet" href="styles.css?v=32">
+  <link rel="stylesheet" href="styles.css?v=33">
 </head>
 <body>
   <header>
@@ -15,7 +16,8 @@
     <div class="header-actions">
       <span class="chip" id="source-chip"><span class="dot"></span> <span id="source-label">--</span></span>
       <span class="chip" id="loaded-chip">Loaded --</span>
-      <a class="backlink" id="backlink" href="#" target="_blank" rel="noopener">&larr; Back to Live Flywheel</a>
+      <a class="backlink" id="other-view-link" hidden></a>
+      <a class="backlink" id="backlink" target="_blank" rel="noopener" hidden>&larr; Back to Live Flywheel</a>
     </div>
   </header>
 
@@ -23,10 +25,20 @@
     <div class="notice">
       <strong>Primary metric</strong>: success rate (all three cubes on the tray, <code>task_success</code>),
       including rejected episodes in the denominator when curator verdicts exist.
+      A failed episode whose cube count could not be read, or whose rollout did not finish, is not a verdict on
+      the policy: it is left out of the rate and counted on the card as not scored.
       <strong>Secondary metric</strong>: smoothness among successful episodes only &mdash; failed episodes often
       barely move, which would make a worse policy look smoother.
       Wilson confidence intervals are shown; they describe uncertainty in the observed rate, not proof that one
       policy is statistically better than another.
+    </div>
+
+    <div class="panel" id="paired-panel" hidden>
+      <div class="panel-head">
+        <h3>Paired result</h3>
+        <p>Both policies ran the same seeds. The pipeline&rsquo;s own report, shown as written &mdash; nothing here is recomputed.</p>
+      </div>
+      <div class="panel-body" id="paired-body"></div>
     </div>
 
     <div class="section-heading">
@@ -38,8 +50,14 @@
     <section class="toolbar" id="version-picker" aria-label="Policy comparison"></section>
     <div id="version-cards" class="card-grid"></div>
     <div id="empty-state" class="no-data" style="display:none">
-      No episode records loaded. Mount a directory of episode JSON files at <code>/records</code>
-      (<code>RECORDS_DIR</code>), or run in live mode to read from Kafka + MinIO.
+      <span id="empty-records">
+        No episode records loaded. Mount a directory of episode JSON files at <code>/records</code>
+        (<code>RECORDS_DIR</code>), or run in live mode to read from Kafka + MinIO.
+      </span>
+      <span id="empty-eval" hidden>
+        No evaluation run found yet. One appears here once a promotion run has written its
+        <code>eval_report.json</code> under <code>EVAL_DIR</code> or the evaluation bucket.
+      </span>
     </div>
 
     <div class="panel">
@@ -92,6 +110,6 @@
     <span id="footer-counts"></span>
   </footer>
 
-  <script src="dashboard.js?v=32"></script>
+  <script src="dashboard.js?v=33"></script>
 </body>
 </html>

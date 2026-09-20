@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 """Pure aggregation over normalized episode records.
 
 Deliberately source-agnostic: it only ever sees the shape schema.normalize()
@@ -19,6 +20,20 @@ from dataclasses import dataclass, field
 SMOOTHNESS_BINS = [0.0, 0.002, 0.004, 0.006, 0.008, 0.010, 0.015]
 
 CUBE_BUCKETS = (0, 1, 2, 3)
+
+NOT_SCORED_REASONS = ("sensor_unavailable", "rollout_incomplete")
+
+
+def not_scored_reason(record: dict) -> str | None:
+    """Why a normalized record is no verdict on the policy, or None when it is scored."""
+    if record.get("task_success"):
+        return None
+    if record.get("cubes_placed") is None:
+        return "sensor_unavailable"
+    status = record.get("rollout_status")
+    if isinstance(status, str) and status and status != "ok":
+        return "rollout_incomplete"
+    return None
 
 
 def wilson_ci(successes: int, n: int, z: float = 1.96) -> tuple[float, float] | tuple[None, None]:
@@ -49,6 +64,7 @@ class VersionStats:
     cubes_placed: dict[int, int] = field(default_factory=lambda: {b: 0 for b in CUBE_BUCKETS})
     smoothness_hist: dict[str, int] = field(default_factory=dict)
     verdict_counts: dict[str, int] = field(default_factory=dict)
+    not_scored: dict[str, int] = field(default_factory=lambda: {reason: 0 for reason in NOT_SCORED_REASONS})
     _cubes_sum: int = 0
     _cubes_n: int = 0
     _smoothness_sum: float = 0.0
@@ -111,6 +127,15 @@ def aggregate(records: list[dict]) -> dict[str, VersionStats]:
     by_version: dict[str, VersionStats] = defaultdict(VersionStats)
     for r in records:
         v = by_version[r["model_version"]]
+        # Curated-only detection asks whether the live rejected bucket was
+        # read; an evaluation run is the complete population by construction.
+        verdict = r.get("curation_verdict")
+        if verdict and r.get("origin") != "eval":
+            v.verdict_counts[verdict] = v.verdict_counts.get(verdict, 0) + 1
+        reason = not_scored_reason(r)
+        if reason:
+            v.not_scored[reason] += 1
+            continue
         v.episode_count += 1
         if r["task_success"]:
             v.success_count += 1
@@ -128,7 +153,4 @@ def aggregate(records: list[dict]) -> dict[str, VersionStats]:
             if smoothness is not None:
                 v._smoothness_sum += smoothness
                 v._smoothness_n += 1
-        verdict = r.get("curation_verdict")
-        if verdict:
-            v.verdict_counts[verdict] = v.verdict_counts.get(verdict, 0) + 1
     return dict(by_version)

@@ -1,3 +1,4 @@
+/* This project was developed with assistance from AI tools. */
 :root {
   color-scheme: light;
   --surface: #ffffff;
@@ -43,6 +44,8 @@
 }
 
 * { box-sizing: border-box; }
+/* Several hidden elements carry a class that sets `display`; the attribute has to win. */
+[hidden] { display: none !important; }
 body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -128,8 +131,37 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 24px 48px; }
   .badge.finetuned { background: #16351a; color: #8bcf7f; }
   .badge.untagged { background: #2a2140; color: #c4b0f0; }
 }
+.badge.verdict { font-size: 12px; padding: 4px 10px; }
+.badge.verdict.pass { background: var(--good-surface); color: var(--good); border: 1px solid var(--good); }
+.badge.verdict.fail { background: transparent; color: var(--critical); border: 1px solid var(--critical); }
+.badge.verdict.unknown { background: transparent; color: var(--text-muted); border: 1px solid var(--border-strong); }
+
+.paired-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.paired-policies { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.paired-policies .vs, .paired-grid .vs { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-weight: 400; color: var(--text-muted); font-size: 11px; }
+.paired-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px;
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);
+}
+.paired-grid span { display: block; color: var(--text-muted); font-size: 10px; }
+.paired-grid strong { display: block; font-size: 20px; margin: 2px 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.paired-grid strong .vs { display: inline; }
+.paired-grid strong.up { color: var(--good); }
+.paired-grid strong.down { color: var(--critical); }
+.paired-rule { margin: 12px 0 0; font-size: 12px; color: var(--text-2); }
+.paired-meta { margin: 2px 0 8px; font-size: 11px; color: var(--text-muted); }
+.seed-list { border-top: 1px solid var(--border); padding: 6px 0; font-size: 12px; }
+.seed-list summary { cursor: pointer; font-weight: 600; color: var(--text-2); }
+.seed-list-body {
+  display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 6px 0 2px 14px; color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+}
+
+.not-scored { color: var(--text-muted); font-size: 11px; margin-top: 6px; }
+td.not-scored-cell { color: var(--text-muted); font-weight: 600; }
+
 .rate-row { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
-.rate { font-size: 32px; font-weight: 700; letter-spacing: -0.03em; }
+.rate { font-size: 32px; font-weight: 700; letter-spacing: -0.03em; white-space: nowrap; }
 .fraction { color: var(--text-muted); font-size: 12px; padding-bottom: 3px; }
 .delta { font-size: 13px; font-weight: 700; padding-bottom: 4px; margin-left: auto; }
 .delta.up { color: var(--good); }
