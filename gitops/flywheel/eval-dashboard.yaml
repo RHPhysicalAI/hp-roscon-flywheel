@@ -1,0 +1,287 @@
+# This project was developed with assistance from AI tools.
+#
+# Evaluation dashboard (APPENG-6295): one image (src/eval-dashboard), two read-only instances.
+#
+# - eval-dashboard       SOURCE_MODE=eval  the latest promotion run's paired comparison, read from
+#                                          MinIO episodes-data/eval/<run_id>/.
+# - eval-dashboard-live  SOURCE_MODE=live  success rate by lineage from the curated and rejected
+#                                          buckets, kept current from the episode-manifests topic.
+#
+# Each links to the other (OTHER_VIEW_*) and back to the flywheel dashboard (LIVE_DASHBOARD_URL).
+# The URLs assume the router's default host, <route>-<namespace>.<apps domain>.
+#
+# Secret minio-eval-readonly-credentials (keys access-key, secret-key) is hand-created in this
+# namespace and not in git — see gitops/minio/minio-readonly-user.yaml and argocd/README.md.
+#
+# Auth posture: none (matches PoC-wide unauthenticated posture). No cluster API access, no
+# hostPath: a dedicated ServiceAccount keeps these pods off the default SA's hostmount-anyuid
+# grant (scc-rolebinding.yaml), so they are admitted under restricted-v2.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: eval-dashboard
+  namespace: flywheel
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eval-dashboard-versions
+  namespace: flywheel
+data:
+  versions.yaml: |
+    # model_version -> curated training-set size. Versions not listed here get their size from
+    # an -ft<N> suffix in the name.
+    upstream-act-teacher: 0
+    act-v2-ft160: 160
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eval-dashboard
+  namespace: flywheel
+  labels:
+    app: eval-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: eval-dashboard
+  template:
+    metadata:
+      labels:
+        app: eval-dashboard
+      annotations:
+        # versions.yaml is read once at start: bump with the ConfigMap so Argo rolls the pod
+        flywheel/versions-rev: "1"
+    spec:
+      serviceAccountName: eval-dashboard
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: eval-dashboard
+          # Digest: filled in from the output of tools/hub/build-eval-dashboard.sh (same value
+          # on both image lines in this file). Do not commit this file with the placeholder in it.
+          image: quay.io/jary/soarm-flywheel@sha256:103e3f8b8040e5fb7284588afc12ee2d2929299089f0ad536ff8ace674cdc586
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SOURCE_MODE
+              value: "eval"
+            - name: S3_ENDPOINT
+              value: "http://minio.minio.svc:9000"
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-eval-readonly-credentials
+                  key: access-key
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-eval-readonly-credentials
+                  key: secret-key
+            - name: EVAL_BUCKET
+              value: "episodes-data"
+            - name: EVAL_PREFIX
+              value: "eval/"
+            # Newest run by default. To pin one, add EVAL_RUN_ID with the run id.
+            - name: VERSIONS_FILE
+              value: "/config/versions.yaml"
+            - name: OTHER_VIEW_URL
+              value: "https://eval-dashboard-live-flywheel.apps.sno-flywheel.local"
+            - name: OTHER_VIEW_LABEL
+              value: "Live episodes"
+            - name: LIVE_DASHBOARD_URL
+              value: "https://dashboard-flywheel.apps.sno-flywheel.local"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet:
+              path: /api/stats
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/stats
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: 25m
+              memory: 96Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: versions
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: versions
+          configMap:
+            name: eval-dashboard-versions
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: eval-dashboard
+  namespace: flywheel
+spec:
+  selector:
+    app: eval-dashboard
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: eval-dashboard
+  namespace: flywheel
+spec:
+  to:
+    kind: Service
+    name: eval-dashboard
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eval-dashboard-live
+  namespace: flywheel
+  labels:
+    app: eval-dashboard-live
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: eval-dashboard-live
+  template:
+    metadata:
+      labels:
+        app: eval-dashboard-live
+      annotations:
+        # versions.yaml is read once at start: bump with the ConfigMap so Argo rolls the pod
+        flywheel/versions-rev: "1"
+    spec:
+      serviceAccountName: eval-dashboard
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: eval-dashboard
+          # Digest: filled in from the output of tools/hub/build-eval-dashboard.sh (same value
+          # on both image lines in this file). Do not commit this file with the placeholder in it.
+          image: quay.io/jary/soarm-flywheel@sha256:103e3f8b8040e5fb7284588afc12ee2d2929299089f0ad536ff8ace674cdc586
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SOURCE_MODE
+              value: "live"
+            - name: S3_ENDPOINT
+              value: "http://minio.minio.svc:9000"
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-eval-readonly-credentials
+                  key: access-key
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-eval-readonly-credentials
+                  key: secret-key
+            - name: S3_CURATED_BUCKET
+              value: "episodes-curated"
+            - name: S3_REJECTED_BUCKET
+              value: "episodes-rejected"
+            - name: KAFKA_BOOTSTRAP
+              value: "edge-kafka.flywheel.svc:9092"
+            - name: KAFKA_TOPIC
+              value: "episode-manifests"
+            - name: VERSIONS_FILE
+              value: "/config/versions.yaml"
+            - name: OTHER_VIEW_URL
+              value: "https://eval-dashboard-flywheel.apps.sno-flywheel.local"
+            - name: OTHER_VIEW_LABEL
+              value: "Paired evaluation"
+            - name: LIVE_DASHBOARD_URL
+              value: "https://dashboard-flywheel.apps.sno-flywheel.local"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet:
+              path: /api/stats
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/stats
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: versions
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: versions
+          configMap:
+            name: eval-dashboard-versions
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: eval-dashboard-live
+  namespace: flywheel
+spec:
+  selector:
+    app: eval-dashboard-live
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: eval-dashboard-live
+  namespace: flywheel
+spec:
+  to:
+    kind: Service
+    name: eval-dashboard-live
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
