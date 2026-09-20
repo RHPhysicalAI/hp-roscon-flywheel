@@ -5544,3 +5544,20 @@ fleet's camera streams (worth revisiting with time), a robot foundation model (d
 **What it takes, after the renderer exists:** the host device gets `gpu_device=<MIG uuid of 0:1>` (MIG UUIDs are
 stable across mode switches here); `fury-switch.sh tenants` starts the policy app instead of leaving it stopped;
 `fury-mode` stops refusing a policy on a slice; the host's sim unit gains the physics-only variant for tenants mode.
+
+## D165 — Isolation, measured: the assistant's numbers do not move while the slice next to it trains
+
+**Date:** 2026-09-20 (tenants mode, MIG `9,19,19,19`). The training tenant (D164; `72-training-tenant-install.sh`)
+fine-tuning ACT on slice `0:2`, the coding assistant serving from slice `0:0`, the same five-request bench as D160
+run **while the tenant trains**: time to first token **0.135 s**, decode **246.6 tokens/s**, end to end 218.9 -
+against 0.132 s / 245.7 / 218.7 on the idle GPU. No measurable difference: that is the isolation beat, and the GPU
+tenants dashboard shows both slices busy at once.
+
+**The training numbers from the same run** (1g.31gb slice, batch 8, 8 data-loader workers): about **10 steps/s** -
+**0.091 s a step computing, 0.010 s waiting for data**. Two things follow. The data-loader fix works: the first full
+fine-tune on this machine waited 0.18 s a step for data with the library's four workers (D158's night run, 4 h 21
+min for 62,244 steps); with eight it waits a twentieth of that and the step is compute bound. And one seventh of
+the GPU computes this model's step only about 1.4 times slower than the whole GPU did with the sim and the policy
+beside it (0.064 s): the same 62,244 steps would take about 1 h 35 min on a 1g slice. The tenant's round is set to
+9,000 steps, a quarter of an hour. The lerobot flags the tenant adds (`--policy.optimizer_lr`, `--seed`) are
+accepted by the image's version.

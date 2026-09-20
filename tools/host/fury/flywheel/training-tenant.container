@@ -59,7 +59,9 @@ Environment=PYTHONUNBUFFERED=1
 Environment=TENANT_NUM_WORKERS=8
 # Steps per round: 3000 is about 15 minutes at 0.3 s a step (the estimate and its basis: 72-training-tenant.md).
 # After the first round rounds.jsonl has the real rate: 900 x steps_per_s gives a 15-minute round.
-Environment=TENANT_STEPS=3000
+# measured on this slice 2026-09-20: about 10 steps/s (0.091 s a step computing, 0.010 s waiting for data with 8
+# workers), so 9000 steps is a round of about a quarter of an hour
+Environment=TENANT_STEPS=9000
 # round directories kept on disk (a checkpoint with its optimizer state each); older ones are removed
 Environment=TENANT_KEEP_ROUNDS=3
 # the main process only feeds the GPU; without this torch starts one CPU thread per core it can see (72)
