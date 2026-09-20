@@ -15,6 +15,14 @@
 # rollout time is the epoch the consumer counts from. The dashboard follows the
 # device by the Argo poll (~1-3 min after the device serves the new version).
 #
+# The live lane (D166, SHOW_LANE_DIR set - as it is in the Deployment below): the demo stays in tenants mode, where
+# the flywheel's own loop does not run. The page then tells the story from robot zero's episodes as the SHOW curator
+# judged them (curator-show.yaml: the curator's real gates, no storage behind them, no trigger): counts, log, badge
+# and bar come from that curator's volume, mounted read-only; the bar is `passed mod threshold`, held full for a
+# few minutes when a round completes. The flywheel's records, the manifest consumer and its epoch are not
+# consulted, and the page says what it shows: "live lane: judged, not kept", and at the threshold "this is where a
+# governed training run would start". Unset the variable and the page is the flywheel's own again, unchanged.
+#
 # Auth posture: none (matches PoC-wide unauthenticated posture).
 # RBAC: dashboard SA reads/patches Deployments in the flywheel namespace.
 ---
@@ -48,10 +56,22 @@ data:
 
     # ---- Paths ---------------------------------------------------------------
     DATA          = pathlib.Path("/data")
-    EP_RAW        = DATA / "episodes" / "raw"
-    EP_CUR        = DATA / "episodes" / "curated"
-    EP_REJ        = DATA / "episodes" / "rejected"
-    EP_SENT       = DATA / "episodes" / "sent"
+    # D166, the live lane: set, the page reads the SHOW curator's volume (curator-show.yaml) - robot zero's episodes,
+    # judged by the curator's gates and kept nowhere - instead of the flywheel's records, and says so. Unset: as before.
+    SHOW_LANE_DIR = os.environ.get("SHOW_LANE_DIR", "").strip()
+    SHOW_LANE     = bool(SHOW_LANE_DIR)
+    EP_BASE       = pathlib.Path(SHOW_LANE_DIR) if SHOW_LANE else DATA / "episodes"
+    EP_RAW        = EP_BASE / "raw"
+    EP_CUR        = EP_BASE / "curated"
+    EP_REJ        = EP_BASE / "rejected"
+    EP_SENT       = EP_BASE / "sent"      # the live lane has none: nothing is sent anywhere
+    # how long the full bar and the threshold banner stay up once a round of the live lane completes
+    SHOW_TRIGGER_HOLD_S = int(os.environ.get("SHOW_TRIGGER_HOLD_S", "300"))
+    # The curators' receivers are open ports, so a volume can hold anything. A record is under 1 KB: a file over
+    # MAX_RECORD_BYTES is not one and is never read, and the log reads the newest LOG_SCAN_CAP files at most,
+    # however many there are - a full volume must not cost this page its memory.
+    MAX_RECORD_BYTES = 65536
+    LOG_SCAN_CAP     = 120
     HTML_FILE     = pathlib.Path(os.environ.get("HTML_FILE",  "/app/index.html"))
     # The camera bridge runs next to the simulator, not in the cluster; the browser fetches the
     # streams directly, so this must be the address the *viewer* can reach.
@@ -208,28 +228,87 @@ data:
         rows = _episode_log(1)
         return rows[0] if rows else None
 
-    def _episode_log(n: int = 30) -> list[dict]:
-        rows = []
-        # Scan curated, sent (final home for passed episodes), and rejected
-        for d, verdict in [(EP_CUR, "pass"), (EP_SENT, "pass"), (EP_REJ, "reject")]:
-            for p in _jsons(d):
+    def newest_records(sources: list, n: int, max_bytes: int, scan_cap: int) -> list[dict]:
+        """The n newest records of [(directory, verdict)], newest first: everything is stat'ed, only the newest scan_cap small files are read."""
+        found = []
+        for d, verdict in sources:
+            for p in (d.glob("*.json") if d.exists() else []):
                 try:
-                    ep = json.loads(p.read_text())
-                    ep["_mtime"]   = p.stat().st_mtime
-                    ep["_verdict"] = verdict
-                    rows.append(ep)
-                except Exception:
-                    pass
-        rows.sort(key=lambda e: e["_mtime"], reverse=True)
-        return rows[:n]
+                    st = p.stat()
+                except OSError:
+                    continue
+                if st.st_size <= max_bytes:
+                    found.append((st.st_mtime, verdict, p))
+        found.sort(key=lambda f: f[0], reverse=True)
+        rows = []
+        for mtime, verdict, p in found[:scan_cap]:
+            if len(rows) >= n:
+                break
+            try:
+                ep = json.loads(p.read_text())
+                ep["_mtime"]   = mtime
+                ep["_verdict"] = verdict
+                rows.append(ep)
+            except Exception:
+                pass
+        return rows
+
+    def _episode_log(n: int = 30) -> list[dict]:
+        # Scan curated, sent (final home for passed episodes), and rejected
+        return newest_records([(EP_CUR, "pass"), (EP_SENT, "pass"), (EP_REJ, "reject")], n, MAX_RECORD_BYTES, LOG_SCAN_CAP)
+
+    # ---- The live lane (D166) --------------------------------------------------
+    def show_totals(base: pathlib.Path, curated_files: int, rejected_files: int) -> tuple[int, int, int]:
+        """(passed, rejected, counting since) of the live lane: the show curator's running totals, never less than what is on the volume; since 0 = unknown."""
+        try:
+            totals = json.loads((base / "totals.json").read_text())
+            return (max(int(totals.get("pass", 0)), curated_files), max(int(totals.get("reject", 0)), rejected_files),
+                    int(totals.get("since", 0)))
+        except Exception:
+            return curated_files, rejected_files, 0
+
+    def show_progress(passed: int, pass_times: list[float], threshold: int, now: float, hold_s: float) -> dict:
+        """The live lane's bar: passed mod threshold, held full for hold_s after the pass that completed a round."""
+        done = passed % threshold
+        # pass_times is newest first: index `done` is the pass that made the count a multiple of the threshold
+        reached = passed >= threshold and done < len(pass_times) and now - pass_times[done] < hold_s
+        shown = threshold if reached else done
+        return {"threshold": threshold, "progress": shown, "pct": round(shown / threshold * 100), "triggered": reached}
+
+    def _mtimes(d: pathlib.Path) -> list[float]:
+        """Modification times of a directory's records, newest first; a record pruned meanwhile is skipped."""
+        times = []
+        for p in _jsons(d):
+            try:
+                times.append(p.stat().st_mtime)
+            except OSError:
+                pass
+        return sorted(times, reverse=True)
 
     def status_snapshot() -> dict:
         ep     = _latest_episode()
-        sent   = _count(EP_SENT)
-        mv, since = _lineage()
-        # Curated successes of the live lineage since the consumer's last rollout (sync-agent
-        # moves curated -> sent within seconds, so the curated/ dir alone always reads 0).
-        curated = _lineage_count((EP_CUR, EP_SENT), mv, since) if mv else _count(EP_CUR)
+        if SHOW_LANE:
+            # Counts, bar and badge from the show curator's volume alone: the flywheel's records, the manifest
+            # consumer and its epoch are not consulted. The badge is the label robot zero's policy announced
+            # for the latest episode.
+            passed, rejected, counting_since = show_totals(EP_BASE, _count(EP_CUR), _count(EP_REJ))
+            # "since": when the show curator began this count - shown beside it, so a number is never without its age
+            counts  = {"raw": _count(EP_RAW), "curated": passed, "rejected": rejected, "sent": 0, "since": counting_since}
+            trigger = show_progress(passed, _mtimes(EP_CUR), THRESHOLD, time.time(), SHOW_TRIGGER_HOLD_S)
+            mv, since = (ep or {}).get("model_version") or "", 0.0
+        else:
+            sent   = _count(EP_SENT)
+            mv, since = _lineage()
+            # Curated successes of the live lineage since the consumer's last rollout (sync-agent
+            # moves curated -> sent within seconds, so the curated/ dir alone always reads 0).
+            curated = _lineage_count((EP_CUR, EP_SENT), mv, since) if mv else _count(EP_CUR)
+            counts  = {"raw": _count(EP_RAW), "curated": curated, "rejected": _count(EP_REJ), "sent": sent}
+            trigger = {
+                "threshold": THRESHOLD,
+                "progress":  min(curated, THRESHOLD),
+                "pct":       min(100, round(curated / THRESHOLD * 100)),
+                "triggered": curated >= THRESHOLD,
+            }
         running = bool(ep) and (time.time() - ep.get("_mtime", 0)) < LOOP_ACTIVE_S
 
         # Extract Generator output from latest episode (D031 format)
@@ -254,18 +333,9 @@ data:
             avg_smoothness   = ep.get("avg_smoothness")
 
         return {
-            "counts": {
-                "raw":      _count(EP_RAW),
-                "curated":  curated,
-                "rejected": _count(EP_REJ),
-                "sent":     sent,
-            },
-            "trigger": {
-                "threshold": THRESHOLD,
-                "progress":  min(curated, THRESHOLD),
-                "pct":       min(100, round(curated / THRESHOLD * 100)),
-                "triggered": curated >= THRESHOLD,
-            },
+            "show_lane": SHOW_LANE,
+            "counts": counts,
+            "trigger": trigger,
             "flywheel_running": running,
             "model_version":    mv,
             "promoted":         bool(mv) and mv != BASELINE_MV,
@@ -332,11 +402,15 @@ data:
         while True:
             time.sleep(1)
             now = time.time()
+            present = set()
             for d, verdict in [(EP_CUR, "pass"), (EP_SENT, "pass"), (EP_REJ, "reject")]:
                 for p in _jsons(d):
+                    present.add(p.name)
                     if p.name not in _watcher_seen_ep:
                         _watcher_seen_ep.add(p.name)
                         try:
+                            if p.stat().st_size > MAX_RECORD_BYTES:
+                                continue
                             ep = json.loads(p.read_text())
                             broadcast("episode", {
                                 "episode_id":      ep.get("episode_id", p.stem),
@@ -349,6 +423,8 @@ data:
                             })
                         except Exception:
                             pass
+            # names of records that are gone are forgotten: a pruned lane must not grow this set all day
+            _watcher_seen_ep &= present
             if now - last_status >= 3:
                 last_status = now
                 try:
@@ -370,6 +446,7 @@ data:
     def index():
         html = HTML_FILE.read_text() if HTML_FILE.exists() else "<h1>index.html not mounted</h1>"
         html = html.replace("__CAMERA_BASE__", CAMERA_BASE).replace("__CAMERA_SUFFIX__", CAMERA_SUFFIX).replace("__CAMERA_CAPTION__", escape(CAMERA_CAPTION)).replace("<!-- __EVAL_LINK__ -->", eval_link())
+        html = html.replace("__SHOW_LANE__", "1" if SHOW_LANE else "")
         return Response(html, mimetype="text/html")
 
     @app.route("/api/events")
@@ -401,6 +478,9 @@ data:
 
     @app.route("/api/control/flywheel", methods=["POST"])
     def ctrl_flywheel():
+        if SHOW_LANE:
+            # it scales the flywheel's sim, curator and sync agent: deployments this page is not showing
+            return jsonify({"ok": False, "error": "live lane: the flywheel's deployments are not this page's to scale"}), 409
         action   = (request.json or {}).get("action", "start")
         replicas = 1 if action == "start" else 0
         ok = all(set_replicas(FW_NS, d, replicas)
@@ -412,6 +492,9 @@ data:
     @app.route("/api/control/clear", methods=["POST"])
     def ctrl_clear():
         global _watcher_seen_ep
+        if SHOW_LANE:
+            # the show curator's volume is mounted read-only, and the flywheel's records are not what this page shows
+            return jsonify({"ok": False, "cleared": 0, "error": "live lane: nothing here is kept, so there is nothing to clear"}), 409
         cleared = 0
         for d in (EP_RAW, EP_CUR, EP_REJ, EP_SENT):
             if d.exists():
@@ -1029,7 +1112,7 @@ data:
                 <span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--txt2)">Curation</span>
                 <span id="g-curation">--</span>
               </div>
-              <div class="annotation" style="font-size:10px">
+              <div class="annotation" id="curation-note" style="font-size:10px">
                 On-device quality gate &mdash; rejected episodes never enter training
               </div>
             </div>
@@ -1047,7 +1130,7 @@ data:
       <div class="card" id="progress-card">
         <div class="card-header">
           <span class="card-title">Flywheel Progress</span>
-          <span class="annotation">
+          <span class="annotation" id="prog-note">
             Curated episodes flow to object storage &rarr; Kafka &rarr; training trigger &rarr; LeRobot ACT fine-tune
           </span>
         </div>
@@ -1060,9 +1143,11 @@ data:
             </div>
           </div>
           <div id="prog-counts" style="color:var(--txt2)">
-            <span id="c-total">0</span> captured &middot;
+            <span id="c-total">0</span> <span id="c-total-label">captured</span> &middot;
             <span id="c-rejected" style="color:var(--red)">0</span> rejected &middot;
-            <span id="c-sent">0</span> sent
+            <span id="c-sent">0</span> <span id="c-sent-label">sent</span>
+            <span id="lane-since" style="color:var(--txt3);margin-left:4px"></span>
+            <span id="lane-note" class="tag" style="display:none;margin-left:8px">live lane: judged, not kept</span>
           </div>
         </div>
         <div id="trigger-banner">
@@ -1193,9 +1278,64 @@ data:
       if (wristEl) wristEl.src = camBase + '/wrist' + camSuffix;
     })();
 
+    // ---- The live lane (D166) -------------------------------------------------
+    // Substituted by the Flask app (SHOW_LANE_DIR). The page then shows robot zero's episodes as the show curator
+    // judged them - the curator's real gates, nothing kept, no training started - and says so wherever a number
+    // could be taken for the flywheel's own. Empty: the flywheel's own lane, worded as before.
+    const SHOW_LANE = '__SHOW_LANE__' === '1';
+    const LANE = {
+      badgeOn:  '<div class="dot-pulse"></div> Serving &mdash; live lane',
+      badgeOff: '&#9632; Live lane &mdash; waiting for robot zero',
+      idle:     'Live lane \u2014 robot zero\u2019s episodes are judged here as they end.',
+      progNote: 'Live lane: every robot zero episode goes through the curator\u2019s real gates \u2014 judged, not kept. ' +
+                'Nothing on this lane reaches object storage, Kafka or a training run.',
+      gateNote: 'The curator\u2019s real gates, judging physics: completeness, cubes on the tray, smoothness \u2014 live lane: judged, not kept',
+      counted:  ' episodes passed the curator\u2019s gates',
+      banner:   n => '\u26A1 ' + n + ' episodes passed \u2014 this is where a governed training run would start. ' +
+                     'On the live lane nothing was kept and nothing was started; the count begins again.',
+    };
+    // When the show curator began its count, beside the count: a number on this page is never without its age.
+    function sinceText(epoch) {
+      const began = num(epoch);
+      if (!began) return '';
+      const d = new Date(began * 1000);
+      const hm = d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+      const today = d.toDateString() === new Date().toDateString();
+      return '\u00b7 since ' + (today ? hm : d.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ' ' + hm);
+    }
+    // What an empty panel says while no episode has arrived lately.
+    function idleText() {
+      return SHOW_LANE ? LANE.idle : 'Collection loop stopped \u2014 episodes appear here once it runs.';
+    }
+    if (SHOW_LANE) {
+      document.getElementById('flywheel-status').innerHTML = LANE.badgeOff;
+      document.getElementById('sb-fw').textContent = 'waiting';
+      document.getElementById('gen-empty').textContent = LANE.idle;
+      document.getElementById('log-empty').textContent = LANE.idle;
+      document.getElementById('prog-note').textContent = LANE.progNote;
+      document.getElementById('curation-note').textContent = LANE.gateNote;
+      document.getElementById('prog-text').textContent = '0 / 160' + LANE.counted;
+      document.getElementById('prog-state').textContent = 'waiting';
+      document.getElementById('c-total-label').textContent = 'judged';
+      document.getElementById('c-sent-label').textContent = 'passed';
+      document.getElementById('lane-note').style.display = '';
+    }
+
     // ---- Operator-only controls: ?ops=1 reveals the confirm-gated Clear link --
-    if (new URLSearchParams(location.search).get('ops') === '1') {
+    // Not on the live lane: its records are not this page's to delete, and the flywheel's are not what it shows.
+    if (!SHOW_LANE && new URLSearchParams(location.search).get('ops') === '1') {
       document.body.classList.add('ops');
+    }
+
+    // ---- Untrusted text ---------------------------------------------------------
+    // Episode records arrive over an open port. Every field of one that reaches innerHTML goes through esc(),
+    // and every number through num(): a record can carry markup, or a string where a number is expected.
+    function esc(v) {
+      return String(v == null ? '' : v).replace(/[&<>"'`]/g, c => '&#' + c.charCodeAt(0) + ';');
+    }
+    function num(v) {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 0;
     }
 
     // ---- State ---------------------------------------------------------------
@@ -1276,7 +1416,7 @@ data:
     // ---- Apply status -------------------------------------------------------
     function applyStatus(s) {
       // Model version
-      const mv = s.model_version || 'unknown';
+      const mv = s.model_version || (SHOW_LANE ? 'awaiting first episode' : 'unknown');
       const isV2 = !!s.promoted;
       document.getElementById('model-label').textContent = mv;
       document.getElementById('model-badge').className = isV2 ? 'v2' : 'v1';
@@ -1288,29 +1428,54 @@ data:
       window._fw = fw;
       const fwEl = document.getElementById('flywheel-status');
       fwEl.className = 'running-indicator' + (fw ? '' : ' stopped');
-      fwEl.innerHTML = fw ? '<div class="dot-pulse"></div> Flywheel running' : '&#9632; Loop stopped';
-      document.getElementById('sb-fw').textContent = fw ? 'running' : 'stopped';
+      if (SHOW_LANE) {
+        fwEl.innerHTML = fw ? LANE.badgeOn : LANE.badgeOff;
+        document.getElementById('sb-fw').textContent = fw ? 'live lane' : 'waiting';
+      } else {
+        fwEl.innerHTML = fw ? '<div class="dot-pulse"></div> Flywheel running' : '&#9632; Loop stopped';
+        document.getElementById('sb-fw').textContent = fw ? 'running' : 'stopped';
+      }
       const genEmpty = document.getElementById('gen-empty');
-      if (genEmpty) genEmpty.textContent = fw
-        ? 'Awaiting first episode…'
-        : 'Collection loop stopped — episodes appear here once it runs.';
+      if (genEmpty) genEmpty.textContent = fw ? 'Awaiting first episode…' : idleText();
 
       // Progress
       const t = s.trigger;
       const pct = t.pct || 0;
       document.getElementById('prog-fill').style.width = pct + '%';
       document.getElementById('prog-fill').classList.toggle('triggered', t.triggered);
-      document.getElementById('prog-text').textContent =
-        t.progress + ' / ' + t.threshold + ' curated episodes sent to hub';
-      document.getElementById('prog-state').textContent =
-        t.triggered ? 'TRIGGERED' : (fw ? 'collecting' : 'loop stopped');
-      document.getElementById('trigger-banner').classList.toggle('show', t.triggered);
+      const banner = document.getElementById('trigger-banner');
+      if (SHOW_LANE) {
+        // the threshold is a moment to point at, not an event: no run exists, and the banner says so
+        document.getElementById('prog-text').textContent = t.progress + ' / ' + t.threshold + LANE.counted;
+        document.getElementById('prog-state').textContent =
+          t.triggered ? 'THRESHOLD REACHED' : (fw ? 'judging' : 'waiting');
+        if (window._bannerFor !== t.threshold) {
+          window._bannerFor = t.threshold;
+          banner.textContent = LANE.banner(t.threshold);
+        }
+      } else {
+        document.getElementById('prog-text').textContent =
+          t.progress + ' / ' + t.threshold + ' curated episodes sent to hub';
+        document.getElementById('prog-state').textContent =
+          t.triggered ? 'TRIGGERED' : (fw ? 'collecting' : 'loop stopped');
+      }
+      banner.classList.toggle('show', t.triggered);
 
       // Counts
       const c = s.counts || {};
-      document.getElementById('c-total').textContent    = (c.raw||0)+(c.rejected||0)+(c.sent||0);
+      if (SHOW_LANE) {
+        document.getElementById('c-total').textContent  = (c.curated||0)+(c.rejected||0);   // judged
+        document.getElementById('c-sent').textContent   = c.curated || 0;                   // passed; none is sent
+        const since = sinceText(c.since);
+        if (since !== window._since) {
+          window._since = since;
+          document.getElementById('lane-since').textContent = since;
+        }
+      } else {
+        document.getElementById('c-total').textContent  = (c.raw||0)+(c.rejected||0)+(c.sent||0);
+        document.getElementById('c-sent').textContent   = c.sent     || 0;
+      }
       document.getElementById('c-rejected').textContent = c.rejected || 0;
-      document.getElementById('c-sent').textContent     = c.sent     || 0;
 
       // Latest scene
       const lat = s.latest || {};
@@ -1336,11 +1501,11 @@ data:
         const rollout = lat.rollout || {};
         const rolloutOk = rollout.status === 'ok';
         document.getElementById('g-rollout-status').innerHTML =
-          `<span class="sel-badge ${rolloutOk ? 'sel-good' : 'sel-bad'}">${rolloutOk ? '&#10003;' : '&#10007;'} ${rollout.status || '--'}</span>`;
+          `<span class="sel-badge ${rolloutOk ? 'sel-good' : 'sel-bad'}">${rolloutOk ? '&#10003;' : '&#10007;'} ${esc(rollout.status || '--')}</span>`;
         document.getElementById('g-rollout-steps').textContent =
           rollout.steps ? rollout.steps + ' steps' : '--';
         document.getElementById('g-rollout-duration').textContent =
-          rollout.duration_s ? rollout.duration_s.toFixed(1) + 's' : '--';
+          rollout.duration_s ? num(rollout.duration_s).toFixed(1) + 's' : '--';
 
         // Task performance
         const taskOk = lat.task_success;
@@ -1348,7 +1513,7 @@ data:
           `<span class="sel-badge ${taskOk ? 'sel-good' : 'sel-bad'}">${taskOk ? '&#10003; success' : '&#10007; failed'}</span>`;
         document.getElementById('g-cubes-placed').textContent =
           lat.cubes_placed != null ? lat.cubes_placed + ' / 3' : '--';
-        const sm = lat.avg_smoothness || 0;
+        const sm = num(lat.avg_smoothness);
         const cls = sm < 0.05 ? 'smooth-good' : sm < 0.15 ? 'smooth-warn' : 'smooth-bad';
         const lbl = sm < 0.05 ? 'smooth' : sm < 0.15 ? 'marginal' : 'jerky';
         document.getElementById('g-smoothness').innerHTML =
@@ -1360,7 +1525,7 @@ data:
         if (score != null) {
           const sc = scoreClass(score);
           document.getElementById('g-curation').innerHTML =
-            `<span class="sel-badge ${verdict === 'pass' ? 'sel-good' : 'sel-bad'}">${verdict === 'pass' ? '&#10003; PASS' : '&#10007; REJECT'}</span> <span class="${sc}">${score.toFixed(3)}</span>`;
+            `<span class="sel-badge ${verdict === 'pass' ? 'sel-good' : 'sel-bad'}">${verdict === 'pass' ? '&#10003; PASS' : '&#10007; REJECT'}</span> <span class="${sc}">${num(score).toFixed(3)}</span>`;
         }
       }
 
@@ -1386,10 +1551,11 @@ data:
       return 'score-bad';
     }
 
+    // Returns markup-safe text: every field of the record is escaped here, so the log can insert it as it is.
     function reasonAnnotation(ep) {
-      const verdict = ep.verdict || ep._verdict || 'pass';
+      const verdict = (ep.verdict || ep._verdict) === 'reject' ? 'reject' : 'pass';
       if (verdict === 'reject') {
-        const r = ep.curation_reason || '';
+        const r = String(ep.curation_reason || '');
         if (r.includes('injected'))
           return 'Injected failure \u2014 curator caught it, rejected before training';
         if (r.includes('gen-failed'))
@@ -1398,16 +1564,16 @@ data:
           return 'Episode too short \u2014 rollout ended before meaningful data was collected';
         if (r.includes('task-failed')) {
           const c = ep.cubes_placed != null ? ep.cubes_placed : '?';
-          return `Task failed \u2014 ${c}/3 cubes placed`;
+          return `Task failed \u2014 ${esc(c)}/3 cubes placed`;
         }
         if (r.includes('jerky'))
           return 'Predicted action trajectory is jerky \u2014 physically implausible, rejected';
-        return 'Curation score below threshold \u2014 ' + r;
+        return 'Curation score below threshold \u2014 ' + esc(r);
       }
       const rollout = ep.rollout || {};
-      const s = ep.avg_smoothness || 0;
+      const s = num(ep.avg_smoothness);
       const cubes = ep.cubes_placed || 0;
-      return `Rollout: ${rollout.status || '?'} (${rollout.steps || '?'} steps), Task: ${ep.task_success ? 'success' : 'fail'} (${cubes}/3 cubes, smoothness ${s.toFixed(3)})`;
+      return `Rollout: ${esc(rollout.status || '?')} (${esc(rollout.steps || '?')} steps), Task: ${ep.task_success ? 'success' : 'fail'} (${esc(cubes)}/3 cubes, smoothness ${s.toFixed(3)})`;
     }
 
     // Authoritative log renderer: rebuilds the scrollable list from the
@@ -1426,7 +1592,7 @@ data:
       const body = document.getElementById('log-body');
       if (!list.length) {
         body.innerHTML = '<div id="log-empty" style="color:var(--txt3);text-align:center;padding:12px 0;font-size:11px">' +
-          (window._fw ? 'Awaiting first episode…' : 'Collection loop stopped — episodes appear here once it runs.') + '</div>';
+          (window._fw ? 'Awaiting first episode…' : idleText()) + '</div>';
         return;
       }
       body.innerHTML = '';
@@ -1434,25 +1600,26 @@ data:
       if (autoScroll) body.scrollTop = 0;
     }
 
-    // Build a single log-entry node (shared by renderLog + prependLogEntry).
-     function buildLogEntry(ep) {
-       const verdict = ep.verdict || ep._verdict || 'pass';
-       const score   = ep.curation_score || 0;
-       const cubes   = ep.cubes_placed != null ? ep.cubes_placed : '?';
-       const ts      = ep.ts ? new Date(ep.ts * 1000).toLocaleTimeString() : '--';
-       const cubesCls = cubes === 3 ? 'score-good' : cubes >= 1 ? 'score-mid' : 'score-bad';
-       const div = document.createElement('div');
-       div.className = 'log-entry ' + verdict;
-       div.innerHTML = `
-         <div class="log-main">
-           <span class="log-time">${ts}</span>
-           <span class="log-verdict ${verdict}">${verdict === 'pass' ? '&#10003; PASS' : '&#10007; REJECT'}</span>
-           <span class="log-id">${(ep.episode_id||'').substring(0,8)}</span>
-           <span class="log-score ${scoreClass(score)}">${score.toFixed(3)}</span>
-           <span class="${cubesCls}" style="font-size:11px;font-weight:600">${cubes}/3</span>
-           <span class="log-scene">${(ep.scene||'').replace(/_/g,' ')}</span>
-         </div>
-         <div class="log-reason ${logAnnotationsOn ? 'show' : ''}">${reasonAnnotation(ep)}</div>`;
+    // Build a single log-entry node (renderLog and prependLogEntry both come through here: the log's one sink).
+    // Every field of the record is escaped or made a number before it meets the markup.
+    function buildLogEntry(ep) {
+      const verdict = (ep.verdict || ep._verdict) === 'reject' ? 'reject' : 'pass';
+      const score   = num(ep.curation_score);
+      const cubes   = ep.cubes_placed != null ? ep.cubes_placed : '?';
+      const ts      = ep.ts ? new Date(num(ep.ts) * 1000).toLocaleTimeString() : '--';
+      const cubesCls = cubes === 3 ? 'score-good' : cubes >= 1 ? 'score-mid' : 'score-bad';
+      const div = document.createElement('div');
+      div.className = 'log-entry ' + verdict;
+      div.innerHTML = `
+        <div class="log-main">
+          <span class="log-time">${esc(ts)}</span>
+          <span class="log-verdict ${verdict}">${verdict === 'pass' ? '&#10003; PASS' : '&#10007; REJECT'}</span>
+          <span class="log-id">${esc(String(ep.episode_id || '').substring(0, 8))}</span>
+          <span class="log-score ${scoreClass(score)}">${score.toFixed(3)}</span>
+          <span class="${cubesCls}" style="font-size:11px;font-weight:600">${esc(cubes)}/3</span>
+          <span class="log-scene">${esc(String(ep.scene || '').replace(/_/g, ' '))}</span>
+        </div>
+        <div class="log-reason ${logAnnotationsOn ? 'show' : ''}">${reasonAnnotation(ep)}</div>`;
       div.style.cursor = 'pointer';
       div.addEventListener('click', () => {
         div.querySelector('.log-reason').classList.toggle('show');
@@ -1463,31 +1630,7 @@ data:
     function prependLogEntry(ep) {
       const logEmpty = document.getElementById('log-empty');
       if (logEmpty) logEmpty.style.display = 'none';
-      const verdict = ep.verdict || ep._verdict || 'pass';
-      const score   = ep.curation_score || 0;
-      const cubes   = ep.cubes_placed != null ? ep.cubes_placed : '?';
-      const ts      = ep.ts ? new Date(ep.ts * 1000).toLocaleTimeString() : '--';
-      const cubesCls = cubes === 3 ? 'score-good' : cubes >= 1 ? 'score-mid' : 'score-bad';
-
-      const div = document.createElement('div');
-      div.className = 'log-entry ' + verdict;
-      div.innerHTML = `
-        <div class="log-main">
-          <span class="log-time">${ts}</span>
-          <span class="log-verdict ${verdict}">${verdict === 'pass' ? '&#10003; PASS' : '&#10007; REJECT'}</span>
-          <span class="log-id">${(ep.episode_id||'').substring(0,8)}</span>
-          <span class="log-score ${scoreClass(score)}">${score.toFixed(3)}</span>
-          <span class="${cubesCls}" style="font-size:11px;font-weight:600">${cubes}/3</span>
-          <span class="log-scene">${(ep.scene||'').replace(/_/g,' ')}</span>
-        </div>
-        <div class="log-reason ${logAnnotationsOn ? 'show' : ''}">${reasonAnnotation(ep)}</div>
-      `;
-      div.style.cursor = 'pointer';
-      div.addEventListener('click', () => {
-        div.querySelector('.log-reason').classList.toggle('show');
-      });
-
-      logBody.prepend(div);
+      logBody.prepend(buildLogEntry(ep));
 
       // Trim
       while (logBody.children.length > MAX_LOG + 1) {
@@ -1689,7 +1832,12 @@ spec:
             - name: TRIGGER_THRESHOLD
               value: "160"   # matches manifest-consumer (D022/D023); was thor-testing's 10
             - name: DASHBOARD_CODE_REV
-              value: "2026-09-20-robot-zero-caption"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
+              value: "2026-09-20-show-lane"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
+            - name: SHOW_LANE_DIR
+              # D166, the live lane: counts, log, badge and bar come from the SHOW curator's volume (curator-show.yaml,
+              # mounted read-only below) - robot zero's episodes, judged and not kept - and the page says so. For
+              # flywheel mode take this variable out: the page reads the flywheel's own records again, as before.
+              value: "/data/show-lane"
             # MinIO (read-only) for the paired A/B video clips under paired-ab/. hub-credentials
             # holds the same values as the MinIO root account (argocd/README.md).
             - name: MINIO_ENDPOINT
@@ -1761,6 +1909,9 @@ spec:
             - name: frames
               mountPath: /data/frames
               readOnly: true
+            - name: show-lane
+              mountPath: /data/show-lane
+              readOnly: true
       volumes:
         - name: code
           configMap:
@@ -1771,6 +1922,10 @@ spec:
         - name: frames
           hostPath:
             path: /var/lib/robot-sim/frames
+        - name: show-lane
+          persistentVolumeClaim:
+            claimName: curator-show-episodes
+            readOnly: true
 ---
 apiVersion: v1
 kind: Service

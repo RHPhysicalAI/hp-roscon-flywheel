@@ -1,0 +1,69 @@
+# This project was developed with assistance from AI tools.
+#
+# Robot zero's episode reporter (D166, the live lane): the image's own episode emitter - the one the flywheel's sim
+# runs beside Gazebo - as a unit of its own on robot zero's graph. It moves nothing and resets nothing: it listens.
+# The episode loop (robot-zero-episodes) signals start and end on /flywheel/episode_control, publishes the peak cube
+# count on /flywheel/episode_cubes and an EMPTY bag reference on /flywheel/episode_dataset (recording is off); this
+# unit adds the step count and the smoothness of /joint_states, reads the cube poses from robot zero's Gazebo, and
+# posts one summary per episode - a few KB of JSON, "dataset_path": null - to ONE address.
+#
+# That address is the SHOW curator's (gitops/flywheel/curator-show.yaml, NodePort 30812): the curator's real gates
+# on a throwaway volume, with no sync agent, no object storage and no Kafka behind it. The flywheel's curator is on
+# port 30802 and must never appear here: robot zero's pixels are the rendering tenant's, and its episodes stay out
+# of the dataset, the trigger count and the evaluation pages. 74-robot-zero-install.sh holds this file to exactly
+# that one line: the real curator's port, a second address of any kind, or this address in any other unit is refused.
+#
+# An address can be reached without being named: the emitter posts with python's urllib, which honours proxy
+# variables, and podman hands its own proxy environment on to a container (--http-proxy is its default). no_proxy=*
+# switches all of that off in here, in both spellings; the installer refuses this file without the two lines, and
+# any unit that mentions a proxy otherwise.
+#
+# No ZENOH_ROUTER here: the emitter has no such setting. It uses the image's default session, which connects to the
+# router on localhost:7447 - robot zero's, since the network is the host's. With the hub away a summary falls back
+# to RAW_DIR, which is on the container's tmpfs and ends with it; nothing of the host is mounted.
+[Unit]
+Description=Robot zero's episode reporter (each episode's summary to the show curator - judged, not kept)
+After=robot-zero-sim.service
+# only ever beside its world: stopped with it, restarted with it, started by it
+BindsTo=robot-zero-sim.service
+StartLimitIntervalSec=1h
+StartLimitBurst=10
+
+[Container]
+ContainerName=robot-zero-emitter
+# the image of robot-zero-sim.container: it carries /ws_pai/episode_emitter.py and the gz tools its cube check uses
+Image=quay.io/jary/soarm-flywheel@sha256:179cbedc5a65759030c2a7cb58b64e952eb50aba7ca421fd7fe57176e2029fe4
+Pull=never
+Network=host
+Environment=CURATOR_URL=http://10.20.0.10:30812/episode
+Environment=no_proxy=*
+Environment=NO_PROXY=*
+Environment=RAW_DIR=/tmp/episodes-raw
+# the same name as robot-zero-sim.container: the cube check reads that Gazebo and no other
+Environment=GZ_PARTITION=robot-zero
+Environment=PYTHONUNBUFFERED=1
+# nothing but /tmp is written: the fallback above, Gazebo's ~/.gz and the ROS logs
+Environment=HOME=/tmp
+Environment=ROS_LOG_DIR=/tmp/ros-log
+ReadOnly=true
+DropCapability=all
+NoNewPrivileges=true
+# The image's entrypoint is the sim's launcher; this runs the emitter alone under the same ROS environment. $$ is
+# systemd's escape for a literal $: the variable is the image's, expanded by the bash inside the container.
+Entrypoint=/bin/bash
+Exec=-c 'source /opt/ros/$${ROS_DISTRO}/setup.bash && source /ws_pai/install/setup.bash && exec python3 -u /ws_pai/episode_emitter.py'
+# python is pid 1 in here and only SIGINT has a handler
+StopSignal=SIGINT
+StopTimeout=10
+
+[Service]
+ExecCondition=/bin/sh -c 'nvidia-ctk cdi list 2>/dev/null | tr -d "[:blank:]" | grep -qxF "nvidia.com/gpu=0:1" || { echo "CDI device nvidia.com/gpu=0:1 is not there (MIG off): robot zero is a tenants-mode tenant, not starting"; exit 1; }'
+SuccessExitStatus=130 143
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+# One ROS node and a short cube check every two seconds while an episode runs: a fraction of a core.
+CPUQuota=100%
+MemoryHigh=512M
+MemoryMax=1G
+MemorySwapMax=0

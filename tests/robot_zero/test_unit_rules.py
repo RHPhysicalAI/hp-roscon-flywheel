@@ -10,7 +10,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 FURY = ROOT / "tools" / "host" / "fury"
-UNITS = ("robot-zero-sim.container", "robot-zero-frames.container", "robot-zero-episodes.container")
+UNITS = ("robot-zero-sim.container", "robot-zero-frames.container", "robot-zero-episodes.container",
+         "robot-zero-emitter.container")
+SHOW_LINE = "Environment=CURATOR_URL=http://10.20.0.10:30812/episode\n"
 
 pytestmark = pytest.mark.skipif(not shutil.which("bash"), reason="needs bash")
 
@@ -82,7 +84,9 @@ def test_check_writes_no_log_and_needs_no_root(checkout, tmp_path):
     ("robot-zero-frames.container", "Pull=never\n", "Pull=never\nImage=localhost/anything:latest\n", "more than one Image="),
     # a later line overrides an earlier one: the rule must see both
     ("robot-zero-episodes.container", "Environment=RECORD=false\n", "Environment=RECORD=false\nEnvironment=RECORD=true\n", "RECORD=false"),
-    ("robot-zero-episodes.container", "Environment=RECORD=false\n", 'Environment=RECORD=false\nEnvironment="RECORD=true"\n', "RECORD=false"),
+    ("robot-zero-episodes.container", "Environment=RECORD=false\n", 'Environment=RECORD=false\nEnvironment="RECORD=true"\n', "quotes an Environment= value"),
+    ("robot-zero-episodes.container", "Environment=RECORD=false\n", "Environment=RECORD=false\nEnvironment='RECORD=true'\n", "quotes an Environment= value"),
+    ("robot-zero-emitter.container", "Environment=PYTHONUNBUFFERED=1\n", 'Environment="PYTHONUNBUFFERED=1" "X=a b"\n', "quotes an Environment= value"),
     ("robot-zero-episodes.container", "Environment=RECORD=false\n", "Environment=RECORD=false BAG_DIR=/data/bags\n", "sets BAG_DIR"),
     ("robot-zero-sim.container", "Environment=SIM_CAMERAS=off\n", "Environment=SIM_CAMERAS=off\nEnvironment=X=1 SIM_CAMERAS=on\n", "episode emitter"),
     # the hardening: every line, exactly, once - and nothing that takes it back
@@ -103,6 +107,51 @@ def test_check_writes_no_log_and_needs_no_root(checkout, tmp_path):
     ("robot-zero-episodes.container", "Pull=never\n", "Pull=never\nEntrypoint=/bin/bash\n", "overrides the image's entrypoint"),
     ("robot-zero-sim.container", "Pull=never\n", "Pull=never\nExec=-c 'anything'\n", "overrides the image's entrypoint"),
     ("robot-zero-frames.container", "Volume=/usr/local/lib/flywheel/robot-zero:/opt/robot-zero:ro,z\n", "", "must mount its code"),
+    # D166, the live lane: one address of the hub, in one unit - the show curator's - and nothing else
+    ("robot-zero-emitter.container", ":30812/episode", ":30802/episode", "may name one address and one only"),
+    ("robot-zero-emitter.container", SHOW_LINE, SHOW_LINE + "Environment=CURATOR_URL=http://10.20.0.10:30802/episode\n", "may name one address and one only"),
+    ("robot-zero-emitter.container", SHOW_LINE, SHOW_LINE + "Environment=MIRROR_URL=http://10.20.0.1:9999/episode\n", "may name one address and one only"),
+    ("robot-zero-emitter.container", SHOW_LINE, SHOW_LINE + "Environment=ELSEWHERE=192.168.7.7:80\n", "may name one address and one only"),
+    ("robot-zero-emitter.container", SHOW_LINE, SHOW_LINE + "Environment=KAFKA_BOOTSTRAP=edge-kafka:9092\n", "may name one address and one only"),
+    ("robot-zero-emitter.container", "10.20.0.10:30812", "10x20.0.10:30812", "may name one address and one only"),
+    ("robot-zero-emitter.container", SHOW_LINE, SHOW_LINE[:-1] + " X=1\n", "may name one address and one only"),
+    ("robot-zero-emitter.container", SHOW_LINE, "", "must carry this line, once"),
+    ("robot-zero-emitter.container", SHOW_LINE, SHOW_LINE + SHOW_LINE, "must carry this line, once"),
+    ("robot-zero-emitter.container", "exec python3 -u /ws_pai", "export CURATOR_URL=http://10.20.0.10:30802/episode; exec python3 -u /ws_pai", "may name one address and one only"),
+    *[(unit, "Pull=never\n", "Pull=never\n" + SHOW_LINE, "must not be able to feed it") for unit in UNITS[:3]],
+    ("robot-zero-episodes.container", "Environment=RECORD=false\n", "Environment=RECORD=false CURATOR_URL=http://10.20.0.10:30812/episode\n", "must not be able to feed it"),
+    # M3: a proxy reaches another address without naming one - refused in every unit, switched off in the emitter's
+    ("robot-zero-emitter.container", SHOW_LINE, SHOW_LINE + "Environment=http_proxy=hub:3128\n", "mentions a proxy"),
+    ("robot-zero-emitter.container", SHOW_LINE, SHOW_LINE + "Environment=HTTPS_PROXY=http://10.20.0.10:3128\n", "mentions a proxy"),
+    ("robot-zero-emitter.container", SHOW_LINE, SHOW_LINE + "Environment=ALL_PROXY=socks5h://elsewhere:1080\n", "mentions a proxy"),
+    ("robot-zero-emitter.container", SHOW_LINE, SHOW_LINE[:-1] + " Http_Proxy=hub:3128\n", "mentions a proxy"),
+    ("robot-zero-emitter.container", "SuccessExitStatus=130 143\n", "SuccessExitStatus=130 143\nEnvironment=http_proxy=hub:3128\n", "mentions a proxy"),
+    ("robot-zero-emitter.container", "exec python3 -u /ws_pai", "export http_proxy=hub:3128; exec python3 -u /ws_pai", "mentions a proxy"),
+    ("robot-zero-emitter.container", "Environment=no_proxy=*\n", "Environment=no_proxy=10.20.0.10\n", "mentions a proxy"),
+    ("robot-zero-emitter.container", "Environment=no_proxy=*\n", "", "must carry these two lines"),
+    ("robot-zero-emitter.container", "Environment=NO_PROXY=*\n", "", "must carry these two lines"),
+    ("robot-zero-emitter.container", "Environment=no_proxy=*\n", "Environment=no_proxy=*\nEnvironment=no_proxy=*\n", "must carry these two lines"),
+    *[(unit, "Pull=never\n", "Pull=never\nEnvironment=https_proxy=hub:3128\n", "mentions a proxy") for unit in UNITS[:3]],
+    ("robot-zero-frames.container", "Pull=never\n", "Pull=never\nEnvironment=no_proxy=*\n", "mentions a proxy"),
+    # S2: the rules read lines, systemd joins them - a continuation is refused, whatever it would have hidden
+    ("robot-zero-emitter.container", "Environment=PYTHONUNBUFFERED=1\n",
+     "Environment=PYTHONUNBUFFERED=1 \\\n# CURATOR_URL=http://10.20.0.10:30802/episode\n", "continues a line onto the next"),
+    ("robot-zero-emitter.container", "Environment=PYTHONUNBUFFERED=1\n", "Environment=PYTHONUNBUFFERED=1 \\\n  OTHER=hub\n", "continues a line onto the next"),
+    ("robot-zero-episodes.container", "Environment=RECORD=false\n", "Environment=RECORD=false \\  \n  RECORD=true\n", "continues a line onto the next"),
+    ("robot-zero-sim.container", "# a fence around", "# a fence \\\n# around", "continues a line onto the next"),
+    # the emitter's fallback ends with the container, nothing is mounted, and what runs is the image's own emitter
+    ("robot-zero-emitter.container", "Environment=RAW_DIR=/tmp/episodes-raw\n", "", "must set RAW_DIR once"),
+    ("robot-zero-emitter.container", "RAW_DIR=/tmp/episodes-raw", "RAW_DIR=/data/episodes/raw", "must set RAW_DIR once"),
+    ("robot-zero-emitter.container", "RAW_DIR=/tmp/episodes-raw", "RAW_DIR=/tmp/../data/episodes", "must set RAW_DIR once"),
+    ("robot-zero-emitter.container", "Environment=RAW_DIR=/tmp/episodes-raw\n", "Environment=RAW_DIR=/tmp/episodes-raw\nEnvironment=RAW_DIR=/var/lib/episodes/raw\n", "must set RAW_DIR once"),
+    ("robot-zero-emitter.container", "Pull=never\n", "Pull=never\nVolume=/data/flywheel/episodes:/data/episodes:z\n", "mounts something"),
+    ("robot-zero-emitter.container", "Pull=never\n", "Pull=never\nVolume=/usr/local/lib/flywheel/robot-zero:/opt/robot-zero:ro,z\n", "mounts something"),
+    ("robot-zero-emitter.container", "Pull=never\n", "Pull=never\nEnvironmentFile=/etc/flywheel-runner/env\n", "no credentials"),
+    ("robot-zero-emitter.container", "Pull=never\n", "Pull=never\nSecret=minio-keys\n", "a key robot zero's units do not use"),
+    ("robot-zero-emitter.container", "exec python3 -u /ws_pai/episode_emitter.py", "exec python3 -u /tmp/other.py", "must run the image's own emitter"),
+    ("robot-zero-emitter.container", "Entrypoint=/bin/bash\n", "Entrypoint=/bin/bash\nEntrypoint=/bin/sh\n", "must run the image's own emitter"),
+    ("robot-zero-emitter.container", "@sha256:179cbedc", "@sha256:0000cafe", "does not name the image of robot-zero-sim.container"),
+    ("robot-zero-emitter.container", "GZ_PARTITION=robot-zero", "GZ_PARTITION=elsewhere", "same Environment=GZ_PARTITION"),
     # S2: a value from one unit file is never a pattern for the other
     ("robot-zero-sim.container", "GZ_PARTITION=robot-zero", "GZ_PARTITION=.*", "a plain name"),
     ("robot-zero-sim.container", "GZ_PARTITION=robot-zero", "GZ_PARTITION=robot.zero", "a plain name"),
@@ -144,6 +193,97 @@ def test_the_recorders_condition_comes_before_it_creates_anything():
     condition = next(i for i, ln in enumerate(lines) if ln.startswith("ExecCondition="))
     pre = next(i for i, ln in enumerate(lines) if ln.startswith("ExecStartPre="))
     assert condition < pre and "/data/flywheel/bags" in lines[pre]
+
+
+def test_the_emitter_is_bound_to_its_world_and_wanted_by_it():
+    """The fourth unit lives and dies with robot zero's world, like the other two beside it."""
+    emitter = (FURY / "flywheel" / "robot-zero-emitter.container").read_text()
+    assert "BindsTo=robot-zero-sim.service\n" in emitter and "After=robot-zero-sim.service\n" in emitter
+    (wants,) = [ln for ln in (FURY / "flywheel" / "robot-zero-sim.container").read_text().splitlines() if ln.startswith("Wants=")]
+    assert "robot-zero-emitter.service" in wants.split("=", 1)[1].split()
+    for key in ("CPUQuota=", "MemoryMax=", "MemorySwapMax=0"):
+        assert re.search(rf"^{key}", emitter, re.MULTILINE), key
+
+
+def test_the_show_curators_address_is_in_one_unit_and_is_the_hubs_show_nodeport():
+    """The line the installer allows is the line the unit carries, and its port is curator-show's NodePort, not the flywheel curator's."""
+    installer = (FURY / "74-robot-zero-install.sh").read_text()
+    assert f"show_line='{SHOW_LINE.strip()}'" in installer
+    for unit in UNITS:
+        lines = [ln for ln in (FURY / "flywheel" / unit).read_text().splitlines() if not ln.lstrip().startswith("#")]
+        assert [ln for ln in lines if "10.20.0.10" in ln] == ([SHOW_LINE.strip()] if unit == "robot-zero-emitter.container" else [])
+    show = (ROOT / "gitops" / "flywheel" / "curator-show.yaml").read_text()
+    real = (ROOT / "gitops" / "flywheel" / "curator.yaml").read_text()
+    assert re.findall(r"nodePort:\s*(\d+)", show) == ["30812"] and re.findall(r"nodePort:\s*(\d+)", real) == ["30802"]
+
+
+# ---- the one-address rule on what quadlet generated (S2) ----
+
+def generated(emitter_env: list[str], service_env: tuple[str, ...] = ("PODMAN_SYSTEMD_UNIT=%n",), extra: str = "") -> str:
+    """quadlet -dryrun output in the shape podman 5.8 prints it on the host: the file under [X-Container], one --env a variable, sorted."""
+    envs = " ".join(f"--env {pair}" for pair in sorted(emitter_env))
+    service = "\n".join(f"Environment={pair}" for pair in service_env)
+    return ("---robot-zero-sim.service---\n[Service]\nExecStart=/usr/bin/podman run --name robot-zero-sim --env RENDER_STATE_ADDR=10.20.0.1:9701 image\n"
+            "---robot-zero-emitter.service---\n[Unit]\nDescription=reporter\n\n[X-Container]\n" + SHOW_LINE + "Environment=HOME=/tmp\n\n"
+            f"[Service]\n{service}\nExecStop=/usr/bin/podman rm -v -f -i robot-zero-emitter\n"
+            "ExecStart=/usr/bin/podman run --name robot-zero-emitter --replace --rm --cgroups=split --entrypoint=/bin/bash --pull never "
+            f"--network host --sdnotify=conmon -d --security-opt=no-new-privileges --cap-drop all --read-only {extra}{envs} "
+            "quay.io/jary/soarm-flywheel@sha256:" + "1" * 64 + " -c \"source /opt/ros/$${ROS_DISTRO}/setup.bash && exec python3 -u /ws_pai/episode_emitter.py\"\n"
+            "---robot-zero-frames.service---\n[Service]\nExecStart=/usr/bin/podman run --name robot-zero-frames --env RENDER_HTTP_ADDR=10.20.0.1:9702 image\n")
+
+
+def unit_env() -> list[str]:
+    lines = (FURY / "flywheel" / "robot-zero-emitter.container").read_text().splitlines()
+    return [pair for ln in lines if ln.startswith("Environment=") for pair in ln.removeprefix("Environment=").split()]
+
+
+@pytest.fixture
+def check_generated(tmp_path):
+    def run(text: str) -> subprocess.CompletedProcess:
+        (tmp_path / "generated.txt").write_text(text)
+        return subprocess.run(["bash", str(FURY / "74-robot-zero-install.sh"), "check-generated", str(tmp_path / "generated.txt")],
+                              capture_output=True, text=True, timeout=30, check=False)
+    return run
+
+
+def test_what_quadlet_makes_of_the_shipped_emitter_keeps_the_rule(check_generated, tmp_path):
+    """The unit's own variables, rendered the way quadlet renders them, pass - and nothing is logged or needs root."""
+    done = check_generated(generated(unit_env()))
+    assert done.returncode == 0, done.stderr
+    assert not (FURY / "log" / "74-robot-zero-install.log").exists() or "check-generated" not in (FURY / "log" / "74-robot-zero-install.log").read_text()
+
+
+@pytest.mark.parametrize("change, names", [
+    (lambda env: {"emitter_env": [*env, "http_proxy=hub:3128"]}, "http_proxy=hub:3128"),
+    (lambda env: {"emitter_env": [*env, "HTTPS_PROXY=hub:3128"]}, "HTTPS_PROXY=hub:3128"),
+    (lambda env: {"emitter_env": [*env, "SECOND=http://elsewhere.example/"]}, "SECOND=http://elsewhere.example/"),
+    (lambda env: {"emitter_env": [*env, "SECOND=192.168.7.7:80"]}, "SECOND=192.168.7.7:80"),
+    (lambda env: {"emitter_env": [p.replace(":30812/", ":30802/") for p in env]}, "CURATOR_URL=http://10.20.0.10:30802/episode"),
+    (lambda env: {"emitter_env": [*env, "CURATOR_URL=http://10.20.0.10:30802/episode"]}, "CURATOR_URL=http://10.20.0.10:30802/episode"),
+    (lambda env: {"emitter_env": [p for p in env if p != "no_proxy=*"]}, "missing: --env no_proxy=*"),
+    (lambda env: {"emitter_env": [p for p in env if not p.startswith("CURATOR_URL=")]}, "missing: --env CURATOR_URL="),
+    (lambda env: {"emitter_env": env, "extra": "--env-file /etc/flywheel-runner/env "}, "--env-file"),
+    (lambda env: {"emitter_env": env, "extra": "--http-proxy=true "}, "--http-proxy=true"),
+    (lambda env: {"emitter_env": env, "service_env": ("PODMAN_SYSTEMD_UNIT=%n", "https_proxy=hub:3128")}, "[Service] Environment=https_proxy=hub:3128"),
+])
+def test_a_generated_unit_with_a_second_way_out_is_refused(check_generated, change, names):
+    """After systemd's joining, unquoting and de-duplication: one CURATOR_URL, no other address, no proxy, nothing inherited."""
+    done = check_generated(generated(**change(unit_env())))
+    assert done.returncode == 1
+    assert names in done.stderr and "does not keep the one-address rule" in done.stderr, done.stderr
+
+
+def test_no_generated_emitter_is_a_refusal_too(check_generated):
+    """Fail closed: a dry run without the unit proves nothing."""
+    done = check_generated("---robot-zero-sim.service---\n[Service]\nExecStart=/usr/bin/podman run image\n")
+    assert done.returncode == 1 and "generated no robot-zero-emitter.service" in done.stderr
+
+
+def test_install_runs_the_generated_check_before_it_installs_anything():
+    """The post-parse rule sits between quadlet's dry run and the first install line."""
+    text = (FURY / "74-robot-zero-install.sh").read_text()
+    body = text[text.index("install_() {"):]
+    assert body.index("-dryrun") < body.index('check_generated "$gen"') < body.index("install -d -m 0755")
 
 
 def test_every_robot_zero_unit_only_starts_with_the_slice_there():

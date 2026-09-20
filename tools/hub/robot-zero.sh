@@ -7,8 +7,9 @@
 #
 #   robot-zero.sh up       tenants mode: name slice 0:1 in the label, wait until RHEM has rendered it, start the policy
 #   robot-zero.sh down     stop the policy and take the label away again - what a switch to flywheel mode needs first
-#   robot-zero.sh reset    restart robot zero's world, frames and episode loop on the host (asks for the sudo password
-#                          once, on this terminal); the policy follows its world. No other tenant is touched
+#   robot-zero.sh reset    restart robot zero's world, frames, episode loop and episode reporter on the host (asks for
+#                          the sudo password once, on this terminal); the policy follows its world. No other tenant
+#                          is touched
 #   robot-zero.sh status   RHEM's view, the host's units, the renderer's view of r00. No sudo, nothing changes
 #
 # The order is the point. A label change re-renders the quadlet and the agent restarts a running policy at once, so
@@ -34,7 +35,7 @@ verb=$1
 fc=${FLIGHTCTL:-$(command -v flightctl || echo "$HOME/.local/bin/flightctl")}
 alias_label=${DEVICE_ALIAS:-fury-host}
 app=${APP:-act-inference}
-units=(robot-zero-sim.service robot-zero-frames.service robot-zero-episodes.service)
+units=(robot-zero-sim.service robot-zero-frames.service robot-zero-episodes.service robot-zero-emitter.service)
 [[ -x $fc ]] || die "no flightctl at $fc"
 command -v jq >/dev/null || die "jq is missing"
 tmp=''
@@ -184,7 +185,7 @@ down)
     echo "the policy is out of service and unplaced. Robot zero's world keeps running on the host until a mode switch; r00 stays on the wall with its arm at rest."
     ;;
 reset)
-    echo "host: restart robot zero's world, frames and episode loop (the policy follows its world)"
+    echo "host: restart robot zero's world, frames, episode loop and episode reporter (the policy follows its world)"
     ssh -t "$FURY_SSH" /usr/local/sbin/fury-mode zero
     ;;
 status)

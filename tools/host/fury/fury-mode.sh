@@ -6,7 +6,7 @@
 #   fury-mode tenants    MIG on, 3g + 1g + 1g + 1g. Isolated slices for compute tenants; no graphics.
 #                        Starts the coding assistant on the large slice, the training tenant on 0:2, the
 #                        fleet's renderer on 0:3 and robot zero's host side (its physics-only world, its
-#                        frames, its episode loop), each if its unit is installed.
+#                        frames, its episode loop, its episode reporter), each if its unit is installed.
 #   fury-mode zero       tenants mode only: restart robot zero's host side and nothing else
 #   fury-mode status
 #
@@ -32,8 +32,9 @@ assistant=llm-assistant.service          # act 2's tenant on slice 0:0 - a host 
 tenant=training-tenant.service           # act 2's tenant on slice 0:2 - the same (72-training-tenant-install.sh)
 renderer=fleet-renderer.service          # act 2's tenant on slice 0:3 - the same (73-fleet-renderer-install.sh)
 # robot zero's host side (74-robot-zero-install.sh): no gpu in any of them. The first is the handle - it wants the
-# other two and they are bound to it. Robot zero's gpu tenant, on slice 0:1, is the policy below.
-zero=(robot-zero-sim.service robot-zero-frames.service robot-zero-episodes.service)
+# other three and they are bound to it. The last reports each episode to the show curator on the hub, which judges
+# it for the flywheel page and keeps nothing (D166). Robot zero's gpu tenant, on slice 0:1, is the policy below.
+zero=(robot-zero-sim.service robot-zero-frames.service robot-zero-episodes.service robot-zero-emitter.service)
 policy='act-inference-*-act-inference.service'                             # after: <app id>-<quadlet>, named by the agent
 telemetry=dcgm-exporter.service          # runs in both modes (70-dcgm.sh). Not installed is fine: every call below is quiet
 die() { echo "fury-mode: $*" >&2; exit 1; }
@@ -209,14 +210,15 @@ tenants)
         # a switch always gets a fresh try, as for the tenant
         systemctl reset-failed "${zero[@]}" 2>/dev/null
         systemctl start --no-block "${zero[@]}"
-        echo "robot zero's world, frames and episode loop are starting - r00 is on the wall within a minute: journalctl -fu ${zero[0]%.service}"
+        echo "robot zero's world, frames, episode loop and episode reporter are starting - r00 is on the wall within a minute: journalctl -fu ${zero[0]%.service}"
         echo "its policy is RHEM's to place on slice 0:1 and start. From the laptop: tools/hub/robot-zero.sh up   (tools/hub/fury-switch.sh tenants ends with it)"
     fi
     status
     ;;
 zero)
     # Robot zero's host side alone, for a reset at demo time: no other tenant is touched and MIG is not. The world's
-    # unit takes the frames and the episode loop along, and restarts the policy itself if that is running.
+    # unit takes the frames, the episode loop and the episode reporter along, and restarts the policy itself if that
+    # is running.
     systemctl cat "${zero[0]}" >/dev/null 2>&1 || die "robot zero's units are not installed: cd ~/flywheel-setup && ./74-robot-zero-install.sh install"
     [[ $(mig) == Enabled ]]                    || die "robot zero is a tenants-mode tenant and MIG is off. From the laptop: tools/hub/fury-switch.sh tenants   (here: fury-mode tenants)"
     systemctl reset-failed "${zero[@]}" 2>/dev/null

@@ -14,8 +14,9 @@
 #                     coordinator keeps goes to a tmpfs that ends with the container
 #   no EnvironmentFile=, no CURATOR_URL: no credential and no address of the hub's pipeline
 # RECORD=false does NOT silence the coordinator's start/end signals on /flywheel/episode_control. What turns those
-# into a curator record is the episode emitter, and that lives in the flywheel's sim container, which cannot start
-# under MIG; robot zero's world (SIM_CAMERAS=off) starts none.
+# into a curator record is the episode emitter. The flywheel's lives in its sim container, which cannot start under
+# MIG, and robot zero's world (SIM_CAMERAS=off) starts none. Robot zero's own, robot-zero-emitter, listens to these
+# signals and reports to the show curator only - judged for the page, kept nowhere (D166).
 [Unit]
 Description=Robot zero's episode loop (reset, run the policy, repeat - records nothing)
 After=robot-zero-sim.service

@@ -13,6 +13,17 @@
 # The curation threshold is a tunable knob — in production you'd plug in a
 # learned quality model. The governed pipeline ensures data never leaves the
 # device without passing curation.
+#
+# One code, two deployments: curator-show.yaml (D166, the live lane) runs this same ConfigMap on a throwaway volume
+# with KEEP_NEWEST set. Unset, as it is here, nothing below is pruned and no totals file is written. Both
+# Deployments carry the same CURATOR_CODE_REV, so a change of the code reaches both at the same sync.
+#
+# The receiver is an open NodePort and what it stores is what two pages display, so for both lanes: a body is
+# bounded and must be a JSON object whose displayed fields are what the emitter sends (short plain text, numbers,
+# booleans); a client that stalls is dropped and never holds up the next; a record that cannot be judged leaves
+# the queue once instead of failing again every three seconds.
+#
+# This project was developed with assistance from AI tools.
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -33,13 +44,98 @@ data:
     As the policy improves, trajectories get smoother and task success increases —
     the flywheel's quality signal is directly tied to policy performance.
     """
-    import json, os, re, time, pathlib
+    import json, math, os, re, time, pathlib
 
     RAW_DIR              = pathlib.Path(os.environ.get("RAW_DIR",      "/data/episodes/raw"))
     CURATED_DIR          = pathlib.Path(os.environ.get("CURATED_DIR",  "/data/episodes/curated"))
     REJECTED_DIR         = pathlib.Path(os.environ.get("REJECTED_DIR", "/data/episodes/rejected"))
     PASS_THRESHOLD       = float(os.environ.get("PASS_THRESHOLD",      "0.5"))
     SMOOTHNESS_THRESHOLD = float(os.environ.get("SMOOTHNESS_THRESHOLD", "0.15"))
+    # The live lane (curator-show.yaml) judges all day on a throwaway volume: KEEP_NEWEST > 0 keeps only that many
+    # records in each verdict directory and carries the running totals in TOTALS_FILE, so a count outlives the
+    # pruning. 0, the default and the flywheel's curator: nothing is pruned, no totals file is written.
+    KEEP_NEWEST          = int(os.environ.get("KEEP_NEWEST", "0"))
+    TOTALS_FILE          = CURATED_DIR.parent / "totals.json"
+    # The live lane's records are read by a page every few seconds and never by a person: written compact there.
+    RECORD_INDENT        = None if KEEP_NEWEST > 0 else 2
+    # The largest body the receiver reads. An episode summary is under 1 KB; curator-show.yaml sets 64 KB.
+    MAX_BODY_BYTES       = int(os.environ.get("MAX_BODY_BYTES", "1000000"))
+    RECEIVER_TIMEOUT_S   = 10    # a client that goes quiet mid-request is dropped after this long
+    QUARANTINE_AFTER_S   = 10    # a raw record younger than this may still be being written: it gets another pass
+    # What a page displays as text: the emitter's scene, model label, timestamp, rollout status, score reason.
+    SAFE_TEXT_RE         = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:-]{0,63}$")
+
+    def prune(directory: pathlib.Path, keep: int, pattern: str = "*.json") -> int:
+        """Delete all but the newest `keep` files of a directory that match; 0 keeps everything."""
+        if keep <= 0:
+            return 0
+        found = []
+        for p in directory.glob(pattern):
+            try:
+                found.append((p.stat().st_mtime, p))
+            except OSError:
+                pass
+        found.sort(key=lambda f: f[0], reverse=True)
+        for _, old in found[keep:]:
+            old.unlink(missing_ok=True)
+        return len(found[keep:])
+
+    def bump_totals(path: pathlib.Path, verdict: str) -> dict:
+        """Add one verdict to the running totals and keep when the count began; written whole, then renamed."""
+        try:
+            loaded = json.loads(path.read_text())
+            totals = {str(k): int(v) for k, v in loaded.items()}
+        except FileNotFoundError:
+            totals = {}
+        except Exception as e:
+            # said, never swallowed: the number on the page is about to drop to zero, and this is why
+            print(f"[curator] {path.name} is unreadable ({e}): the live lane's count starts again at zero", flush=True)
+            totals = {}
+        totals.setdefault("since", int(time.time()))
+        totals[verdict] = totals.get(verdict, 0) + 1
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(totals))
+        tmp.replace(path)
+        return totals
+
+    def keep_lane_small(verdict: str | None) -> None:
+        """The live lane's housekeeping after a record left raw/ (verdict None: set aside); nothing at all unless KEEP_NEWEST is set."""
+        if KEEP_NEWEST <= 0:
+            return
+        if verdict:
+            bump_totals(TOTALS_FILE, verdict)
+        prune(CURATED_DIR, KEEP_NEWEST)
+        prune(REJECTED_DIR, KEEP_NEWEST)
+        prune(RAW_DIR, KEEP_NEWEST)
+        prune(RAW_DIR, KEEP_NEWEST, "*.bad")
+
+    def _no_constant(name: str):
+        """NaN and Infinity are not JSON: a browser refuses a status that carries one."""
+        raise ValueError(f"{name} is not a JSON number")
+
+    def _is_number(value) -> bool:
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+    def check_episode(ep) -> None:
+        """ValueError naming the field unless the fields a page displays are what the emitter sends: short plain text, numbers, booleans."""
+        if not isinstance(ep, dict):
+            raise ValueError("not a JSON object")
+        rollout = ep.get("rollout", {})
+        if not isinstance(rollout, dict):
+            raise ValueError("rollout: not an object")
+        for name, value in (("scene", ep.get("scene")), ("model_version", ep.get("model_version")), ("timestamp", ep.get("timestamp")),
+                            ("score_reason", ep.get("score_reason")), ("rollout.status", rollout.get("status"))):
+            if value is not None and not (isinstance(value, str) and SAFE_TEXT_RE.match(value)):
+                raise ValueError(f"{name}: not a short plain string")
+        for name in ("task_success", "has_failure"):
+            if ep.get(name) is not None and not isinstance(ep[name], bool):
+                raise ValueError(f"{name}: not a boolean")
+        for name, value, top in (("cubes_placed", ep.get("cubes_placed"), 99), ("rollout.steps", rollout.get("steps"), 10**9)):
+            if value is not None and not (isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= top):
+                raise ValueError(f"{name}: not a count")
+        for name, value in (("avg_smoothness", ep.get("avg_smoothness")), ("rollout.duration_s", rollout.get("duration_s"))):
+            if value is not None and not _is_number(value):
+                raise ValueError(f"{name}: not a number")
 
     def score_episode(episode: dict) -> tuple[float, str]:
         # Gate 0: injected failures (demo mechanism — always reject)
@@ -93,9 +189,9 @@ data:
         return score, reason
 
     # ---- HTTP receiver for remote episode submission ----
-    def start_receiver(port=8082):
-        """Accept POSTed episode JSON from remote emitters (host-based sim)."""
-        from http.server import HTTPServer, BaseHTTPRequestHandler
+    def start_receiver(port=8082, host="0.0.0.0"):
+        """Accept POSTed episode JSON from remote emitters (host-based sim); returns the running server."""
+        from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
         import threading
 
         # D116: this receiver is an unauthenticated NodePort (30802). episode_id used to build the
@@ -103,17 +199,24 @@ data:
         # skipping score_episode() entirely. The real emitter always sends a uuid4 (episode_emitter.
         # py: self._episode_id = str(uuid.uuid4())), so a strict charset costs it nothing.
         EPISODE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-        MAX_BODY_BYTES = 1_000_000
 
         class Handler(BaseHTTPRequestHandler):
+            # One thread a connection and a socket timeout: a client that sends its headers and goes quiet is
+            # dropped after RECEIVER_TIMEOUT_S and meanwhile holds up nobody. HTTP/1.0: one request a connection.
+            protocol_version = "HTTP/1.0"
+            timeout = RECEIVER_TIMEOUT_S
             def log_message(self, *a): pass
             def do_POST(self):
-                length = int(self.headers.get("Content-Length", 0))
-                if length > MAX_BODY_BYTES:
-                    self.send_response(413); self.end_headers(); self.wfile.write(b"payload too large"); return
-                body = self.rfile.read(length)
                 try:
-                    ep = json.loads(body)
+                    length = int(self.headers.get("Content-Length", 0))
+                    if length < 0:
+                        raise ValueError("Content-Length is negative")
+                    if length > MAX_BODY_BYTES:
+                        self.send_response(413); self.end_headers(); self.wfile.write(b"payload too large"); return
+                    body = self.rfile.read(length)
+                    ep = json.loads(body, parse_constant=_no_constant)
+                    if not isinstance(ep, dict):
+                        raise ValueError("not a JSON object")
                     eid = str(ep.get("episode_id", "unknown"))
                     if not EPISODE_ID_RE.match(eid):
                         print(f"[curator-receiver] Rejected episode_id {eid!r}: fails {EPISODE_ID_RE.pattern}", flush=True)
@@ -128,21 +231,82 @@ data:
                     if out.resolve().parent != RAW_DIR.resolve():
                         print(f"[curator-receiver] Rejected episode_id {eid!r}: escapes {RAW_DIR}", flush=True)
                         self.send_response(400); self.end_headers(); self.wfile.write(b"invalid episode_id"); return
-                    out.write_text(json.dumps(ep, indent=2))
+                    check_episode(ep)
+                    # whole, then renamed: the scoring loop never reads half a record (the name matches no *.json)
+                    tmp = RAW_DIR / f".{eid}.tmp"
+                    tmp.write_text(json.dumps(ep, indent=RECORD_INDENT))
+                    tmp.replace(out)
                     print(f"[curator-receiver] Received episode {eid}", flush=True)
                     self.send_response(200)
                     self.end_headers()
                     self.wfile.write(b"ok")
                 except Exception as e:
                     print(f"[curator-receiver] Error: {e}", flush=True)
-                    self.send_response(400)
-                    self.end_headers()
-                    self.wfile.write(str(e).encode())
+                    try:
+                        self.send_response(400)
+                        self.end_headers()
+                        self.wfile.write(str(e).encode())
+                    except OSError:
+                        pass   # the client that stalled has gone
 
-        server = HTTPServer(("0.0.0.0", port), Handler)
+        server = ThreadingHTTPServer((host, port), Handler)   # daemon_threads is its default
         t = threading.Thread(target=server.serve_forever, daemon=True)
         t.start()
         print(f"[curator-receiver] Listening on port {port}", flush=True)
+        return server
+
+    # ---- the scoring loop, one record at a time ----
+    def curate(path: pathlib.Path) -> str:
+        """Judge one raw record: written to curated/ or rejected/, removed from raw/. Returns the verdict."""
+        episode = json.loads(path.read_text(), parse_constant=_no_constant)
+        check_episode(episode)
+        score, reason = score_episode(episode)
+        episode["curation_score"]  = score
+        episode["curation_reason"] = reason
+        name = episode.get("episode_id", path.stem)
+
+        if score >= PASS_THRESHOLD:
+            episode["curation_verdict"] = "pass"
+            dest = CURATED_DIR / path.name
+            dest.write_text(json.dumps(episode, indent=RECORD_INDENT))
+            print(
+                f"[curator] PASS  {name} "
+                f"score={score:.3f} ({reason})",
+                flush=True,
+            )
+        else:
+            episode["curation_verdict"] = "reject"
+            dest = REJECTED_DIR / path.name
+            dest.write_text(json.dumps(episode, indent=RECORD_INDENT))
+            print(
+                f"[curator] REJECT {name} "
+                f"score={score:.3f} ({reason})",
+                flush=True,
+            )
+        path.unlink()
+        return episode["curation_verdict"]
+
+    def set_aside(path: pathlib.Path, why: Exception) -> bool:
+        """A record that cannot be judged leaves the queue once, as <name>.bad; a young one may still be being written and stays."""
+        try:
+            if time.time() - path.stat().st_mtime < QUARANTINE_AFTER_S:
+                return False
+            path.replace(path.with_name(path.name + ".bad"))
+        except OSError:
+            return False
+        print(f"[curator] Set aside {path.name} as .bad, it cannot be judged: {why}", flush=True)
+        return True
+
+    def curate_all() -> None:
+        """One pass over raw/. What is wrong with a record sets it aside; what is wrong with the disk is tried again."""
+        for path in sorted(RAW_DIR.glob("*.json")):
+            try:
+                keep_lane_small(curate(path))
+            except (ValueError, TypeError, KeyError, AttributeError) as e:   # unreadable JSON is a ValueError
+                if set_aside(path, e):
+                    keep_lane_small(None)
+            except Exception as e:
+                print(f"[curator] Error processing {path.name}: {e}", flush=True)
 
     if __name__ == "__main__":
         print(
@@ -152,6 +316,8 @@ data:
             f"  watching {RAW_DIR}",
             flush=True,
         )
+        # raw/ too: on an empty volume the receiver would have nowhere to write (it exists already on the flywheel's)
+        RAW_DIR.mkdir(parents=True, exist_ok=True)
         CURATED_DIR.mkdir(parents=True, exist_ok=True)
         REJECTED_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -159,34 +325,7 @@ data:
         start_receiver(int(os.environ.get("RECEIVER_PORT", "8082")))
 
         while True:
-            for path in sorted(RAW_DIR.glob("*.json")):
-                try:
-                    episode = json.loads(path.read_text())
-                    score, reason = score_episode(episode)
-                    episode["curation_score"]  = score
-                    episode["curation_reason"] = reason
-
-                    if score >= PASS_THRESHOLD:
-                        episode["curation_verdict"] = "pass"
-                        dest = CURATED_DIR / path.name
-                        dest.write_text(json.dumps(episode, indent=2))
-                        print(
-                            f"[curator] PASS  {episode['episode_id']} "
-                            f"score={score:.3f} ({reason})",
-                            flush=True,
-                        )
-                    else:
-                        episode["curation_verdict"] = "reject"
-                        dest = REJECTED_DIR / path.name
-                        dest.write_text(json.dumps(episode, indent=2))
-                        print(
-                            f"[curator] REJECT {episode['episode_id']} "
-                            f"score={score:.3f} ({reason})",
-                            flush=True,
-                        )
-                    path.unlink()
-                except Exception as e:
-                    print(f"[curator] Error processing {path.name}: {e}", flush=True)
+            curate_all()
             time.sleep(3)
 ---
 apiVersion: apps/v1
@@ -210,6 +349,11 @@ spec:
           image: docker.io/library/python@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
           command: ["python", "/app/curator.py"]
           env:
+            # curator.py is mounted from the ConfigMap above and read once at process start: bump with every change
+            # of the code, here AND in curator-show.yaml (tests/hub/test_show_lane.py holds the two equal), so both
+            # lanes move to reviewed code at the same sync instead of whenever a pod next happens to restart.
+            - name: CURATOR_CODE_REV
+              value: "2026-09-20-bounded-receiver"
             - name: PASS_THRESHOLD
               value: "0.5"
             - name: SMOOTHNESS_THRESHOLD

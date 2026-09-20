@@ -97,11 +97,11 @@ def test_tenants_to_tenants_keeps_the_policy_and_still_stops_the_recorder(host):
     assert done.returncode == 0, done.stderr
     assert "the RHEM-managed policy stays up on its slice" in done.stdout
     assert {"act-coordinator.service", "flywheel-runner.service", "act-inference.service", "robot-zero-sim.service",
-            "llm-assistant.service", "training-tenant.service", "fleet-renderer.service"} <= stops(calls())
+            "robot-zero-emitter.service", "llm-assistant.service", "training-tenant.service", "fleet-renderer.service"} <= stops(calls())
     # PartOf=so-arm-sim.service on the policy, PartOf=fury-flywheel.target on the sim: a stop of either reaches the policy
     assert "so-arm-sim.service" not in stops(calls())
     assert not [line for line in calls() if "fury-flywheel.target" in line and not line.startswith("is-active")]
-    assert "start --no-block robot-zero-sim.service robot-zero-frames.service robot-zero-episodes.service" in calls()
+    assert "start --no-block robot-zero-sim.service robot-zero-frames.service robot-zero-episodes.service robot-zero-emitter.service" in calls()
 
 
 def test_a_real_switch_stops_everything(host):
@@ -157,14 +157,14 @@ def test_a_foreign_gpu_client_still_refuses_when_the_policy_is_kept(host):
 
 
 def test_zero_restarts_robot_zero_alone(host):
-    """fury-mode zero touches the three robot-zero units and nothing else."""
+    """fury-mode zero touches the four robot-zero units and nothing else."""
     run, calls, place, _, _, _ = host
     place(SLICE_1)
     done = run("zero", STUB_POLICY="active/running")
     assert done.returncode == 0, done.stderr
     changed = [line for line in calls() if line.split()[0] in ("stop", "start", "restart", "disable", "enable")]
     assert changed == ["restart robot-zero-sim.service",
-                       "start robot-zero-sim.service robot-zero-frames.service robot-zero-episodes.service"]
+                       "start robot-zero-sim.service robot-zero-frames.service robot-zero-episodes.service robot-zero-emitter.service"]
 
 
 def test_zero_refuses_in_flywheel_mode(host):
