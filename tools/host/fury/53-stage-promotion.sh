@@ -25,6 +25,8 @@ set -euo pipefail
 here=$(dirname "$(readlink -f "$0")")
 mkdir -p "$here/log"
 exec > >(tee -a "$here/log/$(basename "$0" .sh).log") 2>&1
+# Under sudo the terminal can go away before tee has written the last lines - an early refusal then shows nothing.
+trap 'exec >&- 2>&-; wait' EXIT
 
 stage=/data/models/import-dev; force=no
 for a in "$@"; do
