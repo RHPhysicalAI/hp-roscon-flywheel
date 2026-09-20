@@ -1,0 +1,33 @@
+# This project was developed with assistance from AI tools.
+#
+# What the tenants on the GPU host are doing with their slices, beside what the GPU says about them
+# (fury-gpu-scrape.yaml): the tenant metrics exporter on the host's side of the VM network. It reads the
+# training tenant's round log and ledger and asks the rendering tenant for its status
+# (tools/host/fury/75-tenant-metrics-install.sh; who reaches the port, and why that is accepted:
+# 75-tenant-metrics.md). Same path as the GPU scrape: out of the pod network through the node, which is
+# what the host's firewall opening for 9401/tcp admits. A static target, no Service and no EndpointSlice.
+#
+# A tenant that is not running is not a failed scrape: the exporter answers with tenant_training_up 0 or
+# tenant_renderer_up 0 and leaves that tenant's numbers out, so the panels show a gap, not a flat line.
+#
+# monitoring.rhobs, not monitoring.coreos.com: only those are read by a MonitoringStack.
+apiVersion: monitoring.rhobs/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: fury-tenants
+  namespace: observability
+  labels:
+    # the MonitoringStack's resourceSelector (monitoring-stack.yaml); without it this is ignored silently
+    app.kubernetes.io/part-of: edge-metrics
+spec:
+  # the `job` label on every series, and what the dashboard selects on
+  jobName: fury-tenants
+  scheme: HTTP
+  metricsPath: /metrics
+  # lerobot prints a loss line about every ten seconds; the renderer's numbers move faster than that
+  scrapeInterval: 10s
+  # the exporter gives the renderer 1.5 s to answer before it calls it down
+  scrapeTimeout: 5s
+  staticConfigs:
+    - targets:
+        - 10.20.0.1:9401

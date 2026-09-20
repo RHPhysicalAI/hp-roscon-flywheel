@@ -51,15 +51,23 @@ round directories are kept (about 0.6 GB each), older ones go.
 
 ## On stage
 
-1. **The journal** — lerobot's own loss lines, one every 100 steps (about every half minute), and one line of
-   JSON when a round ends:
+1. **The journal** — lerobot's own loss lines, one every 100 steps (about every ten seconds), and one line of
+   JSON when a round ends. Wrapped for a projector — step of the round, loss, steps per second, data wait, every
+   round's start and end called out — from a laptop, or on the host with `--local`; no sudo (`75-tenant-metrics.md`):
+
+   ```
+   FURY_SSH=<user>@<host> tools/hub/training-watch.sh
+   ```
+
+   The lines as they are:
 
    ```
    sudo journalctl -fu training-tenant
    ```
 
-2. **The GPU tenants dashboard** (`70-dcgm.md`): the `1g.31gb` row that goes busy when the tenant starts, beside
-   the assistant's `3g.126gb` row. Stop the tenant and only that row drops.
+2. **The GPU tenants dashboard** (`70-dcgm.md`, `75-tenant-metrics.md`): the *Training tenant* group — loss,
+   steps per second, the round, the loss curve round after round — and the `training (1g)` line that goes busy
+   when the tenant starts, beside the assistant's. Stop the tenant and only its numbers drop.
 3. **The ledger** — one line per round: configuration, steps, wall time, last loss, steps per second, and the
    seconds per step spent computing (`updt_s`) against waiting for data (`data_s`), from lerobot's log lines:
 
