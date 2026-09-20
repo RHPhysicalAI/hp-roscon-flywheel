@@ -65,7 +65,7 @@ spec:
         - name: eval-dashboard
           # Digest: filled in from the output of tools/hub/build-eval-dashboard.sh (same value
           # on both image lines in this file). Do not commit this file with the placeholder in it.
-          image: quay.io/jary/soarm-flywheel@sha256:103e3f8b8040e5fb7284588afc12ee2d2929299089f0ad536ff8ace674cdc586
+          image: quay.io/jary/soarm-flywheel@sha256:82ab23e3f25014d9ff80f1b40b507bb3c73ee201873ecf8b8c14a16c08c97e79
           ports:
             - containerPort: 8080
           env:
@@ -192,7 +192,7 @@ spec:
         - name: eval-dashboard
           # Digest: filled in from the output of tools/hub/build-eval-dashboard.sh (same value
           # on both image lines in this file). Do not commit this file with the placeholder in it.
-          image: quay.io/jary/soarm-flywheel@sha256:103e3f8b8040e5fb7284588afc12ee2d2929299089f0ad536ff8ace674cdc586
+          image: quay.io/jary/soarm-flywheel@sha256:82ab23e3f25014d9ff80f1b40b507bb3c73ee201873ecf8b8c14a16c08c97e79
           ports:
             - containerPort: 8080
           env:
