@@ -5375,3 +5375,22 @@ Service under `gitops/flywheel/`, the app went Synced, and the Route kept answer
 `EndpointSlice` (and `Endpoints`) from what it manages, silently. It now lives in
 `tools/hub/manual/sim-cameras-endpointslice.yaml`, applied by hand once per hub (`argocd/README.md`). "Synced" says
 that what Argo manages matches git; it says nothing about what Argo was never going to create.
+
+## D160 — Phase 6 on the slice: the assistant serves from MIG slice `0:0` at about 245 tokens/s, up in under three minutes
+
+**Date:** 2026-09-20. **Status:** measured (FURY-PLAN ledger L9 done); reaching it from the booth and the isolation
+beat are still open.
+
+`63-assistant-install.sh` installed the unit and seeded its cache volume from the smoke test's compiled kernels
+(1.6 GB); `tools/hub/fury-switch.sh tenants` stopped the RHEM-managed policy through flightctl, drained the loop,
+turned MIG on (`9,19,19,19`) and `fury-mode` started `llm-assistant.service` on `nvidia.com/gpu=0:0` (3g.126gb).
+From the switch to `Application startup complete`: **under three minutes** (weights 65 s, engine init 64 s; no
+autotune, caches warm) - against 5 min 46 s for the first cold start in D154. KV cache available on the slice:
+66.6 GiB.
+
+Measured on the slice with `61-rhaiis-smoke.sh` (the unit's own endpoint, loopback): a short coding answer and the
+model card's tool-call example (well-formed, `finish_reason: tool_calls`); then five single-stream requests of 256
+tokens: **time to first token 0.132 s, decode 245.7 tokens/s, end to end 218.7 tokens/s**, identical across the
+five. D154's 142.5 tokens/s was taken with MIG off while the flywheel's sim and policy shared the GPU; the slice
+has its compute to itself, which is the point of act 2. **The number to quote for the slice is 245 tokens/s
+single stream.**
