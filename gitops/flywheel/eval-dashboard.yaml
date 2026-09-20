@@ -87,7 +87,10 @@ spec:
               value: "episodes-data"
             - name: EVAL_PREFIX
               value: "eval/"
-            # Newest run by default. To pin one, add EVAL_RUN_ID with the run id.
+            # Pinned to the promotion run the device is serving from (teacher -> act-v2-ft160, 360 paired seeds).
+            # Remove EVAL_RUN_ID to follow the newest run instead.
+            - name: EVAL_RUN_ID
+              value: "9fb233e8-8402-47cf-9f38-038e9294dbe6"
             - name: VERSIONS_FILE
               value: "/config/versions.yaml"
             - name: OTHER_VIEW_URL
