@@ -125,11 +125,52 @@ assumptions to build on:
   to the NVIDIA driver, so no NVIDIA package repo is needed on the host.
 - RHEL 10 runs libvirt as modular daemons (`virtqemud`, `virtnetworkd`, …); enable those sockets, not
   the monolithic `libvirtd`.
+- **A MIG slice has no graphics.** Compute only: a simulator cannot render its cameras on one. With MIG
+  on, sims run physics-only and one slice ray-traces every camera with CUDA
+  (`docs/internal/FLEET-RENDER-CONTRACT.md`).
+- **Rootless containers cannot open the GPU here** (SELinux); GPU workloads are root-run units.
+- **Argo CD does not manage `EndpointSlice` or `Endpoints`**, and reports the app synced anyway. A
+  Service that fronts a listener on the host needs its EndpointSlice applied by hand
+  (`tools/hub/manual/`).
+- **On the single-node hub, cpu *requests* run out before cpu does.** Sixteen one-core requests booked
+  the node to 97% with a quarter of its cpu idle, and nothing else could schedule. Request what must
+  be guaranteed, not what is used. A physics-only sim costs about 1.5 vCPUs in the hub VM, 1.0 on the
+  host's own cores.
+- **RHEL image mode (bootc) guests for the fleet**: no aarch64 KVM guest image was needed. A rootful
+  build on the registered host sees RHEL's repositories through the host's subscription - no
+  activation key, and the clones are never registered. `bootc-image-builder` wants the image in the
+  store it is handed at `/var/lib/containers/storage`; podman refuses a store that shows up there
+  under another path than it was created at, so build in the host's own store.
+- **First boot of a cloud-init clone, three traps**: spell the default route `0.0.0.0/0` (`to: default`
+  is netplan's word; without netplan it fails the whole pre-network stage and the clone has no
+  address); do not order a `multi-user.target` service after `cloud-final.service` (that stage is
+  itself after `multi-user.target` - systemd breaks the cycle by not starting the service; order
+  after `cloud-init.service`, where `write_files` runs); set `prefer_fqdn_over_hostname: false` if the
+  short hostname matters. With no login into the clones by design, the way to see any of this is to
+  read the clone's disk from the host (`tools/host/fury/82-fleet-vm-peek.sh`).
+- **An image with whiteouts cannot be embedded** in an OS image's additional image store by a
+  container build. The clones pull and verify their images themselves; local speed is a registry
+  mirror's job.
+
+## Hand-made pieces a rebuild has to repeat
+
+Not in git, or not applied by GitOps - a fresh bring-up does these again:
+
+- The three EndpointSlices in `tools/hub/manual/` (cameras, assistant, fleet wall): `oc apply -f`.
+- The fleet worlds' recorded motion: ConfigMap `fleet-trajectories`, made from the training dataset
+  with `tools/fleet/extract_trajectories.py` and `tools/hub/fleet-worlds-scale.sh trajectories <npz>`.
+- The number of worlds (`tools/hub/fleet-worlds-scale.sh 12`): Argo CD leaves replicas alone.
+- The fleet VMs do not start by themselves after a host reboot: `./81-fleet-scale.sh 12` (no
+  approval, no pull). New clones need a valid enrolment certificate on the host - it is short-lived
+  on purpose (`tools/hub/fleet-enrol-config.sh`, then `81-fleet-scale.sh enrol-config`).
+- MIG mode and the tenants after a reboot: `fury-mode tenants`.
+- The evaluation page's clips and the read-only account in the hub's object storage.
+- The laptop's `flightctl` login lapses within a day: `oc login`, then `flightctl login … --token`.
 
 ## Known gaps worth planning around
 
-- The dashboard's camera-stream host is hardcoded; it needs to become configurable before Beat 1
-  works unmodified on the Fury (a `TODO` in `gitops/flywheel/dashboard.yaml`).
+- Every robot pulls its images from the public registry: with the uplink down a new clone, or a
+  rollout, cannot finish. A mirror on the hub is planned (FURY-PLAN Phase 8b).
 
 ## If something breaks
 
