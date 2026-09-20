@@ -27,7 +27,8 @@ envf=/etc/flywheel-runner/env
 units=/etc/containers/systemd
 
 qd=; tmp=
-trap '[[ -z $qd ]] || { rm -f "$qd/flywheel-runner.container"; rmdir "$qd"; }; [[ -z $tmp ]] || rm -f "$tmp"' EXIT
+# the last two commands: under sudo the terminal can go away before tee has written the final lines
+trap '[[ -z $qd ]] || { rm -f "$qd/flywheel-runner.container"; rmdir "$qd"; }; [[ -z $tmp ]] || rm -f "$tmp"; exec >&- 2>&-; wait' EXIT
 
 [[ -f $quadlet ]]                   || die "missing flywheel/flywheel-runner.container next to this script"
 [[ -f $runner ]]                    || die "no runner at $runner - set SRC to the checkout"
