@@ -1687,7 +1687,7 @@ spec:
             - name: TRIGGER_THRESHOLD
               value: "160"   # matches manifest-consumer (D022/D023); was thor-testing's 10
             - name: DASHBOARD_CODE_REV
-              value: "2026-09-20-wording"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
+              value: "2026-09-20-robot-zero-cameras"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
             # MinIO (read-only) for the paired A/B video clips under paired-ab/. hub-credentials
             # holds the same values as the MinIO root account (argocd/README.md).
             - name: MINIO_ENDPOINT
@@ -1717,8 +1717,13 @@ spec:
               # Fury host's address on the booth network.
               value: "10.20.0.1"
             - name: CAMERA_URL
-              # the https Route in front of the host's camera bridge (so-arm-sim.yaml: sim-cameras)
-              value: "https://sim-cameras-flywheel.apps.sno-flywheel.local"
+              # D166: the demo stays in tenants mode, where the sim has no cameras of its own - the panel shows robot
+              # zero's two cameras from the rendering tenant, through the fleet wall's https Route. For flywheel mode
+              # put back the camera bridge's Route (so-arm-sim.yaml: sim-cameras) and drop the suffix:
+              #   https://sim-cameras-flywheel.apps.sno-flywheel.local
+              value: "https://fleet-wall-flywheel.apps.sno-flywheel.local/robot/r00"
+            - name: CAMERA_SUFFIX
+              value: ".mjpg"
           readinessProbe:
             httpGet:
               path: /api/status
