@@ -100,3 +100,11 @@ def test_placeholder_has_text_in_the_middle():
     image = core.placeholder(960, 480, "waiting for robots")
     assert image.shape == (480, 960, 3)
     assert (image[230:250, 300:660] == 255).any() and (image[:100] == core.BACKGROUND).all()
+
+
+@pytest.mark.parametrize("n, cols, rows", [(8, 4, 2), (12, 4, 3), (16, 4, 4), (20, 5, 4), (24, 6, 4), (7, 4, 2), (13, 5, 3)])
+def test_a_fleet_that_divides_evenly_gets_a_full_grid(n, cols, rows):
+    """Sixteen robots are four rows of four; a count that does not divide keeps the screen-shaped grid."""
+    layout = core.mosaic_layout(n, 480)
+    assert (layout.cols, layout.rows) == (cols, rows)
+

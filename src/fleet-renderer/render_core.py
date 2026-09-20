@@ -309,10 +309,15 @@ class MosaicLayout:
 
 
 def mosaic_layout(n: int, source: int, max_width: int = MOSAIC_MAX_WIDTH) -> MosaicLayout:
-    """The grid for n square tiles: close to a screen's shape, no empty row, never wider than max_width."""
+    """The grid for n square tiles: a full one when n divides into a screen-like shape, else close to a screen's with no empty row."""
     n = max(1, n)
-    rows = math.ceil(n / math.ceil(math.sqrt(n * MOSAIC_ASPECT)))
-    cols = math.ceil(n / rows)
+    # 16 robots are 4 x 4, not 6 x 3 with two dark cells; a grid more than three times as wide as high is not a wall
+    full = [(c, n // c) for c in range(1, n + 1) if n % c == 0 and 1 <= c / (n // c) <= 3]
+    if full:
+        cols, rows = min(full, key=lambda g: abs(g[0] / g[1] - MOSAIC_ASPECT))
+    else:
+        rows = math.ceil(n / math.ceil(math.sqrt(n * MOSAIC_ASPECT)))
+        cols = math.ceil(n / rows)
     return MosaicLayout(cols=cols, rows=rows, tile=min(source, max_width // cols))
 
 
