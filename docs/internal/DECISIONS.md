@@ -5311,3 +5311,35 @@ hook, so a policy change is applied on the next sync and the immutable pod templ
 newest run wins, whatever it is; the page has not yet been looked at by a human in a browser; the image lives as a
 tag of the runtime image's repository (told apart by the `eval-dashboard-` prefix) until Phase 8b moves images to
 the cluster's registry; other branches and the development cluster still carry the old resource names.
+
+## D158 — The first promotion on the Fury hub: teacher -> act-v2-ft160, merged and serving in 1 min 38 s; modelcar tags made permanent
+
+**Date:** 2026-09-20 (UTC). **Status:** done (FURY-PLAN ledger L1-L3); the reset for rehearsing it (L4) is still to build.
+
+**What ran.** The Fleet and the trigger lineage were first put at the teacher (`6f69dd2`): its existing modelcar
+(`d5e5897f…`) got this hub's signature through the cluster's own `cosign-sign` Task (`tools/hub/cosign-image.sh`,
+Rekor 8) and, before the pin (D149), `tools/host/fury/54-teacher-modelcar-check.sh` showed the device pulling it
+under its own signature policy, its weights byte for byte the staged checkpoint (`8388c067…`), and those weights
+serving on the GPU (3 seeded episodes, goals accepted). RHEM rolled the teacher out in about a minute. Then one
+governed run, `promote-act-v2-ft160` (`9fb233e8`): the runner reused the candidate's existing checkpoint and both
+existing evaluation records for seeds 1000-1359 (its log says so: "skipping assemble/train", "reusing existing
+record"), computed the paired report - **295/360 = 81.9 % -> 333/360 = 92.5 %, fixed 57, broken 19, net +38,
+p < 0.0001, PASS** - and the pipeline packaged a multi-arch modelcar (`d741db2b…`, which also ends the amd64-only
+data image), signed it, registered it and opened PR #7. Merged 11:30:21; the policy container restarted 11:31:41 and
+published `act-v2-ft160` at **11:31:59 - 1 min 38 s from merge to serving**, the new image pulled fresh under the
+device's policy; RHEM reported Healthy at 11:32:25. The evaluation page is pinned to the run (`918a1d3`).
+Training and evaluation themselves were exercised on this machine by the unattended run of the night before
+(`01c25f4e`: 189 episodes, 62,244 steps, 100 paired seeds, gate FAIL on wrong-scene data, as it should).
+
+**What broke, and the rule that came out of it.** The pipeline tagged the index with the bare candidate name. The
+candidate's name already carried an image (`bdb513ca…`, still pinned by the development cluster's Fleet), so the
+push moved the tag - and the registry, within the same minute, stopped serving that image by digest (404) **and
+deleted its signature tag**. Restoring took the registry's tag history and an owner's login, twice (image, then
+signature). Fix (`77769e2`, with tests): every image of a run is tagged `<candidate>-<run id, 8 chars>[-<arch>]`
+for good, and the bare candidate tag is only moved to the newest index afterwards. **Rule:** a digest that anything
+pins must own a tag that no later run will move; a moving tag is a convenience, never the only reference.
+
+**Smaller things from the same morning.** `53-stage-promotion.sh` took a lone `force` for its directory and, under
+sudo, lost the refusal message with the terminal - both fixed; 28 other host scripts share the second pattern
+(inbox). zsh expands `$VAR:a...` as a path modifier - braces, or a script file, for anything with a colon after a
+variable. `oc run --rm` trips the local guard's recursive-delete pattern - create, read the log, delete by name.
