@@ -5686,3 +5686,40 @@ second with three other tenants working, renderer 15 of 15 frames a second with 
 review found nothing that had to be fixed before it ran; its four smaller findings (a slow client holding the only
 thread, the mount exposing the path where a model-hub token would live, raw journal bytes reaching a projected
 terminal, the id map) were fixed first.
+
+**D166, addendum (2026-09-20, night) - the live lane: robot zero's episodes are judged, not kept.** In tenants
+mode the flywheel page showed live cameras next to "Loop stopped", an empty log and a frozen counter. It now tells
+the story live, all day, without weakening the requirement above (`b0a6514`).
+*Host.* Robot zero has a fourth unit, `robot-zero-emitter`: the signed sim image's own episode emitter, a listener
+beside the episode loop that moves and resets nothing. It posts each episode's summary - a small JSON,
+`"dataset_path": null`, there being no bag - to one address: `curator-show`, a second Deployment of the curator's
+own code on the hub. *Why the verdict is honest.* The gates judge physics (completeness, cubes on the tray,
+smoothness), not pixels, and none looks at a bag, so the shared code needed no exception. *Why the separation is
+structural, not a flag on the real lane.* `curator-show` has its own small volume, not the node's episode
+directory; no sync agent, mirror or consumer mounts it; it runs under its own service account without the
+namespace's host-mount grant, in a security profile that cannot mount a host path; it has no object-storage or
+Kafka variable, no credential, no token, and a NetworkPolicy that lets nothing out of the pod. On the host the
+installer holds the emitter's unit to exactly that one address - refusing the flywheel curator's port, a second
+address, that line in any other unit, a fallback directory off the container's tmpfs, any proxy variable (the
+emitter also switches proxies off), continued lines and quoted values - and checks the rule again on the unit
+quadlet generated. D164's sentence that robot zero stays clean because no emitter exists is superseded: one
+exists, and it can reach only a curator that keeps nothing. *What the open port let in, found by review and fixed
+on both lanes.* Episode fields reached the page's markup unescaped - and that page has an unauthenticated control
+that scales the real lane - so every field is now validated by the receiver (a body must be a JSON object of the
+emitter's shapes, 64 KB at most on the live lane, or it gets a 400 naming the field) and escaped by the page; the
+receiver is threaded with a ten-second timeout; a record that cannot be judged leaves the queue once; the live
+lane prunes everything and the page reads only the newest small files however full a volume is; on the live lane
+the page refuses its clear and scaling controls. Both curators move together on one code revision (the flywheel's
+own was rolled once onto it). The Service keeps the client's address and the policy admits the GPU host alone;
+tailnet members, forwarded by the host, are not told apart from it (accepted: the admin network). *What the page
+says.* "Serving - live lane"; beside the counter "live lane: judged, not kept" and the time the count began; the
+bar is passes modulo 160, and at 160 it holds for five minutes and says "this is where a governed training run
+would start. On the live lane nothing was kept and nothing was started; the count begins again." The pinned
+evaluation page and the clips stay the record. *What "not kept" means exactly.* The newest 300 verdict records
+and a totals file sit on a throwaway volume so the page has a log; no bags; nothing reaches object storage, Kafka,
+the trigger or a dataset. A hand-written total - the rehearsal-only shortcut for the 160 moment - shows itself by
+its start time and is put back before an audience. **First minutes on the machine:** the emitter heard the episode
+loop from a container of its own and took the policy's label (`act-v2-ft160`); the first episode after the restart
+failed and was rejected (0 of 3 cubes), the next two placed all three and passed at score 1.000 - the same
+outcomes the episode loop logged; the page read 2 passed, 1 rejected, 2 / 160; the flywheel's own curator received
+nothing.
