@@ -4,8 +4,8 @@
 # GetObject/ListBucket only, on episodes-curated, episodes-rejected and the
 # eval/ prefix of episodes-data (promotion evidence) — no write access, no
 # access to other buckets or prefixes, not the root account.
-# The Job is idempotent (mc admin user/policy commands are upsert-safe) so
-# Argo re-running it on selfHeal is harmless.
+# The Job is an Argo sync hook and idempotent (mc admin user/policy commands are
+# upsert-safe), so it runs again on every sync of this app and fails loudly.
 #
 # Like the root MinIO credentials (minio-credentials here, hub-credentials in
 # flywheel — hand-created since Phase 4.5 F), this Secret is applied directly
@@ -63,6 +63,11 @@ kind: Job
 metadata:
   name: minio-eval-readonly-setup
   namespace: minio
+  annotations:
+    # A hook, replaced on every sync, run once MinIO and the policy ConfigMap are in place: a Job's pod
+    # template is immutable, and the policy has to be applied again whenever it changes. Safe to repeat.
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   backoffLimit: 3
   template:
@@ -75,10 +80,16 @@ spec:
             - sh
             - -c
             - |
+              set -eu
+              # The pod runs as an arbitrary uid with no writable home: without this mc cannot save the alias,
+              # every later command fails, and the script used to report "done" all the same.
+              export MC_CONFIG_DIR=/tmp/mc
               mc alias set myminio http://minio.minio.svc:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
               mc admin user add myminio "$RO_ACCESS_KEY" "$RO_SECRET_KEY"
               mc admin policy create myminio episodes-readonly /policy/policy.json
-              mc admin policy attach myminio episodes-readonly --user="$RO_ACCESS_KEY"
+              # attach fails when the policy is already attached: accept that only if the user really has it
+              mc admin policy attach myminio episodes-readonly --user="$RO_ACCESS_KEY" ||
+                mc admin user info myminio "$RO_ACCESS_KEY" | grep -q episodes-readonly
               echo "[minio-eval-readonly-setup] done"
           env:
             - name: MINIO_ROOT_USER
