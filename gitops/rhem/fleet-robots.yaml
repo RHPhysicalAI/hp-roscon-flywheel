@@ -1,26 +1,31 @@
 # This project was developed with assistance from AI tools.
 #
-# Fleet robots - DRAFT, NOT LIVE. The computers of the fleet tenant's robots: micro-VMs on the Fury host
-# (docs/internal/FLEET-VMS.md, D163 stage A). Nothing has been applied and no device carries fleet=robots.
+# Fleet robots - LIVE since 2026-09-20. The computers of the fleet tenant's robots: micro-VMs on the Fury host
+# (docs/internal/FLEET-VMS.md, D163 stage A), twelve of them today, each carrying fleet=robots.
 #
-# Why the file is called .yaml.draft: ResourceSync/rhem-fleets renders EVERY .yaml/.yml/.json file in this
-# directory on the pushed branch (flightctl v1.3.0 internal/tasks/resourcesync.go:43, :440-452; this directory's
-# README, "Rules for files"). A header cannot keep a file out of that; the extension does. Going live is a
-# deliberate step:  git mv fleet-robots.yaml.draft fleet-robots.yaml  + commit + push. Taking it back out is the
-# reverse: the sync deletes a Fleet it owns once its file is gone (resourcesync.go:315).
+# Why the file was called .yaml.draft until then: ResourceSync/rhem-fleets renders EVERY .yaml/.yml/.json file in
+# this directory on the pushed branch (flightctl v1.3.0 internal/tasks/resourcesync.go:43, :440-452; this
+# directory's README, "Rules for files"). A header cannot keep a file out of that; the extension does. Going live
+# was the rename to .yaml. Taking it back out is the reverse: the sync deletes a Fleet it owns once its file is
+# gone (resourcesync.go:315).
 #
 # Derived from the CPU branch of fleet-act-inference.yaml. A separate Fleet, not more devices in act-inference:
-#   - act 1's promotion PR edits ONE file with two count=1 regexes that must each match exactly once
-#     (pipeline/act_flywheel_pipeline.py:295-297, :304). It never touches this file - and that is wanted: D163
-#     calls this tenant "a showcase and not a second flywheel", so a promotion merged in act 1 must not start a
-#     20-device rollout, and a slow micro-VM must not fail act 1's rollout (act-inference's second batch is
-#     site=fury at 100%, fleet-act-inference.yaml:98-102, which would take in every VM).
+#   - a slow micro-VM must not fail the host's rollout: act-inference's second batch is site=fury at 100%
+#     (fleet-act-inference.yaml, rolloutPolicy), which would take in every VM. Here the robots have their own
+#     batches - canary -> 25% -> 50% -> the rest - and their own thresholds.
 #   - a CPU device on 2 vCPUs needs other settings than act-inference's CPU branch hard-codes
 #     (OMP/TORCH threads = 8, fleet-act-inference.yaml:195-197; After=/PartOf=so-arm-sim.service, :231-232).
-#   - a model rollout to the robots becomes its own beat in act 2: edit the digest + MODEL_VERSION here, merge,
-#     watch canary -> 25% -> 50% -> the rest.
-# What is shared with act-inference and must be kept in step BY HAND: the four trust files (byte-identical
-# below) and, until the robots get their own model line, the two image digests.
+# Two Fleets, one model (D166): a promotion is ONE merge that rolls the signed model to the host and walks the
+# robots. The two files cannot share a templated value (placeholders read device labels only - the header of
+# fleet-act-inference.yaml), so the promotion PR edits the modelcar digest and MODEL_VERSION in BOTH files in its
+# one commit (pipeline/act_flywheel_pipeline.py, open_promotion_pr: also_fleet_files) and refuses when the files
+# do not hold the same model beforehand. tools/hub/reset-promotion.sh and reopen-promotion.sh keep the same rule:
+# every Fleet file pins what the host Fleet's file pins.
+# What is shared with act-inference, and who keeps it in step:
+#   - the modelcar digest and MODEL_VERSION: the promotion PR - not edited by hand;
+#   - the runtime image digest and the four trust files (byte-identical below): by hand, in both files.
+#   tests/pipeline/test_open_promotion_pr.py fails when the two files disagree on the modelcar digest,
+#   MODEL_VERSION or the runtime image digest. No test compares the trust files.
 #
 # DECIDED 2026-09-20 (operator, FLEET-VMS.md section 13): each robot's computer runs its own Zenoh router
 # (zenoh-router.container below), and the policy connects to 127.0.0.1. Reason: the policy is a Zenoh client and
