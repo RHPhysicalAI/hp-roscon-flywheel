@@ -5,19 +5,35 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SO-ARM Policy Evaluation</title>
-  <link rel="stylesheet" href="styles.css?v=33">
+  <script>
+    // Theme before first paint: a valid ?theme= (set by links from the sibling dashboards,
+    // which are on other hosts) wins over the saved choice and is saved; default light.
+    (function () {
+      var t = new URLSearchParams(location.search).get('theme');
+      try {
+        if (t === 'light' || t === 'dark') localStorage.setItem('eval-theme', t);
+        else t = localStorage.getItem('eval-theme');
+      } catch (e) { /* storage blocked: the URL or the default still applies */ }
+      document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
+    })();
+  </script>
+  <link rel="stylesheet" href="styles.css?v=34">
 </head>
 <body>
   <header>
     <div>
       <h1>SO-ARM Policy Evaluation</h1>
-      <div class="subtitle">Observed success rates &middot; read-only &middot; not a statistical proof of improvement</div>
+      <div class="subtitle" id="subtitle">Observed success rates &middot; read-only &middot; not a statistical proof of improvement</div>
     </div>
     <div class="header-actions">
       <span class="chip" id="source-chip"><span class="dot"></span> <span id="source-label">--</span></span>
       <span class="chip" id="loaded-chip">Loaded --</span>
-      <a class="backlink" id="other-view-link" hidden></a>
-      <a class="backlink" id="backlink" target="_blank" rel="noopener" hidden>&larr; Back to Live Flywheel</a>
+      <a class="backlink" id="other-view-link" title="Switch evaluation view" hidden></a>
+      <a class="backlink" id="backlink" hidden>&larr; Flywheel dashboard</a>
+      <div class="theme-toggle" id="theme-toggle" role="group" aria-label="Theme">
+        <button type="button" id="theme-light" title="Light" aria-label="Light theme">&#9788;</button>
+        <button type="button" id="theme-dark" title="Dark" aria-label="Dark theme">&#9790;</button>
+      </div>
     </div>
   </header>
 
@@ -110,6 +126,6 @@
     <span id="footer-counts"></span>
   </footer>
 
-  <script src="dashboard.js?v=33"></script>
+  <script src="dashboard.js?v=34"></script>
 </body>
 </html>

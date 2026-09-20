@@ -1,15 +1,15 @@
 /* This project was developed with assistance from AI tools. */
-:root {
+/* Theme is explicit, not the OS preference: index.html sets data-theme before first paint.
+   Page, surface, border and text values are the flywheel dashboard's, per theme, so the
+   pages read as one product when moving between them. */
+:root, [data-theme="light"] {
   color-scheme: light;
   --surface: #ffffff;
-  /* Matches the Live Flywheel dashboard's page background (sampled
-     #f5f6f8) so navigating between the two via the nav link doesn't have
-     a visible background-color seam. */
   --page: #f5f6f8;
-  --border: #bab8ac;
-  --border-strong: #8f8d80;
-  --text: #0b0b0b;
-  --text-2: #52514e;
+  --border: #d8dce3;
+  --border-strong: #c4c9d4;
+  --text: #1a1d24;
+  --text-2: #4a5168;
   --text-muted: #898781;
   --good: #0ca30c;
   --good-surface: #eef8ee;
@@ -17,30 +17,30 @@
   --critical: #d03b3b;
   --info: #2a78d6;
   --info-surface: #eef5fd;
+  --link: #0066cc;
   --series-1: #2a78d6; /* blue   -- first version (baseline) */
   --series-2: #eb6834; /* orange -- second version */
   --series-3: #1baf7a; /* aqua   -- third version */
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --surface: #202020;
-    --page: #0d0d0d;
-    --border: #464642;
-    --border-strong: #5c5c56;
-    --text: #ffffff;
-    --text-2: #c3c2b7;
-    --text-muted: #898781;
-    --good: #0ca30c;
-    --good-surface: #152015;
-    --warning: #fab219;
-    --critical: #e66767;
-    --info: #3987e5;
-    --info-surface: #151d28;
-    --series-1: #3987e5;
-    --series-2: #d95926;
-    --series-3: #199e70;
-  }
+[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: #21252d;
+  --page: #1a1d24;
+  --border: #3a3f4b;
+  --border-strong: #4a5060;
+  --text: #e8eaee;
+  --text-2: #a8adb8;
+  --text-muted: #898781;
+  --good: #0ca30c;
+  --good-surface: #152015;
+  --warning: #fab219;
+  --critical: #e66767;
+  --info: #3987e5;
+  --info-surface: #151d28;
+  --link: #4da3ff;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
 }
 
 * { box-sizing: border-box; }
@@ -76,8 +76,24 @@ header .subtitle { color: var(--text-muted); font-size: 12px; }
   border-color: var(--good);
   background: var(--good-surface);
 }
-a.backlink { font-size: 12px; color: var(--series-1); text-decoration: none; }
-a.backlink:hover { text-decoration: underline; }
+a.backlink {
+  font-size: 12px; font-weight: 600; color: var(--link); text-decoration: none; white-space: nowrap;
+  border: 1px solid var(--link); border-radius: 6px; padding: 5px 10px;
+}
+a.backlink:hover { background: var(--info-surface); text-decoration: underline; }
+
+/* Same two-button control as the flywheel dashboard's header. */
+.theme-toggle {
+  display: inline-flex; align-items: center; overflow: hidden;
+  border: 1px solid var(--border-strong); border-radius: 6px;
+}
+.theme-toggle button {
+  width: 32px; height: 28px; border: none; cursor: pointer;
+  font-size: 14px; background: transparent; color: var(--text-muted);
+}
+.theme-toggle button:first-child { border-right: 1px solid var(--border-strong); }
+.theme-toggle button.active { background: var(--link); color: #fff; }
+[data-theme="dark"] .theme-toggle button.active { color: var(--page); }
 
 main { max-width: 1400px; margin: 0 auto; padding: 20px 24px 48px; }
 
@@ -126,11 +142,9 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 24px 48px; }
 .badge.baseline { background: #e7f1fa; color: #004b95; }
 .badge.finetuned { background: #eefbea; color: #1e4f18; }
 .badge.untagged { background: #f3ecff; color: #4d2c91; }
-@media (prefers-color-scheme: dark) {
-  .badge.baseline { background: #16324d; color: #8cb8e8; }
-  .badge.finetuned { background: #16351a; color: #8bcf7f; }
-  .badge.untagged { background: #2a2140; color: #c4b0f0; }
-}
+[data-theme="dark"] .badge.baseline { background: #16324d; color: #8cb8e8; }
+[data-theme="dark"] .badge.finetuned { background: #16351a; color: #8bcf7f; }
+[data-theme="dark"] .badge.untagged { background: #2a2140; color: #c4b0f0; }
 .badge.verdict { font-size: 12px; padding: 4px 10px; }
 .badge.verdict.pass { background: var(--good-surface); color: var(--good); border: 1px solid var(--good); }
 .badge.verdict.fail { background: transparent; color: var(--critical); border: 1px solid var(--critical); }

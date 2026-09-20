@@ -353,7 +353,8 @@ data:
         """Header link markup, or nothing unless an http(s) URL is configured."""
         if not EVAL_DASHBOARD_URL.startswith(("http://", "https://")):
             return ""
-        return f'<a class="btn btn-gray btn-sm" href="{escape(EVAL_DASHBOARD_URL, quote=True)}">Evaluation</a>'
+        href = escape(EVAL_DASHBOARD_URL, quote=True)
+        return f'<a id="eval-link" class="btn btn-link btn-sm" href="{href}">Evaluation comparison &rarr;</a>'
 
     @app.route("/")
     def index():
@@ -593,6 +594,8 @@ data:
     .btn-gold:hover { background: #eed9a0; border-color: var(--gold); }
     .btn-gray   { background: var(--card2); border-color: var(--border); color: var(--txt2); }
     .btn-gray:hover { border-color: var(--border2); color: var(--txt); }
+    .btn-link   { background: transparent; border-color: var(--blue); color: var(--blue); font-weight: 600; }
+    .btn-link:hover { background: var(--blue-dim); text-decoration: underline; }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .btn-sm { padding: 4px 10px; font-size: 11px; }
     a.btn { text-decoration: none; }
@@ -764,8 +767,14 @@ data:
     #trigger-banner.show { display: block; }
 
     /* ---- Curation log (inline in Generator Output card) -------------------- */
+    /* The card is stretched to the camera column's height; the log takes what is left of it and
+       scrolls inside itself. Zero basis: its rows must not make the card (and the page) taller. */
+    #generator-card { display: flex; flex-direction: column; }
+    #generator-body, #gen-fields { flex: 1 1 auto; min-height: 0; flex-direction: column; }
+    #generator-body { display: flex; }
     #log-body {
-      max-height: 200px;
+      flex: 1 1 0;
+      min-height: 200px;
       overflow-y: auto;
       scroll-behavior: smooth;
     }
@@ -1015,7 +1024,7 @@ data:
               </div>
             </div>
             <!-- Inline curation log (moved here from standalone card) -->
-            <div id="log-body" style="max-height:200px;overflow-y:auto;margin-top:10px;font-size:11px">
+            <div id="log-body" style="margin-top:10px;font-size:11px">
               <div id="log-empty" style="color:var(--txt3);text-align:center;padding:12px 0;font-size:11px">
                 Collection loop stopped &mdash; episodes appear here once it runs.
               </div>
@@ -1123,14 +1132,33 @@ data:
 
     <script>
     // ---- Theme toggle --------------------------------------------------------
+    // The evaluation pages are on other hosts (no shared storage), so the link to them carries ?theme=.
+    function themeEvalLink(t) {
+      const link = document.getElementById('eval-link');
+      if (!link) return;
+      try {
+        const target = new URL(link.href);
+        target.searchParams.set('theme', t);
+        link.href = target.href;
+      } catch (e) { /* leave the configured href as it is */ }
+    }
     function setTheme(t) {
       document.documentElement.setAttribute('data-theme', t);
       localStorage.setItem('flywheel-theme', t);
       document.getElementById('theme-light').classList.toggle('active', t === 'light');
       document.getElementById('theme-dark').classList.toggle('active', t === 'dark');
+      themeEvalLink(t);
     }
-    // Apply saved theme immediately (before paint)
+    // Apply the theme immediately (before paint): a valid ?theme= from an evaluation page wins
+    // over the saved one and is saved, then leaves the address so a reload keeps a later toggle.
     (function() {
+      const here = new URL(location.href);
+      const asked = here.searchParams.get('theme');
+      if (asked === 'light' || asked === 'dark') localStorage.setItem('flywheel-theme', asked);
+      if (asked !== null) {
+        here.searchParams.delete('theme');
+        history.replaceState(null, '', here);
+      }
       const saved = localStorage.getItem('flywheel-theme') || 'light';
       document.documentElement.setAttribute('data-theme', saved);
       // Button highlight applied after DOM ready below
@@ -1140,6 +1168,7 @@ data:
       const t = localStorage.getItem('flywheel-theme') || 'light';
       document.getElementById('theme-light').classList.toggle('active', t === 'light');
       document.getElementById('theme-dark').classList.toggle('active', t === 'dark');
+      themeEvalLink(t);
     });
 
     // ---- Camera feeds (direct to the camera bridge next to the sim) ----------
@@ -1291,7 +1320,7 @@ data:
       if (lat.curation_score != null && genKey !== window._lastGenKey) {
         window._lastGenKey = genKey;
         document.getElementById('gen-empty').style.display = 'none';
-        document.getElementById('gen-fields').style.display = 'block';
+        document.getElementById('gen-fields').style.display = 'flex';   // column: see #log-body
 
         // Rollout stats (SO-ARM)
         const rollout = lat.rollout || {};
@@ -1650,7 +1679,7 @@ spec:
             - name: TRIGGER_THRESHOLD
               value: "160"   # matches manifest-consumer (D022/D023); was thor-testing's 10
             - name: DASHBOARD_CODE_REV
-              value: "2026-09-19-evallink"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
+              value: "2026-09-20-themelinks"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
             # MinIO (read-only) for the paired A/B video clips under paired-ab/. hub-credentials
             # holds the same values as the MinIO root account (argocd/README.md).
             - name: MINIO_ENDPOINT
@@ -1672,7 +1701,7 @@ spec:
             - name: HTML_FILE
               value: "/app/index.html"
             - name: EVAL_DASHBOARD_URL
-              # Header link "Evaluation" (gitops/flywheel/eval-dashboard.yaml); empty = no link.
+              # Header link "Evaluation comparison" (gitops/flywheel/eval-dashboard.yaml); empty = no link.
               value: "https://eval-dashboard-flywheel.apps.sno-flywheel.local"
             - name: CAMERA_HOST
               # The address the *viewer's browser* uses to reach the camera bridge (port 8081),

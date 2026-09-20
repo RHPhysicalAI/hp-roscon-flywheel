@@ -3,6 +3,7 @@ const SERIES_VARS = ['--series-1', '--series-2', '--series-3'];
 const REFRESH_MS = 5000;
 const POLICY_LABELS = ['Policy A', 'Policy B', 'Policy C'];
 const EVIDENCE_PAGE_SIZE = 200;
+const THEME_KEY = 'eval-theme';
 
 function makeSelectionState() { return { selected: ['', '', ''], lastKey: '' }; }
 const selection = makeSelectionState();
@@ -133,6 +134,50 @@ async function fetchEpisodes(versions, offset = 0) {
   return response.json();
 }
 
+// index.html sets data-theme before first paint (?theme= first, then the saved choice, then light).
+function currentTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+
+// The sibling dashboards are on other hosts, so storage is not shared: links carry the theme.
+function withTheme(url) {
+  try {
+    const target = new URL(url, location.href);
+    target.searchParams.set('theme', currentTheme());
+    return target.href;
+  } catch (err) {
+    return url;
+  }
+}
+
+function markThemeButtons() {
+  ['light', 'dark'].forEach(t => {
+    const button = document.getElementById(`theme-${t}`);
+    button.classList.toggle('active', t === currentTheme());
+    button.setAttribute('aria-pressed', String(t === currentTheme()));
+  });
+}
+
+function setTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  try { localStorage.setItem(THEME_KEY, theme); } catch (err) { /* storage blocked */ }
+  markThemeButtons();
+  // Chart colours are read from the CSS variables at render time, and the header links carry the theme.
+  if (lastStats) renderViews(lastStats);
+}
+
+function initTheme() {
+  // The parameter has been applied and saved; left in the address it would undo a later toggle on reload.
+  const here = new URL(location.href);
+  if (here.searchParams.has('theme')) {
+    here.searchParams.delete('theme');
+    history.replaceState(null, '', here);
+  }
+  markThemeButtons();
+  document.getElementById('theme-light').addEventListener('click', () => setTheme('light'));
+  document.getElementById('theme-dark').addEventListener('click', () => setTheme('dark'));
+}
+
 // A header link with no URL is hidden rather than left pointing nowhere.
 function setHeaderLink(id, url, label) {
   const link = document.getElementById(id);
@@ -141,7 +186,7 @@ function setHeaderLink(id, url, label) {
     link.removeAttribute('href');
     return;
   }
-  link.href = url;
+  link.href = withTheme(url);
   if (label != null) link.textContent = label;
 }
 
@@ -175,6 +220,8 @@ function renderPaired(paired) {
     panel.hidden = true;
     return;
   }
+  // The default subtitle disclaims statistics; with the pipeline's sign test on the page that would contradict it.
+  document.getElementById('subtitle').textContent = 'Paired evaluation of one promotion run · read-only';
   // Every figure here is the pipeline's report as written; nothing is recomputed for display.
   const verdict = String(paired.verdict || '').toUpperCase();
   const verdictClass = verdict === 'PASS' ? 'pass' : verdict === 'FAIL' ? 'fail' : 'unknown';
@@ -794,5 +841,6 @@ async function render() {
   }
 }
 
+initTheme();
 render();
 setInterval(render, REFRESH_MS);
