@@ -1,0 +1,21 @@
+// This project was developed with assistance from AI tools.
+// Presentation defaults for the demo workspace. The editor keeps panel positions and sizes in the browser, per
+// workspace, and offers no way to export them - these settings are what a fresh workspace can be given up front.
+{
+  // the agent's terminal beside the code, not under it
+  "workbench.panel.defaultLocation": "right",
+  // right-click in a terminal shows the editor's own menu and does not try to paste (the browser answers a paste
+  // with a one-item menu of its own, which is the collision); paste with the keyboard
+  "terminal.integrated.rightClickBehavior": "default",
+  "workbench.startupEditor": "none",
+  "workbench.secondarySideBar.defaultVisibility": "hidden",
+  "workbench.tips.enabled": false,
+  "workbench.layoutControl.enabled": false,
+  "window.commandCenter": false,
+  "breadcrumbs.enabled": false,
+  "editor.minimap.enabled": false,
+  // readable from the back of a room
+  "editor.fontSize": 15,
+  "terminal.integrated.fontSize": 15,
+  "terminal.integrated.scrollback": 5000
+}
