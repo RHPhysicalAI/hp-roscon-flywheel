@@ -44,6 +44,8 @@ name=rhaiis-smoke
 served=qwen3-coder-next
 port=8000
 url=http://127.0.0.1:$port
+# the smoke container listens on loopback; the installed service (llm-assistant) on the hub-side address
+case ${1:-} in ask|bench|probe|status) curl -s -o /dev/null -m 2 "$url/v1/models" 2>/dev/null || url=http://10.20.0.1:$port ;; esac
 
 # ==== judgement calls - flip these between attempts ====================================================================
 # One reason and one source each; the sources in full are in 61-rhaiis-smoke.md. vLLM file names are as of v0.24.0,

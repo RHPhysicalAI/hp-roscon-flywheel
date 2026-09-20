@@ -7,9 +7,10 @@
 #
 # Which build of vLLM serves is the Image= line and nothing else.
 #
-# Loopback only. There is no API key, and this machine has an uplink that is not ours: from a laptop use
-#   ssh -N -L 8000:127.0.0.1:8000 <user>@<host>
-# Opening it to a network is an operator's decision: --host 0.0.0.0 below plus a firewalld rule for that network only.
+# It listens on the host's hub-side address only (10.20.0.1, the libvirt bridge), like the camera bridge and the
+# metrics exporter: never on the uplink, which is not ours. There is no API key. The hub reaches it once
+# 64-assistant-expose.sh has listed the port for the guests (D161); peers on the operator's tailnet reach that
+# address as they do every port on it. From a laptop without the tailnet:  ssh -N -L 8000:10.20.0.1:8000 <user>@<host>
 [Unit]
 Description=Coding assistant (vLLM on MIG slice 0:0)
 After=mig-config.service nvidia-cdi-refresh.service
@@ -38,9 +39,9 @@ Environment=VLLM_HOST_IP=127.0.0.1
 Environment=LD_PRELOAD=
 # this image's own entrypoint is `vllm serve`, which wants the model as a positional argument
 Entrypoint=python3
-Exec=-m vllm.entrypoints.openai.api_server --model /models/Qwen3-Coder-Next-NVFP4 --served-model-name qwen3-coder-next --host 127.0.0.1 --port 8000 --tensor-parallel-size 1 --max-model-len 131072 --gpu-memory-utilization 0.90 --max-num-seqs 8 --kv-cache-dtype auto --enable-auto-tool-choice --tool-call-parser qwen3_coder --linear-backend cutlass --gdn-prefill-backend triton --no-enable-flashinfer-autotune
+Exec=-m vllm.entrypoints.openai.api_server --model /models/Qwen3-Coder-Next-NVFP4 --served-model-name qwen3-coder-next --host 10.20.0.1 --port 8000 --tensor-parallel-size 1 --max-model-len 131072 --gpu-memory-utilization 0.90 --max-num-seqs 8 --kv-cache-dtype auto --enable-auto-tool-choice --tool-call-parser qwen3_coder --linear-backend cutlass --gdn-prefill-backend triton --no-enable-flashinfer-autotune
 # no curl in the image. A cold start took 5 min 46 s when measured; a first start on a new slice compiles more.
-HealthCmd=["python3","-c","import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status == 200 else 1)"]
+HealthCmd=["python3","-c","import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://10.20.0.1:8000/health', timeout=5).status == 200 else 1)"]
 HealthStartPeriod=20m
 HealthInterval=30s
 HealthTimeout=10s

@@ -2,12 +2,12 @@
 #
 # The coding assistant (act 2's tenant on MIG slice 0:0) is a unit on the GPU host, outside the cluster. Inside the
 # cluster it is this Service: http://assistant.flywheel.svc:8000/v1 (OpenAI-compatible; model qwen3-coder-next).
-# No selector - its one endpoint is the host's hub-side listener, 10.20.0.1:8001
+# No selector - its one endpoint is the assistant's own listener on the host's hub-side address, 10.20.0.1:8000
 # (tools/host/fury/64-assistant-expose.sh), named by an EndpointSlice that is applied by hand because Argo CD leaves
 # EndpointSlices out of what it manages: tools/hub/manual/assistant-endpointslice.yaml (argocd/README.md).
-# Deliberately no Route: the API has no key, so it is reached by in-cluster clients only - the dashboard's backend
-# and developer workspaces - and whatever they serve is what a browser sees. With the host in flywheel mode the
-# assistant is down and connections are refused.
+# Deliberately no Route: the API has no key, so it is reached by in-cluster clients only - developer workspaces -
+# and what they serve over https is what a browser sees. With the host in flywheel mode the assistant is down and
+# connections are refused.
 apiVersion: v1
 kind: Service
 metadata:
@@ -17,4 +17,4 @@ spec:
   ports:
     - name: openai
       port: 8000
-      targetPort: 8001
+      targetPort: 8000
