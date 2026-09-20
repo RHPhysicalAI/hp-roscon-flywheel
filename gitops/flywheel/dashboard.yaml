@@ -28,6 +28,7 @@ data:
     #!/usr/bin/env python3
     """Physical AI Edge Flywheel Dashboard -- Flask backend."""
     import json, os, pathlib, queue, shutil, threading, time
+    from html import escape
     from typing import Optional
     from flask import Flask, Response, abort, jsonify, request, send_file
 
@@ -55,6 +56,8 @@ data:
     # The camera bridge runs next to the simulator, not in the cluster; the browser fetches the
     # streams directly, so this must be the address the *viewer* can reach.
     CAMERA_HOST   = os.environ.get("CAMERA_HOST", "10.20.0.1")
+    # Header link to the evaluation dashboard; empty means no link is rendered.
+    EVAL_DASHBOARD_URL = os.environ.get("EVAL_DASHBOARD_URL", "").strip()
     FW_NS         = os.environ.get("FLYWHEEL_NS", "flywheel")
     THRESHOLD     = int(os.environ.get("TRIGGER_THRESHOLD", "10"))
     COLLECTOR_DEPLOY = os.environ.get("COLLECTOR_DEPLOYMENT", "manifest-consumer")
@@ -346,10 +349,17 @@ data:
     threading.Thread(target=_watcher, daemon=True).start()
 
     # ---- Routes --------------------------------------------------------------
+    def eval_link() -> str:
+        """Header link markup, or nothing unless an http(s) URL is configured."""
+        if not EVAL_DASHBOARD_URL.startswith(("http://", "https://")):
+            return ""
+        return f'<a class="btn btn-gray btn-sm" href="{escape(EVAL_DASHBOARD_URL, quote=True)}">Evaluation</a>'
+
     @app.route("/")
     def index():
         html = HTML_FILE.read_text() if HTML_FILE.exists() else "<h1>index.html not mounted</h1>"
-        return Response(html.replace("__CAMERA_HOST__", CAMERA_HOST), mimetype="text/html")
+        html = html.replace("__CAMERA_HOST__", CAMERA_HOST).replace("<!-- __EVAL_LINK__ -->", eval_link())
+        return Response(html, mimetype="text/html")
 
     @app.route("/api/events")
     def sse():
@@ -585,6 +595,7 @@ data:
     .btn-gray:hover { border-color: var(--border2); color: var(--txt); }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .btn-sm { padding: 4px 10px; font-size: 11px; }
+    a.btn { text-decoration: none; }
     .dot-pulse {
       width: 7px; height: 7px; border-radius: 50%;
       background: currentColor;
@@ -889,6 +900,7 @@ data:
       </div>
 
       <div id="controls">
+        <!-- __EVAL_LINK__ -->
         <div id="flywheel-status" class="running-indicator stopped">
           &#9632; Loop stopped
         </div>
@@ -1638,7 +1650,7 @@ spec:
             - name: TRIGGER_THRESHOLD
               value: "160"   # matches manifest-consumer (D022/D023); was thor-testing's 10
             - name: DASHBOARD_CODE_REV
-              value: "2026-09-10-paired2"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
+              value: "2026-09-19-evallink"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
             # MinIO (read-only) for the paired A/B video clips under paired-ab/. hub-credentials
             # holds the same values as the MinIO root account (argocd/README.md).
             - name: MINIO_ENDPOINT
@@ -1659,6 +1671,9 @@ spec:
               value: "/data/frames"
             - name: HTML_FILE
               value: "/app/index.html"
+            - name: EVAL_DASHBOARD_URL
+              # Header link "Evaluation" (gitops/flywheel/eval-dashboard.yaml); empty = no link.
+              value: "https://eval-dashboard-flywheel.apps.sno-flywheel.local"
             - name: CAMERA_HOST
               # The address the *viewer's browser* uses to reach the camera bridge (port 8081),
               # which runs next to the simulator, not in the cluster. On the Fury this is the
