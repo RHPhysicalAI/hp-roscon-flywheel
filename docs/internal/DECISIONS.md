@@ -5586,6 +5586,30 @@ fleet's camera streams (worth revisiting with time), a robot foundation model (d
 stable across mode switches here); `fury-switch.sh tenants` starts the policy app instead of leaving it stopped;
 `fury-mode` stops refusing a policy on a slice; the host's sim unit gains the physics-only variant for tenants mode.
 
+**Addendum (2026-09-20, late) - robot zero runs: all four slices hold their tenants.** The policy stays what it was:
+the Fleet's signed `act-inference`, placed on slice `0:1` by the device's `gpu_device` label (the slice's MIG UUID),
+with no change to the Fleet. The label path, built for D148 and never exercised, worked the first time: label set
+with the app stopped, RHEM rendered `AddDevice=nvidia.com/gpu=MIG-...` into the quadlet, the agent applied it, the
+app started - `Running / Healthy`, and the process table shows one tenant per GPU instance (assistant, robot zero's
+policy at 618 MiB, the training tenant, the renderer). The host adds three units without a GPU, owned by `fury-mode`
+like the other tenants (`74-robot-zero-install.sh`): the physics-only world from the fleet worlds' signed image,
+reporting to the renderer as `r00` and carrying the Zenoh router; a bridge that publishes the renderer's two
+pictures on the policy's image topics, 15 a second, the 480x480 picture centred in a 640x480 frame and padded,
+never stretched (same vertical field of view as the training camera); and the flywheel's coordinator with
+recording off. **Robot zero records nothing**: recording off stops the bags, and what keeps the curator clean is
+that a physics-only world starts no episode emitter; no unit mounts `/data` or holds a credential, all three run
+with a read-only root and no capabilities, and the installer refuses units that would change any of that. An
+independent review found the one way around it: robot zero's router puts a policy and camera topics on the host
+under MIG for the first time, so a stray start of the flywheel's own recorder would have recorded ray-traced
+pixels into the flywheel's bags. The recorder and the flywheel's sim now start only with MIG off, and the installer
+refuses a checkout in which they do not. In a switch (`tools/hub/fury-switch.sh`, `tools/hub/robot-zero.sh`) the
+policy is stopped first and started last and its placement changes only while it is stopped, so it never runs on
+the whole GPU under MIG; the label change carries nothing the hub manages, keeps the hub's version lock and is
+checked afterwards. Known cost: with the hub unreachable, flywheel mode has no policy until the label can be
+cleared. **First episodes on rendered pixels, closed loop, no tuning: the first full episode placed all three cubes
+in 59 s, the second too, the third did not** - a count, not yet a rate; D166's open question waits for a few
+dozen. The flywheel page's camera panel now shows robot zero's two cameras.
+
 ## D165 — Isolation, measured: the assistant's numbers do not move while the slice next to it trains
 
 **Date:** 2026-09-20 (tenants mode, MIG `9,19,19,19`). The training tenant (D164; `72-training-tenant-install.sh`)
