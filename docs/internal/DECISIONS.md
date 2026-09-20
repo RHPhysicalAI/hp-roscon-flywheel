@@ -5493,6 +5493,15 @@ host with its 64k-page kernel. OpenShift Virtualization was looked at for the VM
 evidence: the operator is offered for arm64, but the hub is itself a VM and its node has no `/dev/kvm` -
 guests there would run under software emulation.
 
+**Addendum, same day - image mode works on this host** (`tools/host/fury/79-bootc-spike.sh`). The pull secret is
+entitled to `rhel10/rhel-bootc:10.2` and `rhel10/bootc-image-builder:10.2` (both pulled in 41 s, arm64); RHEL
+repositories are visible inside a container on this host, so an image build needs **no activation key**;
+bootc-image-builder ran on the 64k-page aarch64 host with SELinux enforcing - derived image plus qcow2 in **75 s**,
+894 MiB on disk; the guest, in the micro-VM shape (UEFI, 2 vCPU, 3 GiB, no balloon), **answers on ssh 17 s after
+`virt-install` starts** (systemd reports 5.4 s), runs a 4k-page kernel, SELinux enforcing, 208 MB used when idle,
+and `bootc status` shows the booted image. The golden-image design with a throwaway guest, an activation key and
+a sealing step is dropped for a Containerfile and one builder run.
+
 **Addendum, same day - what one slice renders, measured** (`tools/host/fury/25-mjwarp-batch.sh`, slice `0:3`, the real
 scene, two 640x480 cameras per robot, shadows on, every world with its own arm motion and cube placement, RGB
 copied back): **about 228 camera pairs a second, whatever the batch size** - 195 with one world per call, 221 with
