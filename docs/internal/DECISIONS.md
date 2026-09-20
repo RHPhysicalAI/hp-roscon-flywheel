@@ -5514,6 +5514,16 @@ doubles whatever is chosen. The earlier geometry check (rootless, CPU device): t
 as Gazebo to 0.09 px on cube centroids and 0.99 IoU on the arm, with the two corrections of the design plan
 (field of view, wrist-roll offset) both confirmed necessary.
 
+**Addendum, same day - the rendering tenant runs on slice `0:3`** (`73-fleet-renderer-install.sh`; unit
+`fleet-renderer.service`, owned by `fury-mode` like the other tenants). CUDA works for the image's non-root user
+with every capability dropped, SELinux-confined, on a UBI 10 base (UBI 9's glibc is too old for the ray tracer's
+library - found by the build's own self-test). Twenty robots sent by the test sender, 480x480, two cameras each,
+shadows on: **83 ms a batch, 12 frames a second per robot** - 480 ray-traced camera frames a second from one
+1g.31gb slice, a little above the 640x480 benchmark, so the cost is not mostly pixels; the 15 fps target overruns
+at twenty robots and holds at sixteen. Host memory peak 1.0 GiB, the wall's JPEG 57 ms. The operator looked at the
+wall: every arm moving. What it showed was the test sender's synthetic motion (a cube sliding, nothing picked
+up) - the worlds, physics with replayed recorded motion, are the next piece.
+
 **Staging, each stage showable on its own:** (A) the micro-VM factory, enrolment and approval tooling, the robots'
 Fleet - RHEM at scale, no sim yet; (B) world pods + the rendering tenant + the wall, the arms driven by recorded
 motion; (C) the policy on each device closes the loop with its world.
