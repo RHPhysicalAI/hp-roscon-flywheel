@@ -1,0 +1,62 @@
+# This project was developed with assistance from AI tools.
+#
+# Developer workspace for the coding-agent part of the demo: an OpenShift Dev Spaces workspace whose one
+# container (src/dev-workspace) carries the terminal coding agent, git and the evaluation dashboard's Python
+# requirements. Nothing is downloaded when the workspace starts or while the agent runs.
+# The task and the prompt are in DEMO-TASK.md on the branch the workspace clones.
+schemaVersion: 2.2.2
+metadata:
+  name: flywheel-coding-task
+  displayName: Flywheel coding task
+  description: A terminal coding agent closes a failing test in the evaluation dashboard, using the model on the hub.
+projects:
+  # The demo branch is this branch plus one failing test. With no internet, an in-cluster git remote that
+  # carries the same branch replaces this URL; nothing else in the file changes.
+  - name: hp-roscon-flywheel
+    git:
+      remotes:
+        origin: https://github.com/RHPhysicalAI/hp-roscon-flywheel.git
+      checkoutFrom:
+        remote: origin
+        revision: demo/coding-task
+components:
+  - name: tools
+    container:
+      # The digest is printed by tools/hub/build-dev-workspace.sh. Never commit this file with
+      # WORKSPACE_IMAGE_DIGEST_PLACEHOLDER in it: a workspace created from it cannot pull its image.
+      image: quay.io/jary/soarm-flywheel@sha256:7bd767ba0a70d25515971d7e5c1870f36bd3e115507b7ffd8b9a0b329a4591c2
+      mountSources: true
+      memoryRequest: 512Mi
+      memoryLimit: 4Gi
+      cpuRequest: 250m
+      cpuLimit: "2"
+      env:
+        # The hub's model, OpenAI-compatible, no key. The agent's configuration reads this variable.
+        - name: ASSISTANT_BASE_URL
+          value: http://assistant.flywheel.svc:8000/v1
+commands:
+  - id: run-tests
+    exec:
+      label: Run the evaluation dashboard tests
+      component: tools
+      workingDir: ${PROJECT_SOURCE}
+      commandLine: python -m pytest tests/eval_dashboard -q
+      group:
+        kind: test
+        isDefault: true
+  - id: start-agent
+    exec:
+      label: Start the coding agent
+      component: tools
+      workingDir: ${PROJECT_SOURCE}
+      commandLine: opencode
+      group:
+        kind: run
+        isDefault: true
+  # Only the paths the task touches, so other work in the checkout survives a reset.
+  - id: reset-demo
+    exec:
+      label: Put the demo task back to its failing state
+      component: tools
+      workingDir: ${PROJECT_SOURCE}
+      commandLine: git checkout -- src/eval-dashboard tests/eval_dashboard && git clean -fd -- src/eval-dashboard tests/eval_dashboard
