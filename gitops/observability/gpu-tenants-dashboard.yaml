@@ -1,0 +1,387 @@
+# This project was developed with assistance from AI tools.
+#
+# PersesDashboard "GPU tenants": what each slice of the one GPU is doing, from the DCGM exporter on the
+# GPU host (fury-gpu-scrape.yaml -> monitoring-stack.yaml -> prometheus-datasource.yaml).
+#
+# One dashboard for both ways the GPU is used, because the exporter follows the mode by itself:
+#   MIG on   one set of series per GPU instance, labelled GPU_I_ID (the driver's instance id, not the
+#            0:0..0:3 of the CDI names) and GPU_I_PROFILE (3g.126gb, 1g.31gb)
+#   MIG off  one set of series for the whole GPU, and neither label
+#
+# How the panels cope with both, each point read from the Perses source at the version the operator
+# ships (v0.53.1) rather than tried and hoped for:
+# - Every panel names its series by a `slice` label made in the query: label_join writes
+#   "<profile> / instance <id>", then label_replace overwrites it with "whole GPU" where GPU_I_ID is
+#   empty. An absent label is an empty one in PromQL, so the same query serves both modes.
+# - The "Slice detail" group has repeatVariable: gi. With "All" selected and NO customAllValue the
+#   variable resolves to the list of its options and the group is drawn once per option, the variable
+#   bound to that one value inside it. Setting customAllValue would turn "All" into a plain string and
+#   the repeat would silently stop: leave it out.
+# - With MIG off the variable has no options. The group is then drawn once, unrepeated, and $gi - an
+#   empty multi-value variable - expands to "()". GPU_I_ID=~"()" matches exactly the series without
+#   that label, which is the whole GPU: the same effect as "". The bare form is used everywhere, with
+#   no format modifier; the title of that one unrepeated group shows the same "()".
+# - Label values are looked up over the dashboard's time range, so after a mode switch the old rows stay
+#   for one `duration` and then go. That is why it is 15m, and why the first group uses no variable:
+#   it always shows whatever reports now.
+#
+# Units: DCGM_FI_PROF_* are ratios 0..1 (percent-decimal); DCGM_FI_DEV_FB_* are MiB, turned into bytes
+# in the query. Field names are those of exporter 4.5.2-4.8.1, the pinned image - later versions of the
+# NVIDIA documentation use newer names for temperature and power.
+#
+# Per-instance utilisation only exists as a profiling field (DCGM_FI_PROF_GR_ENGINE_ACTIVE): NVML does
+# not attribute utilisation to MIG devices (NVIDIA MIG user guide), and DCGM_FI_DEV_GPU_UTIL is NVML's
+# number. Power and temperature belong to the board, not to a slice; max by (gpu) folds them to one line
+# whether DCGM reports them once or once per instance.
+apiVersion: perses.dev/v1alpha2
+kind: PersesDashboard
+metadata:
+  name: gpu-tenants
+  namespace: observability
+spec:
+  config:
+    display:
+      name: "GPU tenants"
+    duration: 15m
+    refreshInterval: 10s
+    variables:
+      - kind: ListVariable
+        spec:
+          name: gi
+          display:
+            name: "MIG instance"
+          allowAllValue: true
+          allowMultiple: true
+          defaultValue: "$__all"
+          sort: numerical-asc
+          plugin:
+            kind: PrometheusLabelValuesVariable
+            spec:
+              datasource:
+                kind: PrometheusDatasource
+                name: prometheus-edge
+              labelName: GPU_I_ID
+              matchers:
+                - 'DCGM_FI_DEV_FB_USED{job="fury-gpu"}'
+    layouts:
+      - kind: Grid
+        spec:
+          display:
+            title: "All slices"
+          items:
+            - content:
+                # the full JSON-pointer path including "spec", as in edge-flywheel-dashboard.yaml (D028)
+                $ref: "#/spec/panels/busyAll"
+              height: 8
+              width: 12
+              x: 0
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/memoryAll"
+              height: 8
+              width: 12
+              x: 12
+              "y": 0
+      - kind: Grid
+        spec:
+          display:
+            title: "Slice detail $gi"
+          repeatVariable: gi
+          items:
+            - content:
+                $ref: "#/spec/panels/busySlice"
+              height: 7
+              width: 12
+              x: 0
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/memorySlice"
+              height: 7
+              width: 12
+              x: 12
+              "y": 0
+      - kind: Grid
+        spec:
+          display:
+            title: "The board"
+          items:
+            - content:
+                $ref: "#/spec/panels/power"
+              height: 7
+              width: 12
+              x: 0
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/temperature"
+              height: 7
+              width: 12
+              x: 12
+              "y": 0
+    panels:
+      busyAll:
+        kind: Panel
+        spec:
+          display:
+            name: "Compute busy"
+            description: >
+              Share of time the compute engine of each slice had work on it
+              (DCGM_FI_PROF_GR_ENGINE_ACTIVE). With MIG on: one line per GPU instance, each
+              measured against its own slice, so a busy 1g slice reads 100% like a busy 3g one.
+              With MIG off: one line for the whole GPU.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                max: 1
+                format:
+                  unit: percent-decimal
+                  decimalPlaces: 0
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: >-
+                      label_replace(label_join(DCGM_FI_PROF_GR_ENGINE_ACTIVE{job="fury-gpu"},
+                      "slice", " / instance ", "GPU_I_PROFILE", "GPU_I_ID"),
+                      "slice", "whole GPU", "GPU_I_ID", "")
+                    seriesNameFormat: "{{slice}}"
+      memoryAll:
+        kind: Panel
+        spec:
+          display:
+            name: "Memory used"
+            description: >
+              Framebuffer memory in use per slice (DCGM_FI_DEV_FB_USED). A slice cannot take more
+              than its profile gives it: 126 GB for the 3g slice, 31 GB for each 1g slice.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                format:
+                  unit: bytes
+                  shortValues: true
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: >-
+                      label_replace(label_join(DCGM_FI_DEV_FB_USED{job="fury-gpu"} * 1048576,
+                      "slice", " / instance ", "GPU_I_PROFILE", "GPU_I_ID"),
+                      "slice", "whole GPU", "GPU_I_ID", "")
+                    seriesNameFormat: "{{slice}}"
+      busySlice:
+        kind: Panel
+        spec:
+          display:
+            name: "Compute busy"
+            description: >
+              This slice only. Engine active is any work at all; tensor cores active
+              (DCGM_FI_PROF_PIPE_TENSOR_ACTIVE) is the part of it that is matrix arithmetic -
+              high for training and LLM serving, low for a renderer.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                max: 1
+                format:
+                  unit: percent-decimal
+                  decimalPlaces: 0
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: >-
+                      label_replace(label_join(DCGM_FI_PROF_GR_ENGINE_ACTIVE{job="fury-gpu",
+                      GPU_I_ID=~"$gi"},
+                      "slice", " / instance ", "GPU_I_PROFILE", "GPU_I_ID"),
+                      "slice", "whole GPU", "GPU_I_ID", "")
+                    seriesNameFormat: "engine active - {{slice}}"
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: >-
+                      label_replace(label_join(DCGM_FI_PROF_PIPE_TENSOR_ACTIVE{job="fury-gpu",
+                      GPU_I_ID=~"$gi"},
+                      "slice", " / instance ", "GPU_I_PROFILE", "GPU_I_ID"),
+                      "slice", "whole GPU", "GPU_I_ID", "")
+                    seriesNameFormat: "tensor cores active - {{slice}}"
+      memorySlice:
+        kind: Panel
+        spec:
+          display:
+            name: "Memory"
+            description: >
+              This slice only: memory in use against what the slice has (used + free + reserved).
+              The capacity line depends on DCGM_FI_DEV_FB_USED and DCGM_FI_DEV_FB_FREE and is
+              missing if DCGM does not report free memory for an instance; DCGM_FI_DEV_FB_RESERVED
+              is added where it is reported. The used line depends on neither of the other two.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                format:
+                  unit: bytes
+                  shortValues: true
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: >-
+                      label_replace(label_join(DCGM_FI_DEV_FB_USED{job="fury-gpu",
+                      GPU_I_ID=~"$gi"} * 1048576,
+                      "slice", " / instance ", "GPU_I_PROFILE", "GPU_I_ID"),
+                      "slice", "whole GPU", "GPU_I_ID", "")
+                    seriesNameFormat: "used - {{slice}}"
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: >-
+                      label_replace(label_join((DCGM_FI_DEV_FB_USED{job="fury-gpu", GPU_I_ID=~"$gi"}
+                      + DCGM_FI_DEV_FB_FREE{job="fury-gpu", GPU_I_ID=~"$gi"}
+                      + (DCGM_FI_DEV_FB_RESERVED{job="fury-gpu", GPU_I_ID=~"$gi"}
+                      or 0 * DCGM_FI_DEV_FB_USED{job="fury-gpu", GPU_I_ID=~"$gi"})) * 1048576,
+                      "slice", " / instance ", "GPU_I_PROFILE", "GPU_I_ID"),
+                      "slice", "whole GPU", "GPU_I_ID", "")
+                    seriesNameFormat: "capacity - {{slice}}"
+      power:
+        kind: Panel
+        spec:
+          display:
+            name: "Power draw"
+            description: >
+              Watts for the whole board (DCGM_FI_DEV_POWER_USAGE). Power is not divided between
+              slices: four busy tenants show here as one rising line.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                label: "W"
+                format:
+                  unit: decimal
+                  decimalPlaces: 0
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'max by (gpu) (DCGM_FI_DEV_POWER_USAGE{job="fury-gpu"})'
+                    seriesNameFormat: "gpu {{gpu}}"
+      temperature:
+        kind: Panel
+        spec:
+          display:
+            name: "Temperature"
+            description: >
+              GPU die and memory temperature for the whole board (DCGM_FI_DEV_GPU_TEMP,
+              DCGM_FI_DEV_MEMORY_TEMP).
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                format:
+                  unit: celsius
+                  decimalPlaces: 0
+              visual:
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'max by (gpu) (DCGM_FI_DEV_GPU_TEMP{job="fury-gpu"})'
+                    seriesNameFormat: "gpu {{gpu}} die"
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'max by (gpu) (DCGM_FI_DEV_MEMORY_TEMP{job="fury-gpu"})'
+                    seriesNameFormat: "gpu {{gpu}} memory"
+  instanceSelector:
+    matchLabels:
+      app.kubernetes.io/name: edge-perses

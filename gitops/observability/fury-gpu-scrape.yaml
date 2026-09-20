@@ -1,0 +1,32 @@
+# This project was developed with assistance from AI tools.
+#
+# The one target that is not in the cluster: the DCGM exporter on the GPU host, which is also the
+# hypervisor this node runs on. 10.20.0.1 is the host's side of the VM network; the exporter listens
+# on that address only, and the host's firewall admits 9400/tcp from the guests
+# (tools/host/fury/70-dcgm.sh; who else reaches it, and why that is accepted: 70-dcgm.md). The scrape
+# leaves the pod network through the node, so the host sees it coming from the node's address - which
+# is what that firewall opening is for.
+#
+# monitoring.rhobs, not monitoring.coreos.com: the operator ships its own copy of the Prometheus
+# Operator CRDs under its own group, and only those are read by a MonitoringStack.
+apiVersion: monitoring.rhobs/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: fury-gpu
+  namespace: observability
+  labels:
+    # the MonitoringStack's resourceSelector (monitoring-stack.yaml); without it this is ignored silently
+    app.kubernetes.io/part-of: edge-metrics
+spec:
+  # The `job` label on every series, and what the dashboard selects on. The job_name in the rendered
+  # Prometheus configuration is the operator's own; this one is applied by relabelling.
+  jobName: fury-gpu
+  scheme: HTTP
+  metricsPath: /metrics
+  # the exporter refreshes every 5 s (DCGM_EXPORTER_INTERVAL in the unit); a slice that starts work
+  # shows within two scrapes
+  scrapeInterval: 10s
+  scrapeTimeout: 5s
+  staticConfigs:
+    - targets:
+        - 10.20.0.1:9400

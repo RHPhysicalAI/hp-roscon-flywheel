@@ -1,0 +1,52 @@
+# This project was developed with assistance from AI tools.
+#
+# The MonitoringStack's Prometheus (monitoring-stack.yaml) as a Perses datasource. The operator names
+# the Service <stack>-prometheus and serves plain HTTP on 9090 unless the stack sets webTLSConfig.
+apiVersion: perses.dev/v1alpha2
+kind: PersesDatasource
+metadata:
+  name: prometheus-edge
+  namespace: observability
+spec:
+  config:
+    # the default for its own kind only: tempo-edge stays the default TempoDatasource
+    default: true
+    plugin:
+      kind: PrometheusDatasource
+      spec:
+        # proxy (not directUrl), for the reason given in tempo-datasource.yaml: the Perses backend makes
+        # the call, a browser cannot reach a cluster Service.
+        proxy:
+          kind: HTTPProxy
+          spec:
+            url: http://edge-metrics-prometheus.observability.svc:9090
+            # The proxy only filters when this list has entries, and the Perses route is unauthenticated:
+            # without it, anyone who reaches that route could hit any Prometheus path through the proxy.
+            # So: what dashboards need, and no more. query, query_range, labels and series are listed
+            # with both methods because Perses versions differ in the one they use.
+            allowedEndpoints:
+              - endpointPattern: /api/v1/query
+                method: POST
+              - endpointPattern: /api/v1/query
+                method: GET
+              - endpointPattern: /api/v1/query_range
+                method: POST
+              - endpointPattern: /api/v1/query_range
+                method: GET
+              - endpointPattern: /api/v1/labels
+                method: POST
+              - endpointPattern: /api/v1/labels
+                method: GET
+              - endpointPattern: /api/v1/series
+                method: POST
+              - endpointPattern: /api/v1/series
+                method: GET
+              - endpointPattern: /api/v1/label/([a-zA-Z0-9_-]+)/values
+                method: GET
+              - endpointPattern: /api/v1/metadata
+                method: GET
+        # what the query editor takes as the smallest useful step; the scrape runs every 10 s
+        scrapeInterval: 10s
+  instanceSelector:
+    matchLabels:
+      app.kubernetes.io/name: edge-perses

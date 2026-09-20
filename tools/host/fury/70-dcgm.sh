@@ -59,7 +59,12 @@ fetch() {
 }
 
 prove() {
-    local n want
+    local n want t0=$SECONDS
+    # The profiling fields come a collection or two after the device fields (seen on this GPU: present a minute
+    # later, absent in the first sample) - wait for them before calling them missing.
+    until grep -q '^DCGM_FI_PROF_GR_ENGINE_ACTIVE{' "$tmp" || (( SECONDS - t0 >= 90 )); do
+        sleep 5; curl -fsS -m 5 -o "$tmp" "$url" 2>/dev/null || true
+    done
     echo "## series per entity (from DCGM_FI_DEV_FB_USED)"
     awk "$awk_lbl"' /^DCGM_FI_DEV_FB_USED\{/ { printf "  gpu %s  %-24s %s\n", lbl($0, "gpu"), lbl($0, "modelName"), slice($0) }' "$tmp"
     echo "## three samples"
