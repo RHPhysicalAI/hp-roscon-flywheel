@@ -90,5 +90,15 @@ if [[ -d $var/log/journal ]]; then
     journalctl -D "$var/log/journal" --no-pager -o short-monotonic -u NetworkManager -u cloud-init-local -u cloud-init 2>/dev/null |
         grep -iE 'enp1s0|nic0|cloud-init|keyfile|connection|manag|device|error|fail|warn' | head -60 | cut -c1-240
 else echo "no persistent journal on this disk ($var/log/journal)"; fi
+
+section "the device agent: is its enrolment config there (name, mode and size only), and what does it say"
+ls -laZ "$dep/etc/flightctl/" 2>&1 | cut -c1-200 || true
+if [[ -d $var/log/journal ]]; then
+    journalctl -D "$var/log/journal" --no-pager -o short-monotonic -u flightctl-agent 2>/dev/null |
+        grep -viE 'BEGIN|PRIVATE' | tail -40 | cut -c1-260
+    echo "--- denials and failed units"
+    journalctl -D "$var/log/journal" --no-pager -o short-monotonic 2>/dev/null |
+        grep -E 'avc:  denied|Failed to start|failed with result|Dependency failed' | tail -15 | cut -c1-260
+fi
 echo
 echo "done - the copy of the disk is removed on the way out"

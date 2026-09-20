@@ -64,8 +64,10 @@ RUN printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' '<zone>' '  <short>Pu
 # The agent's unit is only After=network.target. On a clone's first boot its config is written by cloud-init, so
 # without this it starts too early, fails on the missing file and retries until it appears. On later boots
 # cloud-init is switched off and this ordering is inert.
+# After cloud-init.service - the network stage, where write_files runs - and NOT cloud-final.service: that one is
+# itself After=multi-user.target, which waits for the agent, and systemd breaks the cycle by never starting the agent.
 RUN mkdir -p /usr/lib/systemd/system/flightctl-agent.service.d /etc/flightctl/conf.d && \
-    printf '[Unit]\nAfter=cloud-final.service\n' > /usr/lib/systemd/system/flightctl-agent.service.d/10-after-cloud-init.conf && \
+    printf '[Unit]\nAfter=cloud-init.service\n' > /usr/lib/systemd/system/flightctl-agent.service.d/10-after-cloud-init.conf && \
     printf 'default-labels:\n  enrol: fleet-vm\n' > /etc/flightctl/conf.d/fleet.yaml
 
 # NOT in here, and it was tried (2026-09-20): the policy's two images in an additional read-only image store under
