@@ -35,32 +35,6 @@ components:
         - name: ASSISTANT_BASE_URL
           value: http://assistant.flywheel.svc:8000/v1
 commands:
-  - id: run-tests
-    exec:
-      label: Run the evaluation dashboard tests
-      component: tools
-      workingDir: ${PROJECT_SOURCE}
-      commandLine: python -m pytest tests/eval_dashboard -q
-      group:
-        kind: test
-        isDefault: true
-  - id: open-demo-files
-    exec:
-      label: Open the task and the failing test side by side with the terminal
-      component: tools
-      workingDir: ${PROJECT_SOURCE}
-      # code-oss is the editor's own helper, on PATH in its terminals and tasks
-      commandLine: code-oss -r DEMO-TASK.md tests/eval_dashboard/test_demo_task.py
-  - id: start-agent
-    exec:
-      label: Start the coding agent
-      component: tools
-      workingDir: ${PROJECT_SOURCE}
-      commandLine: opencode
-      group:
-        kind: run
-        isDefault: true
-  # Only the paths the task touches, so other work in the checkout survives a reset.
   - id: reset-demo
     exec:
       label: Put the demo task back to its failing state
