@@ -93,7 +93,7 @@ spec:
       containers:
         - name: world
           # Do not commit this file with the placeholder in it: tools/hub/build-fleet-world.sh prints the digest.
-          image: quay.io/jary/soarm-flywheel@sha256:8a3e499815698cf81bbdbe5c876d2ee5d0ce6775dbc11e4ede6f679e4a83ecc7
+          image: quay.io/jary/soarm-flywheel@sha256:179cbedc5a65759030c2a7cb58b64e952eb50aba7ca421fd7fe57176e2029fe4
           imagePullPolicy: IfNotPresent
           command: ["/bin/bash", "-c"]
           args:
@@ -139,9 +139,11 @@ spec:
             capabilities:
               drop: ["ALL"]
           resources:
+            # The request is below what a world uses (about 1.4 vCPUs) on purpose: the node's requests were 97% booked
+            # at 16 worlds with a quarter of its cpu idle, and a low request means the platform wins when cpu is short.
             requests:
-              cpu: "1"
-              memory: 1Gi
+              cpu: 500m
+              memory: 768Mi
             limits:
               cpu: "2"
               memory: 1536Mi
