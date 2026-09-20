@@ -29,7 +29,8 @@ Image=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d7
 Pull=never
 Network=host
 AddDevice=nvidia.com/gpu=all
-ShmSize=2g
+# data-loader workers hand batches over through /dev/shm; two camera streams per sample
+ShmSize=16g
 Volume=/data/flywheel:/flywheel:z
 Volume=/usr/local/lib/flywheel/host_runner.py:/usr/local/lib/flywheel/host_runner.py:ro,z
 # the two MinIO keys, root 0600, written by 50-runner-install.sh and never in git
@@ -42,6 +43,10 @@ Environment=HOST_DATA_ROOT=/data/flywheel
 Environment=MINIO_ENDPOINT=http://10.20.0.10:30900
 Environment=KAFKA_BOOTSTRAP=10.20.0.10:30903
 Environment=ARTIFACT_BUCKET=episodes-data
+# each data-loader worker decodes video on a CPU core and the host has 72. At the library's default of 4
+# the first full fine-tune waited 0.18 s a step for data against 0.064 s computing: the GPU about three
+# quarters idle, 4 h 21 min for 62k steps.
+Environment=TRAIN_NUM_WORKERS=24
 # read by the runner, used only in docker mode
 Environment=ACT_IMAGE=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837
 # the container's own filesystem goes with every restart: keep what torch and the HF hub download

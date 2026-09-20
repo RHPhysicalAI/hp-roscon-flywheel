@@ -36,6 +36,8 @@ Two ways to run it, chosen by environment (nothing set = the desktop):
                          <data>/eval/requests/<mv>.json, the service answers with <mv>.done next to it and
                          the record in <data>/eval/<mv>.json. Paths in that contract are host paths
                          (HOST_DATA_ROOT is where the host keeps what the runner sees as FLYWHEEL_DATA).
+  TRAIN_NUM_WORKERS      data-loader workers for lerobot-train (unset = the library's default of 4).
+  TRAIN_EXTRA_ARGS       further `--name=value` flags for lerobot-train, checked before they reach the shell.
 """
 from __future__ import annotations
 
@@ -75,6 +77,9 @@ if not (S3KEY and S3SEC):
              "quadlet they come from /etc/flywheel-runner/env); refusing to run")
 BUCKET = os.environ.get("ARTIFACT_BUCKET", "episodes-data")
 IMAGE = os.environ.get("ACT_IMAGE", "act-inference:latest")
+# the data loader is tuned per host without touching the recipe (batch size and step count stay as they are)
+TRAIN_NUM_WORKERS = os.environ.get("TRAIN_NUM_WORKERS", "")
+TRAIN_EXTRA_ARGS = os.environ.get("TRAIN_EXTRA_ARGS", "")
 TEACHER_HF = os.environ.get("TEACHER_PATH") or (
     "/root/.cache/huggingface/hub/models--francocipollone--"
     "rospai_act_sim_arm101_place_cubes_on_tray/snapshots/4c2bdba206dccc382dbf80d48e15b3d754102df6")
@@ -172,17 +177,49 @@ def incumbent_policy_path(incumbent_path: str, *, mode: str, teacher: str) -> tu
     raise ValueError(f"RUNNER_MODE={mode!r} rejected: must be docker or inprocess")
 
 
+# the flags end up in a shell script: a long option, optionally =value, and nothing the shell would act on
+_TRAIN_FLAG = re.compile(r"--[A-Za-z0-9_.]+(=[A-Za-z0-9_.,:/@+-]*)?")
+
+
+def train_flags(num_workers: str = "", extra_args: str = "") -> str:
+    """The host's extra lerobot-train flags as one string; ValueError for a value that is not a plain flag."""
+    flags = []
+    n = num_workers.strip()
+    if n:
+        if not re.fullmatch(r"[0-9]+", n):
+            raise ValueError(f"TRAIN_NUM_WORKERS={num_workers!r} rejected: must be a whole number, 0 or more")
+        flags.append(f"--num_workers={int(n)}")
+    try:
+        toks = shlex.split(extra_args)
+    except ValueError as e:  # an unclosed quote
+        raise ValueError(f"TRAIN_EXTRA_ARGS={extra_args!r} rejected: {e}") from None
+    for tok in toks:
+        if not _TRAIN_FLAG.fullmatch(tok):
+            raise ValueError(f"TRAIN_EXTRA_ARGS token {tok!r} rejected: must match {_TRAIN_FLAG.pattern}")
+        if n and tok.split("=", 1)[0] == "--num_workers":
+            raise ValueError(f"TRAIN_EXTRA_ARGS token {tok!r} rejected: TRAIN_NUM_WORKERS={n} already sets it")
+        flags.append(tok)
+    return " ".join(flags)
+
+
+def train_command(pol: str, repo_id: str, root: str, candidate: str, steps: int, flags: str = "") -> str:
+    """The shell script of the training step: the fixed recipe, then the host's flags, then the log filter."""
+    # quoted: in-process the incumbent may be a path taken from the trigger, and this string is a shell script
+    return (f"lerobot-train --policy.path={shlex.quote(pol)} --dataset.repo_id={repo_id} "
+            f"--dataset.root={root}/datasets/{repo_id} --dataset.video_backend=pyav "
+            f"--policy.device=cuda --policy.push_to_hub=false --output_dir={root}/train/{candidate} "
+            f"--steps={steps} --save_freq={steps} --log_freq=1000" + (f" {flags}" if flags else "")
+            + " 2>&1 | tr '\\r' '\\n' | grep -E 'loss:|End of training|rror'")
+
+
 def train(candidate: str, repo_id: str, incumbent_path: str, k: float) -> Path:
+    flags = train_flags(TRAIN_NUM_WORKERS, TRAIN_EXTRA_ARGS)  # first: a bad value fails the run before anything starts
     info = json.load(open(FLY / "datasets" / repo_id / "meta" / "info.json"))
     steps = round(k * info["total_frames"])
     pol, extra = incumbent_policy_path(incumbent_path, mode=RUNNER_MODE, teacher=TEACHER_HF)
-    root = data_root()
-    # quoted: in-process the incumbent may be a path taken from the trigger, and this string is a shell script
-    in_image(f"lerobot-train --policy.path={shlex.quote(pol)} --dataset.repo_id={repo_id} "
-             f"--dataset.root={root}/datasets/{repo_id} --dataset.video_backend=pyav "
-             f"--policy.device=cuda --policy.push_to_hub=false --output_dir={root}/train/{candidate} "
-             f"--steps={steps} --save_freq={steps} --log_freq=1000 2>&1 | tr '\\r' '\\n' | grep -E 'loss:|End of training|rror'",
-             gpus=True, extra=extra)
+    if flags:
+        log(f"training flags from the environment: {flags}")
+    in_image(train_command(pol, repo_id, data_root(), candidate, steps, flags), gpus=True, extra=extra)
     # lerobot writes the checkpoint as root with mode 0600; make it readable to the host user so
     # it can be tarred/uploaded and packaged (the eval mounts it into a root container regardless).
     if RUNNER_MODE == "inprocess":
