@@ -168,13 +168,15 @@ create_vm() {
     qemu-img create -q -f qcow2 -F qcow2 -b "$golden" "$pool/$n.qcow2"
     chown root:qemu "$pool/$n.qcow2"; chmod 0660 "$pool/$n.qcow2"; restorecon "$pool/$n.qcow2"
     printf 'instance-id: %s-%s\nlocal-hostname: %s\n' "$n" "$(date -u +%Y%m%dT%H%M%SZ)" "$n" > "$tmp/meta-data"
+    # The default route is spelled 0.0.0.0/0: cloud-init 24.4's own parser (RHEL has no netplan) rejects netplan's
+    # "to: default", and that fails the whole pre-network stage - the clone boots with no address at all.
     cat > "$tmp/network-config" <<EOF
 version: 2
 ethernets:
   nic0:
     match: {macaddress: "$mac"}
     addresses: [$ip/24]
-    routes: [{to: default, via: 10.20.0.1}]
+    routes: [{to: 0.0.0.0/0, via: 10.20.0.1}]
     nameservers: {addresses: [10.20.0.1]}
 EOF
     # The enrolment config goes in base64: no YAML-in-YAML indentation to get wrong, and nothing readable in a diff
