@@ -5723,3 +5723,32 @@ loop from a container of its own and took the policy's label (`act-v2-ft160`); t
 failed and was rejected (0 of 3 cubes), the next two placed all three and passed at score 1.000 - the same
 outcomes the episode loop logged; the page read 2 passed, 1 rejected, 2 / 160; the flywheel's own curator received
 nothing.
+
+## D168 — Edge Manager from Red Hat's product chart: the screen says the product's name, and every image is the product's
+
+**Date:** 2026-09-20. **Status:** done (`0457cfb`); 13 devices stayed enrolled and healthy through it.
+
+The device-management page read "Flight Control", with the project's logo and documentation links. That was never
+a decision: the chart sets the UI's branding flag from the chart's own NAME (`IS_RHEM` is true only for a chart
+called `redhat-rhem`), and D024 had installed the project's chart from `quay.io/flightctl/charts`. Only the UI
+image had been swapped for Red Hat's (D146/D147), and only because the project's UI image has no arm64 build;
+D135/D136 had looked at console integration and set it aside. Nothing had looked at the name on the screen.
+
+**Decision.** Install from Red Hat's chart, `redhat-rhem` 1.3.0 on `charts.openshift.io` - same templates, same
+version, same release name and values, so the same 105 objects are updated in place. The standalone Route UI stays:
+it is one of the product's two documented presentations; the other lives in the ACM console, needs ACM (D135: did
+not fit this hub), and the console plugin's menu entries all attach to ACM's perspective, so without ACM it has
+nothing to show. **Not claimed:** both charts declare x86_64 only, so an arm64 hub is outside what either declares;
+the images exist for arm64 and run - whether that is supported is a question for the product team.
+
+**How it went.** Before: no rollout in flight, 13 devices healthy, a SQL dump of the database written beside its
+data directory (576 KB). A local render of both charts with our values: same objects and names, no selector
+changes; every image from `registry.redhat.io`; two labels changed on everything (each pod restarts once); the
+key-value store is redis-7 instead of valkey-8 (in memory, nothing kept); the database only changes image
+(PostgreSQL 16 both); the generated secrets are held at their live values by D031's `ignoreDifferences`. One thing
+the render does not show: the database-migration Job is an ordinary object and a Job's pod template cannot be
+changed in place, so the sync refused that one object - deleting the completed Job let Argo CD create it from the
+new chart, where it ran and completed (same version: nothing to migrate). The chart's certificate and
+encryption-key jobs ran again and left every secret unchanged. After: app Synced and Healthy, 13 devices Online,
+UpToDate and Healthy, both Fleets valid, the page titled "Red Hat Edge Manager". Going back is the same change in
+reverse (the project chart's registry Secret is still there), with the dump as the last resort.
