@@ -36,3 +36,13 @@ models/
 *.rosbag
 *.bag
 .venv-kfp/
+
+# weekend re-baseline runner — local operator tooling, never tracked
+/tools/host/local/
+
+# credentials that must never land in the checkout, even by an accidental copy
+*agent-config.yaml
+pull-secret*
+
+# agent worktrees
+/.claude/worktrees/
