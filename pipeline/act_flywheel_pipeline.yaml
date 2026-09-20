@@ -95,6 +95,10 @@ components:
           parameterType: LIST
         registry_repo:
           parameterType: STRING
+        run_id:
+          defaultValue: ''
+          isOptional: true
+          parameterType: STRING
         s3_endpoint:
           parameterType: STRING
     outputDefinitions:
@@ -417,24 +421,29 @@ deploymentSpec:
           \ *\n\ndef package_modelcar(checkpoint_uri: str, candidate: str, registry_repo:\
           \ str, platform: List[str],\n                     s3_endpoint: str, crane_version:\
           \ str, modelcar_base: str,\n                     crane_sha256_amd64: str,\
-          \ crane_sha256_arm64: str) -> str:\n    \"\"\"crane append per platform:\
-          \ flat ACT checkpoint dir -> /models/act on ubi-micro, then one OCI index\n\
-          \    at the candidate tag (the model layer is shared; only the ubi-micro\
-          \ base differs). Returns index@digest.\n    The crane release tarball is\
-          \ SHA-256-checked against the pinned digest before it runs (same\n    discipline\
-          \ as gitops/tekton/cosign-sign-task.yaml); a mismatch aborts the run.\"\"\
-          \"\n    import os, platform as _plat, subprocess, tarfile, io, boto3, urllib.request,\
-          \ hashlib\n    s3 = boto3.client(\"s3\", endpoint_url=s3_endpoint, aws_access_key_id=os.environ[\"\
-          AWS_ACCESS_KEY_ID\"],\n                      aws_secret_access_key=os.environ[\"\
-          AWS_SECRET_ACCESS_KEY\"])\n    b, k = checkpoint_uri[5:].split(\"/\", 1)\n\
-          \    buf = io.BytesIO(s3.get_object(Bucket=b, Key=k)[\"Body\"].read())\n\
-          \    os.makedirs(\"/tmp/layer/models/act\", exist_ok=True)\n    with tarfile.open(fileobj=buf,\
-          \ mode=\"r:gz\") as t:\n        for m in t:\n            if m.isfile():\n\
-          \                m.name = \"models/act/\" + os.path.basename(m.name); t.extract(m,\
-          \ \"/tmp/layer\")\n    with tarfile.open(\"/tmp/layer.tar\", \"w\") as t:\
-          \ t.add(\"/tmp/layer/models\", arcname=\"models\")\n    arch = {\"x86_64\"\
-          : \"x86_64\", \"amd64\": \"x86_64\", \"aarch64\": \"arm64\", \"arm64\":\
-          \ \"arm64\"}[_plat.machine()]\n    url = f\"https://github.com/google/go-containerregistry/releases/download/{crane_version}/go-containerregistry_Linux_{arch}.tar.gz\"\
+          \ crane_sha256_arm64: str, run_id: str = \"\") -> str:\n    \"\"\"crane\
+          \ append per platform: flat ACT checkpoint dir -> /models/act on ubi-micro,\
+          \ then one OCI index\n    (the model layer is shared; only the ubi-micro\
+          \ base differs). Returns index@digest.\n    Every image of a run is tagged\
+          \ <candidate>-<run id, 8 chars>[-<arch>] and keeps that tag for good; the\
+          \ bare\n    <candidate> tag is only moved to the newest index afterwards.\
+          \ A registry stops serving a manifest by digest,\n    and drops its signature,\
+          \ the moment its last tag moves away - which is what promoting the same\
+          \ candidate\n    name a second time did to the image a Fleet still pinned.\n\
+          \    The crane release tarball is SHA-256-checked against the pinned digest\
+          \ before it runs (same\n    discipline as gitops/tekton/cosign-sign-task.yaml);\
+          \ a mismatch aborts the run.\"\"\"\n    import os, platform as _plat, subprocess,\
+          \ tarfile, io, boto3, urllib.request, hashlib\n    s3 = boto3.client(\"\
+          s3\", endpoint_url=s3_endpoint, aws_access_key_id=os.environ[\"AWS_ACCESS_KEY_ID\"\
+          ],\n                      aws_secret_access_key=os.environ[\"AWS_SECRET_ACCESS_KEY\"\
+          ])\n    b, k = checkpoint_uri[5:].split(\"/\", 1)\n    buf = io.BytesIO(s3.get_object(Bucket=b,\
+          \ Key=k)[\"Body\"].read())\n    os.makedirs(\"/tmp/layer/models/act\", exist_ok=True)\n\
+          \    with tarfile.open(fileobj=buf, mode=\"r:gz\") as t:\n        for m\
+          \ in t:\n            if m.isfile():\n                m.name = \"models/act/\"\
+          \ + os.path.basename(m.name); t.extract(m, \"/tmp/layer\")\n    with tarfile.open(\"\
+          /tmp/layer.tar\", \"w\") as t: t.add(\"/tmp/layer/models\", arcname=\"models\"\
+          )\n    arch = {\"x86_64\": \"x86_64\", \"amd64\": \"x86_64\", \"aarch64\"\
+          : \"arm64\", \"arm64\": \"arm64\"}[_plat.machine()]\n    url = f\"https://github.com/google/go-containerregistry/releases/download/{crane_version}/go-containerregistry_Linux_{arch}.tar.gz\"\
           \n    urllib.request.urlretrieve(url, \"/tmp/crane.tgz\")\n    want = {\"\
           x86_64\": crane_sha256_amd64, \"arm64\": crane_sha256_arm64}[arch]\n   \
           \ got = hashlib.sha256(open(\"/tmp/crane.tgz\", \"rb\").read()).hexdigest()\n\
@@ -447,19 +456,24 @@ deploymentSpec:
           /tmp/docker\", exist_ok=True)\n    cfg = _j.load(open(\"/etc/quay/.dockerconfigjson\"\
           ))\n    _j.dump({\"auths\": cfg.get(\"auths\", {})}, open(\"/tmp/docker/config.json\"\
           , \"w\"))  # drop credsStore/credHelpers\n    os.environ[\"DOCKER_CONFIG\"\
-          ] = \"/tmp/docker\"\n    per_arch = []\n    for p in platform:\n       \
-          \ tag = f\"{registry_repo}:{candidate}-{p.split('/', 1)[1].replace('/',\
-          \ '-')}\"\n        r = subprocess.run([\"/tmp/crane\", \"append\", \"--platform\"\
-          , p, \"-b\", modelcar_base,\n                            \"-f\", \"/tmp/layer.tar\"\
-          , \"-t\", tag], capture_output=True, text=True)\n        if r.returncode\
-          \ != 0:\n            print(f\"crane append {p} failed:\", r.stderr[-1500:]);\
-          \ raise SystemExit(1)\n        per_arch.append(r.stdout.strip().splitlines()[-1]);\
-          \ print(\"pushed\", per_arch[-1])\n    cmd = [\"/tmp/crane\", \"index\"\
-          , \"append\", \"-t\", f\"{registry_repo}:{candidate}\"]\n    for m in per_arch:\
-          \ cmd += [\"-m\", m]\n    r = subprocess.run(cmd, capture_output=True, text=True)\n\
-          \    if r.returncode != 0:\n        print(\"crane index append failed:\"\
-          , r.stderr[-1500:]); raise SystemExit(1)\n    ref = r.stdout.strip().splitlines()[-1];\
-          \ print(\"pushed\", ref); return ref\n\n"
+          ] = \"/tmp/docker\"\n    per_arch = []\n    unique = f\"{candidate}-{run_id[:8]}\"\
+          \ if run_id else candidate\n    for p in platform:\n        tag = f\"{registry_repo}:{unique}-{p.split('/',\
+          \ 1)[1].replace('/', '-')}\"\n        r = subprocess.run([\"/tmp/crane\"\
+          , \"append\", \"--platform\", p, \"-b\", modelcar_base,\n              \
+          \              \"-f\", \"/tmp/layer.tar\", \"-t\", tag], capture_output=True,\
+          \ text=True)\n        if r.returncode != 0:\n            print(f\"crane\
+          \ append {p} failed:\", r.stderr[-1500:]); raise SystemExit(1)\n       \
+          \ per_arch.append(r.stdout.strip().splitlines()[-1]); print(\"pushed\",\
+          \ per_arch[-1])\n    cmd = [\"/tmp/crane\", \"index\", \"append\", \"-t\"\
+          , f\"{registry_repo}:{unique}\"]\n    for m in per_arch: cmd += [\"-m\"\
+          , m]\n    r = subprocess.run(cmd, capture_output=True, text=True)\n    if\
+          \ r.returncode != 0:\n        print(\"crane index append failed:\", r.stderr[-1500:]);\
+          \ raise SystemExit(1)\n    ref = r.stdout.strip().splitlines()[-1]; print(\"\
+          pushed\", ref)\n    if unique != candidate:\n        r = subprocess.run([\"\
+          /tmp/crane\", \"tag\", ref, candidate], capture_output=True, text=True)\n\
+          \        if r.returncode != 0:\n            print(f\"crane tag {candidate}\
+          \ failed:\", r.stderr[-1500:]); raise SystemExit(1)\n        print(f\"tag\
+          \ {candidate} -> {ref}\")\n    return ref\n\n"
         image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
     exec-record-pr-url:
       container:
@@ -818,6 +832,9 @@ root:
               componentInputParameter: platform
             registry_repo:
               componentInputParameter: registry_repo
+            run_id:
+              runtimeValue:
+                constant: '{{$.pipeline_job_uuid}}'
             s3_endpoint:
               componentInputParameter: s3_endpoint
         taskInfo:

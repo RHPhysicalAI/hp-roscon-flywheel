@@ -99,9 +99,13 @@ def eval_gate(eval_report_uri: str, s3_endpoint: str) -> str:
 @dsl.component(base_image=PY_IMG, packages_to_install=["boto3==1.35.36"])
 def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, platform: List[str],
                      s3_endpoint: str, crane_version: str, modelcar_base: str,
-                     crane_sha256_amd64: str, crane_sha256_arm64: str) -> str:
+                     crane_sha256_amd64: str, crane_sha256_arm64: str, run_id: str = "") -> str:
     """crane append per platform: flat ACT checkpoint dir -> /models/act on ubi-micro, then one OCI index
-    at the candidate tag (the model layer is shared; only the ubi-micro base differs). Returns index@digest.
+    (the model layer is shared; only the ubi-micro base differs). Returns index@digest.
+    Every image of a run is tagged <candidate>-<run id, 8 chars>[-<arch>] and keeps that tag for good; the bare
+    <candidate> tag is only moved to the newest index afterwards. A registry stops serving a manifest by digest,
+    and drops its signature, the moment its last tag moves away - which is what promoting the same candidate
+    name a second time did to the image a Fleet still pinned.
     The crane release tarball is SHA-256-checked against the pinned digest before it runs (same
     discipline as gitops/tekton/cosign-sign-task.yaml); a mismatch aborts the run."""
     import os, platform as _plat, subprocess, tarfile, io, boto3, urllib.request, hashlib
@@ -130,19 +134,26 @@ def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, pl
     _j.dump({"auths": cfg.get("auths", {})}, open("/tmp/docker/config.json", "w"))  # drop credsStore/credHelpers
     os.environ["DOCKER_CONFIG"] = "/tmp/docker"
     per_arch = []
+    unique = f"{candidate}-{run_id[:8]}" if run_id else candidate
     for p in platform:
-        tag = f"{registry_repo}:{candidate}-{p.split('/', 1)[1].replace('/', '-')}"
+        tag = f"{registry_repo}:{unique}-{p.split('/', 1)[1].replace('/', '-')}"
         r = subprocess.run(["/tmp/crane", "append", "--platform", p, "-b", modelcar_base,
                             "-f", "/tmp/layer.tar", "-t", tag], capture_output=True, text=True)
         if r.returncode != 0:
             print(f"crane append {p} failed:", r.stderr[-1500:]); raise SystemExit(1)
         per_arch.append(r.stdout.strip().splitlines()[-1]); print("pushed", per_arch[-1])
-    cmd = ["/tmp/crane", "index", "append", "-t", f"{registry_repo}:{candidate}"]
+    cmd = ["/tmp/crane", "index", "append", "-t", f"{registry_repo}:{unique}"]
     for m in per_arch: cmd += ["-m", m]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         print("crane index append failed:", r.stderr[-1500:]); raise SystemExit(1)
-    ref = r.stdout.strip().splitlines()[-1]; print("pushed", ref); return ref
+    ref = r.stdout.strip().splitlines()[-1]; print("pushed", ref)
+    if unique != candidate:
+        r = subprocess.run(["/tmp/crane", "tag", ref, candidate], capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"crane tag {candidate} failed:", r.stderr[-1500:]); raise SystemExit(1)
+        print(f"tag {candidate} -> {ref}")
+    return ref
 
 
 @dsl.component(base_image=PY_IMG)
@@ -396,7 +407,8 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
     k8s.use_secret_as_env(g, secret_name="hub-credentials", secret_key_to_env={"s3-access-key": "AWS_ACCESS_KEY_ID", "s3-secret-key": "AWS_SECRET_ACCESS_KEY"})
     pk = package_modelcar(checkpoint_uri=t.outputs["checkpoint"], candidate=candidate, registry_repo=registry_repo,
                           platform=platform, s3_endpoint=s3_endpoint, crane_version=crane_version, modelcar_base=modelcar_base,
-                          crane_sha256_amd64=crane_sha256_amd64, crane_sha256_arm64=crane_sha256_arm64).after(g)
+                          crane_sha256_amd64=crane_sha256_amd64, crane_sha256_arm64=crane_sha256_arm64,
+                          run_id=run_id).after(g)
     pk.set_caching_options(False)
     k8s.use_secret_as_env(pk, secret_name="hub-credentials", secret_key_to_env={"s3-access-key": "AWS_ACCESS_KEY_ID", "s3-secret-key": "AWS_SECRET_ACCESS_KEY"})
     k8s.use_secret_as_volume(pk, secret_name="quay-push", mount_path="/etc/quay")
