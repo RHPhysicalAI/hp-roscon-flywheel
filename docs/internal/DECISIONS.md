@@ -5263,3 +5263,51 @@ nothing (a failed `ExecStartPre=` under `Restart=always` would loop for ever). `
 the new `fury-mode` and seeds the cache volume from the smoke test's. First run: the next time the flywheel can be
 paused for an hour.
 
+
+## D157 — The evaluation dashboard is this project's code, runs on the hub, and reads the pipeline's own evaluation records
+
+**Date:** 2026-09-20 (UTC). **Status:** done on the Fury hub; first act 1 view still to come (FURY-PLAN Phase 5c, ledger L15).
+
+**Decision (operator).** The dashboard that compares model versions was built for this project in a repository of
+its own and has been handed back to it: the code is ours to change, it runs in the cluster, and nothing is named
+after a person. It was imported unchanged (`hp-roscon-eval-dashboard` at `ee07e1f`) into `src/eval-dashboard/`,
+its tests into `tests/eval_dashboard/`, and then changed here.
+
+**Why it had to change, not just move** (from reading and running its code against our records): it could not read
+the pipeline's evaluation records at all (no per-episode id or model version, the `eval-` label dropped on purpose,
+flat `steps` / `duration_s`) and never read `eval_report.json` — so the screen showed two unpaired, whole-percent
+rates while the gate, the PR and the registry carry the paired result; its Kafka path fetched from whichever bucket
+a manifest named, not from the buckets it was configured with, so an instance pointed at separate comparison
+buckets still took in live passes under the same label (separate buckets isolate writers, not that reader — the
+D138 arrangement had this hole); episodes whose cube count could not be read counted as policy failures, which the
+curator deliberately does not do; a development address was its default link.
+
+**What it does now.** `SOURCE_MODE=eval` reads one promotion run — `eval/<run_id>/eval_report.json` and the two
+per-policy records, from MinIO or from a directory — newest run or a pinned `EVAL_RUN_ID`, and *replaces* what it
+holds when the run changes; a **Paired result** panel shows fixed / broken / net / p / verdict from the report
+verbatim (the pipeline's result is authoritative and is never recomputed for display) with the fixed and broken
+seeds; the Kafka path keeps to the configured buckets and counts what it skips; sensor-fault and unfinished
+episodes are left out of the rate and shown as "not scored"; rates to one decimal; a version missing from the
+versions file takes its size from the last `-ft<N>` in its name; UBI 9 Python base, non-root, read-only. Built
+blind: tests written from the spec by one agent (275 cases), implementation by another that never saw them —
+313 passed on the first run, no arbitration.
+
+**On the hub.** Image built by the existing signed Tekton pipeline (`tools/hub/build-eval-dashboard.sh`; arm64, about
+a minute, Rekor 6), pinned by digest in `gitops/flywheel/eval-dashboard.yaml`: `eval-dashboard` (paired evaluation)
+and `eval-dashboard-live` (curated + rejected buckets and the manifest topic), each with a Service and an edge
+Route, their own ServiceAccount under restricted-v2, linked to each other and from the flywheel dashboard's header.
+First real data: the comparison instance shows tonight's rehearsal run (3 paired seeds, FAIL) read through the
+read-only user; the live instance shows 271 live episodes for the serving model.
+
+**The read-only MinIO user** is `eval-readonly` (Secret / ConfigMap / Job `minio-eval-readonly-*`; the Secret
+hand-created in `minio` and in `flywheel`), and may also read `episodes-data/eval/*`. **Found on the way:** the
+setup Job had never worked on this hub — under an arbitrary uid `mc` could not save its alias
+(`mkdir /.mc: permission denied`), every later command failed, and without `set -e` the Job still ended "done" and
+Complete; the user did not exist. Fixed (`MC_CONFIG_DIR`, `set -eu`, a checked attach) and made an Argo `PostSync`
+hook, so a policy change is applied on the next sync and the immutable pod template is never patched. Lesson, again
+(D149): a step that reports success is not evidence; the evidence here was a listing of the users.
+
+**Still open.** For the show the comparison instance is pinned to the act 1 run (`EVAL_RUN_ID`) — otherwise the
+newest run wins, whatever it is; the page has not yet been looked at by a human in a browser; the image lives as a
+tag of the runtime image's repository (told apart by the `eval-dashboard-` prefix) until Phase 8b moves images to
+the cluster's registry; other branches and the development cluster still carry the old resource names.

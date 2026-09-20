@@ -135,7 +135,7 @@ this table when closing any phase, and before Phase 10.
 | L12 | GPU metrics: DCGM exporter on the host, a metrics stack on the hub, Perses datasource and a per-tenant dashboard | `tools/host/fury/70-dcgm.sh`, `flywheel/dcgm-exporter.container`, `gitops/observability/{monitoring-stack,fury-gpu-scrape,prometheus-datasource,gpu-tenants-dashboard}.yaml` | drafted, **uncommitted, not run** (notes: `70-dcgm.md`) | 8 | review → commit → run. DCGM holds the driver open without being a compute process, so `fury-mode` has to stop it around every switch — that change to `fury-mode.sh` is drafted and **not applied**; the host then needs `14-flywheel-services.sh` again. Unproven until run: profiling metrics on this GPU and driver, power / temperature per slice, SELinux-confined with `SYS_ADMIN` |
 | L13 | The cluster's internal registry, enabled with storage and a route | hub | up, unused | 8b | the cosign-attachment spike |
 | L14 | One-command mode switch for the operator, around the RHEM app stop/start | `tools/hub/fury-switch.sh` | built | 6, 10 | into the runbook; nothing at demo time should need raw `flightctl` / `oc` |
-| L15 | The evaluation dashboard (separate repository); the hub already has its read-only MinIO user | `gitops/minio/` | reviewed, shape proposed, **nothing built** | 5c | settle the shape with the operator and the dashboard's author; then image, one manifest, the conversion sidecar, the link |
+| L15 | The evaluation dashboard | `src/eval-dashboard/`, `gitops/flywheel/eval-dashboard.yaml`, `tools/hub/build-eval-dashboard.sh` | **built and running** (D157): code in `src/eval-dashboard/`, two instances on the hub | 5c | pin the comparison instance to the act 1 run; a human look in a browser; the runbook beat |
 
 **Carried forward — small, easy to lose.** Each is also an inbox item.
 - *Correctness traps:* an interrupted training leaves `train/<candidate>` behind, and the runner treats a
@@ -343,39 +343,17 @@ from the registry view to the RHEM catalog to the device, by clicking, with no t
 
 ### Phase 5c — The evaluation dashboard on the Fury (added 2026-09-19)
 
-A separate repository holds a dashboard that compares model versions from per-episode records: success rate with
-a confidence interval, cubes placed, smoothness, a learning curve. On the development system it ran on a laptop,
-read MinIO and Kafka through the NodePorts from its own buckets, and the 360-seed paired evaluation was converted
-by hand into its record schema (D138). Its integration document asks only for a link from our dashboard; it is
-guidance, not a contract. **Reviewed 2026-09-19; nothing built; the shape below is a proposal to settle with the
-operator and the dashboard's author.**
+> **Built and running 2026-09-20 (D157).** The dashboard's code is in this repository (`src/eval-dashboard/`), changed to read the pipeline's own evaluation records and `eval_report.json`, built by the hub's signed pipeline (`tools/hub/build-eval-dashboard.sh`) and deployed by GitOps as two instances: `eval-dashboard` (paired evaluation of one promotion run) and `eval-dashboard-live` (live curated / rejected episodes), linked from the flywheel dashboard's header. The read-only MinIO user is `eval-readonly`.
 
-What the review found (its code was read and run against our records):
-- One small Flask container, no database, read-only, nothing fetched from the internet at run time, builds on
-  arm64 as it is. No image is published and it has no manifests: we build and deploy it.
-- Our **live** curated and rejected records fit its schema unchanged.
-- It **cannot read the pipeline's evaluation records** (no per-episode id or model version, the `eval-` label is
-  dropped on purpose, `steps` / `duration_s` are flat) and it never reads `eval_report.json` — so it shows two
-  unpaired rates, rounded (82 % / 93 %), and not the paired result the gate, the PR and the registry carry
-  (fixed 57, broken 19, net +38). A conversion step is needed for the act 1 comparison.
-- Its Kafka path fetches from whichever bucket a manifest names, not from the buckets it is configured with: an
-  instance pointed at separate comparison buckets still takes in live passes under the same model label, and the
-  rates drift. Separate buckets isolate writers, not this reader.
-- Episodes with a failed cube count (`cubes_placed: null`) count as policy failures there; our curator keeps
-  them apart on purpose.
-- The hub's read-only MinIO user is in namespace `minio` and its policy covers the two live buckets only.
-
-Proposed shape: **in the cluster, by GitOps, from an arm64 image built here** (one file under `gitops/flywheel/`,
-no laptop, no NodePort, no tailnet at demo time), as two instances of the one image — a **comparison** instance in
-files mode, fed by a small sidecar that turns the two per-policy records the act 1 run uploads
-(`s3://episodes-data/eval/<run_id>/`) into its schema, and a **live** instance on the native buckets and Kafka.
-Files mode has no Kafka path, so the comparison cannot drift. Asked of the dashboard's author, in order of value:
-a bucket filter on (or a switch for) the Kafka path; reading the pipeline's evaluation records natively; a panel
-from `eval_report.json` (fixed / broken / net / p / verdict); sensor-fault episodes kept out of the denominator;
-one decimal on the rates. If those land, the sidecar is deleted. On our side: the link in our dashboard (its
-address from an env var, hidden when unset), the read-only policy extended in git, and the resources named after
-a person renamed to role names. Open, for a human: whether we may build and ship an image of a repository that
-declares no terms.
+Still to do:
+1. After the act 1 run (ledger L3): pin the comparison instance to that run (`EVAL_RUN_ID` in
+   `gitops/flywheel/eval-dashboard.yaml`) — unpinned, the newest run wins, whatever it is — and check the panel reads
+   fixed 57 / broken 19 / net +38 / PASS, and the cards 81.9 % and 92.5 %.
+2. A human looks at both pages in a browser (layout of the paired panel has only been checked against a stub).
+3. The beat in the runbook: where the dashboard is opened and what is said over it; the three Route names for
+   anyone reaching the hub through `/etc/hosts` and not the host's DNS.
+4. Phase 8b: its image moves to the cluster's registry with the others; the promotion reset (L4) has to leave the
+   act 1 run's `eval/<run_id>/` objects in place, or re-create them.
 
 **Exit:** the dashboard, reachable from the booth, shows the teacher-vs-v2 comparison the act 1 promotion is
 gated on, and live episodes from the loop on this machine.
