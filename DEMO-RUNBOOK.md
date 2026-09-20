@@ -10,20 +10,20 @@ workspace terminal writes the feature; the model it talks to runs on the same bo
 
 1. Open the workspace and wait for the editor. Open `tests/eval_dashboard/test_demo_task.py` in one pane and a
    terminal in the other.
-2. Show the starting point with the `run-tests` command (or type it):
+2. Show the starting point:
 
        python -m pytest tests/eval_dashboard -q
 
    Expected last line: `7 failed, 342 passed, 5 skipped`. The 5 skips are tests for fixture files that are not
    part of a clone.
-3. Start the agent with the `start-agent` command, or type `opencode` in a terminal at the project root.
+3. Start the agent: type `opencode` in a terminal at the project root.
 
 ## The layout
 
 The editor keeps panel positions and sizes in the browser, per workspace, and cannot export them. What this branch
 can set up front is in `.vscode/settings.json`: the terminal panel docks on the right of the code, larger fonts,
 less chrome. Arrange the rest once - it stays as you left it for as long as you use the same browser and the same
-workspace (it never idles out). The `open-demo-files` command opens the task and the failing test.
+workspace (it never idles out).
 
 Right-click inside the agent's full-screen view belongs to the agent, and a paste by mouse makes the browser show a
 one-item menu of its own first. Paste with the keyboard.
