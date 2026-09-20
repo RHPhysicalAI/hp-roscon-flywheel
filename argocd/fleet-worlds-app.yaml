@@ -1,0 +1,40 @@
+# This project was developed with assistance from AI tools.
+#
+# Bootstrap once, after gitops/fleet-worlds/world.yaml pins a real image digest (tools/hub/build-fleet-world.sh):
+#   oc apply -f argocd/fleet-worlds-app.yaml
+# gitops/fleet-worlds holds the robots' worlds of the fleet tenant (D163): namespace fleet and StatefulSet world.
+# The one departure from the other apps: the number of worlds is an operating decision, not configuration -
+# tools/hub/fleet-worlds-scale.sh sets it - so the StatefulSet's replicas are left out of the comparison and,
+# with RespectIgnoreDifferences, out of every sync; selfHeal would otherwise scale the fleet back within minutes.
+# ConfigMap fleet-trajectories is hand-made (fleet-worlds-scale.sh trajectories <file>) and carries no Argo
+# tracking annotation, so prune never touches it.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fleet-worlds
+  namespace: openshift-gitops
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  destination:
+    namespace: fleet
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    path: gitops/fleet-worlds
+    repoURL: https://github.com/RHPhysicalAI/hp-roscon-flywheel.git
+    targetRevision: fury
+  ignoreDifferences:
+  - group: apps
+    kind: StatefulSet
+    name: world
+    namespace: fleet
+    jsonPointers:
+    - /spec/replicas
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - RespectIgnoreDifferences=true

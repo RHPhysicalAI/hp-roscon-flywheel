@@ -1,16 +1,18 @@
 # shellcheck shell=bash
 # This project was developed with assistance from AI tools.
 #
-# Shared body of the hub's image build scripts (build-eval-dashboard.sh, build-dev-workspace.sh). Sourced, not
-# run. Starts a PipelineRun of the governed runtime-image Tekton pipeline - clone, buildah, push, cosign sign +
-# verify into the hub's Rekor - for one Dockerfile, follows it, and prints the digest.
+# Shared body of the hub's image build scripts (build-eval-dashboard.sh, build-dev-workspace.sh,
+# build-fleet-world.sh). Sourced, not run. Starts a PipelineRun of the governed runtime-image Tekton pipeline -
+# clone, buildah, push, cosign sign + verify into the hub's Rekor - for one Dockerfile, follows it, and prints
+# the digest.
 #
 # The sourcing script defines pin_hint and calls
-#   build_image --src <dir> --tag-prefix <p> --run-prefix <p> [--context <dir>] [--watch <path>]... -- "$@"
+#   build_image --src <dir> --tag-prefix <p> --run-prefix <p> [--context <dir>] [--storage <size>] [--watch <path>]... -- "$@"
 #     --src          directory of the Dockerfile, relative to the repository root
 #     --tag-prefix   tells this image's tags apart in the one repository the push credentials cover
 #     --run-prefix   generateName of the PipelineRun
 #     --context      build context when it is not the --src directory
+#     --storage      size of the run's claim (checkout + buildah storage) when 10Gi is not enough
 #     --watch        a further path the image is built from, checked for uncommitted changes like --src
 #   pin_hint <repository@digest> <checkout root>   prints where the digest goes
 # arm64 only - the hub's own architecture, so the build is native and needs no qemu registration.
@@ -36,9 +38,10 @@ start_run() {
     oc -n "$NS" get pipeline.tekton.dev "$PIPELINE" -o name > /dev/null || die "no $PIPELINE pipeline in $NS (argocd/tekton-app.yaml)"
 
     # Workspaces as in gitops/tekton/runtime-image-pipelinerun.example.yaml; a smaller claim and timeout,
-    # sized for an image on the Python base rather than the runtime image.
+    # sized for an image on the Python base rather than the runtime image (--storage for a bigger one).
     created=$(jq -n --arg ns "$NS" --arg pipeline "$PIPELINE" --arg rev "$rev" --arg repo "$IMAGE_REPO" --arg prefix "$TAG_PREFIX" \
           --arg src "$SRC" --arg context "${CONTEXT:-$SRC}" --arg run "$RUN_PREFIX" --arg url "${GIT_URL:-}" \
+          --arg storage "${STORAGE:-10Gi}" \
         '{apiVersion: "tekton.dev/v1", kind: "PipelineRun",
           metadata: {generateName: $run, namespace: $ns},
           spec: {pipelineRef: {name: $pipeline},
@@ -53,7 +56,7 @@ start_run() {
                           + (if $url == "" then [] else [{name: "git-url", value: $url}] end)),
                  workspaces: [
                    {name: "shared", volumeClaimTemplate: {spec: {accessModes: ["ReadWriteOnce"], storageClassName: "local-path",
-                                                                 resources: {requests: {storage: "10Gi"}}}}},
+                                                                 resources: {requests: {storage: $storage}}}}},
                    {name: "docker-credentials", secret: {secretName: "quay-push", items: [{key: ".dockerconfigjson", path: "config.json"}]}},
                    {name: "cosign-key", secret: {secretName: "cosign-signing"}},
                    {name: "rekor-public-key", configMap: {name: "rekor-public-key"}}]}}' |
@@ -81,11 +84,12 @@ show_failures() {
 
 build_image() {
     local here deadline last state tasks pushed
-    SRC="" CONTEXT="" TAG_PREFIX="" RUN_PREFIX="" WATCH=()
+    SRC="" CONTEXT="" STORAGE="" TAG_PREFIX="" RUN_PREFIX="" WATCH=()
     while [[ $# -gt 0 ]]; do
         case $1 in
             --src) SRC=$2; shift 2 ;;
             --context) CONTEXT=$2; shift 2 ;;
+            --storage) STORAGE=$2; shift 2 ;;
             --watch) WATCH+=("$2"); shift 2 ;;
             --tag-prefix) TAG_PREFIX=$2; shift 2 ;;
             --run-prefix) RUN_PREFIX=$2; shift 2 ;;
@@ -133,5 +137,5 @@ build_image() {
     echo "    Rekor index  $(run_result REKOR_INDEX)"
     echo
     pin_hint "$IMAGE_REPO@$digest" "$root"
-    echo "The finished run keeps its 10 Gi claim until it is deleted: oc -n $NS delete pipelinerun $run"
+    echo "The finished run keeps its ${STORAGE:-10Gi} claim until it is deleted: oc -n $NS delete pipelinerun $run"
 }

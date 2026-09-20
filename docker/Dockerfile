@@ -66,6 +66,8 @@ COPY src/episode-emitter/episode_emitter.py /ws_pai/episode_emitter.py
 COPY src/episode-emitter/task_eval.py /ws_pai/task_eval.py
 COPY src/camera-bridge/camera_bridge.py /ws_pai/camera_bridge.py
 COPY src/sim-reset/sim_reset.py /ws_pai/sim_reset.py
+# The fleet tenant's physics-only world (SIM_CAMERAS=off in the entrypoint, D163); unused otherwise
+COPY src/fleet-world/ /ws_pai/fleet_world/
 
 # ---- Cleanup ----
 RUN find /ws_pai -type d -name ".git" -exec rm -rf {} + 2>/dev/null || true
