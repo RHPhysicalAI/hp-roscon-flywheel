@@ -5602,3 +5602,38 @@ the GPU computes this model's step only about 1.4 times slower than the whole GP
 beside it (0.064 s): the same 62,244 steps would take about 1 h 35 min on a 1g slice. The tenant's round is set to
 9,000 steps, a quarter of an hour. The lerobot flags the tenant adds (`--policy.optimizer_lr`, `--seed`) are
 accepted by the image's version.
+
+## D166 — One running system, two stories: the demo stays in tenants mode and the flywheel is told from there
+
+**Date:** 2026-09-20. **Status:** decided with the operator. Supersedes the "two acts, two GPU modes" staging for
+the demo path; `fury-mode flywheel` stays for off-stage work.
+
+**Why.** Switching modes on stage reconfigures MIG and stops and starts every tenant, the fleet and the worlds over
+a network: minutes of dead air, and trust in everything coming back. Only one thing in the flywheel ever needed the
+whole GPU - the simulator rendering its own cameras, which a MIG slice cannot do - and the rendering tenant (D163)
+now does that with CUDA. So the system is left running in tenants mode, each piece shown is reset by itself, and
+as little as possible is shown from a recording.
+
+| Beat | From tenants mode | Live? |
+|---|---|---|
+| Collect: the policy at work, its cameras | **robot zero** (D164): the RHEM-delivered signed policy on slice `0:1`, cameras from the rendering tenant, on the wall as `r00`; the flywheel page's camera panel points at those streams | live |
+| Train | the training tenant on `0:2`: real ACT fine-tunes (D165: a slice is no slower here, training is loader bound) | live |
+| Evaluate, gate | the pinned governed run on the evaluation page - hours of machine time in any mode, never a live beat | recorded results in a live page |
+| Promote | merge the PR; RHEM rolls the signed model to the host on its slice **and** through the robots' Fleet in batches - the fleet's rollout beat and act 1's promotion are one beat | live |
+
+**What this does not claim.** The episodes seen live run on rendered pixels, not the pixels the model was trained
+on, and they never enter the flywheel's storage, its trigger count or the live evaluation page (a hard requirement
+on robot zero). On stage the statement is "this is the system that produced that promotion, still running" - not
+"what you are watching trained the model".
+
+**Open, decided by a measurement.** Robot zero's success rate on rendered pixels is unknown (geometry matches to
+0.09 px, the look does not). It comes for free once robot zero runs. Poor: the collect beat leans on recorded
+motion, as the fleet's worlds do, and on the page's clips. Good: moving the whole flywheel onto rendered pixels -
+collect, train and evaluate in tenants mode, a closed loop with no mode switch at all - becomes worth its cost (a
+re-collection, an overnight run, the governed trainer and the evaluation rig taught to use a slice and the
+renderer). Not before the number is in.
+
+**Follows from this.** The promotion must be repeatable (`tools/hub/reset-promotion.sh`, so far only run dry). A
+recording is a fallback for the network-dependent promotion, not a required part. Two runbooks replace the act
+structure: *setup* (a fresh RHEL install to tenants running) and *show* (what to present, what to say, how to
+reset each piece). FURY-PLAN's phase text still speaks of two acts and is reworded when those runbooks are written.
