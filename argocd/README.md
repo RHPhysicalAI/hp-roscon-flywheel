@@ -54,9 +54,9 @@ and keys only — the MinIO values live in `~/.minio-env` on the desktop, the re
 
 | Secret | Namespace | Keys | Used by | Created with |
 |---|---|---|---|---|
-| `minio-credentials` | `minio` | `root-user`, `root-password` | MinIO server; `minio-olga-readonly-setup` Job | the `oc create secret … \| oc apply` pair below |
+| `minio-credentials` | `minio` | `root-user`, `root-password` | MinIO server; `minio-eval-readonly-setup` Job | the `oc create secret … \| oc apply` pair below |
 | `hub-credentials` | `flywheel` | `s3-access-key`, `s3-secret-key` (same values) | sync-agent, rejected-mirror, DSPA object storage, KFP `eval_gate`/`package_modelcar` — `gitops/flywheel/README.md` | same |
-| `minio-olga-readonly-credentials` | `minio` | `access-key`, `secret-key` | `minio-olga-readonly-setup` Job | see `gitops/minio/minio-readonly-user.yaml` |
+| `minio-eval-readonly-credentials` | `minio` and `flywheel` (same values in both) | `access-key`, `secret-key` | `minio-eval-readonly-setup` Job (`minio`); `eval-dashboard` and `eval-dashboard-live` Deployments (`flywheel`) | see `gitops/minio/minio-readonly-user.yaml` |
 | `cosign-signing-key` | `flywheel` | `cosign.key`, `cosign.pub`, `cosign.password` | KFP `sign_modelcar` (`COSIGN_PASSWORD` ← `cosign.password`) | same script, same key material as `cosign-signing` |
 | `github-token` | `flywheel` | `token` | KFP `open_promotion_pr` | GitHub fine-grained token (contents + pull requests) |
 | `cosign-signing` | `flywheel` | `cosign.key`, `cosign.pub`, `cosign.password` | `tekton` app — `cosign-sign` Task (workspace `cosign-key`) | `tools/hub/create-cosign-secrets.sh` (generates the pair if there is none, asks for the passphrase on the terminal, checks that it opens the key, creates this Secret and `cosign-signing-key`; its `cosign.pub` is the Fleet's inline `cosign.pub`) |

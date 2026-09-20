@@ -114,7 +114,7 @@ spec:
       targetPort: 9001
 ---
 ---
-# External access for the eval dashboard (Olga, APPENG-6295) over Tailscale.
+# External access for the eval dashboard (APPENG-6295) over Tailscale.
 # S3 API only (not the console) — separate Service so the in-cluster
 # ClusterIP one above is unaffected.
 apiVersion: v1

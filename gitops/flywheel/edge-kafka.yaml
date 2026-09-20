@@ -107,7 +107,7 @@ spec:
       port: 9092
       targetPort: 9092
 ---
-# External access for the eval dashboard (Olga, APPENG-6295) over Tailscale.
+# External access for the eval dashboard (APPENG-6295) over Tailscale.
 # Kept as a separate Service from the in-cluster ClusterIP one above so
 # in-cluster clients (curator, sync-agent) are unaffected.
 apiVersion: v1

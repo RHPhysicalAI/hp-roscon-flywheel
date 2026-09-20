@@ -1,8 +1,9 @@
 # This project was developed with assistance from AI tools.
 #
-# Scoped read-only MinIO user for the eval dashboard (Olga, APPENG-6295).
-# GetObject/ListBucket only, on episodes-curated and episodes-rejected —
-# no write access, no access to other buckets, not the root account.
+# Scoped read-only MinIO user for the eval dashboard (APPENG-6295).
+# GetObject/ListBucket only, on episodes-curated, episodes-rejected and the
+# eval/ prefix of episodes-data (promotion evidence) — no write access, no
+# access to other buckets or prefixes, not the root account.
 # The Job is idempotent (mc admin user/policy commands are upsert-safe) so
 # Argo re-running it on selfHeal is harmless.
 #
@@ -10,15 +11,17 @@
 # flywheel — hand-created since Phase 4.5 F), this Secret is applied directly
 # to the cluster (`oc apply`) and deliberately NOT committed to git.
 # It won't be pruned by Argo since Argo never manages a resource it didn't
-# sync in. Recreate it with:
-#   oc create secret generic minio-olga-readonly-credentials -n minio \
-#     --from-literal=access-key=olga-readonly \
+# sync in. The consumer is the in-cluster eval dashboard
+# (gitops/flywheel/eval-dashboard.yaml). A pod cannot reference a Secret across
+# namespaces, so the same Secret is hand-created twice with the same values:
+# in minio for this Job and in flywheel for the Deployments. Recreate it with:
+#   oc create secret generic minio-eval-readonly-credentials -n <minio|flywheel> \
+#     --from-literal=access-key=eval-readonly \
 #     --from-literal=secret-key=<generated>
-# Hand the value to Olga out of band (Slack/DM), never in the Jira ticket.
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: minio-olga-readonly-policy
+  name: minio-eval-readonly-policy
   namespace: minio
 data:
   policy.json: |
@@ -40,6 +43,17 @@ data:
             "arn:aws:s3:::episodes-curated",
             "arn:aws:s3:::episodes-rejected"
           ]
+        },
+        {
+          "Effect": "Allow",
+          "Action": ["s3:GetObject"],
+          "Resource": ["arn:aws:s3:::episodes-data/eval/*"]
+        },
+        {
+          "Effect": "Allow",
+          "Action": ["s3:ListBucket"],
+          "Resource": ["arn:aws:s3:::episodes-data"],
+          "Condition": {"StringLike": {"s3:prefix": ["eval/*"]}}
         }
       ]
     }
@@ -47,7 +61,7 @@ data:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: minio-olga-readonly-setup
+  name: minio-eval-readonly-setup
   namespace: minio
 spec:
   backoffLimit: 3
@@ -65,7 +79,7 @@ spec:
               mc admin user add myminio "$RO_ACCESS_KEY" "$RO_SECRET_KEY"
               mc admin policy create myminio episodes-readonly /policy/policy.json
               mc admin policy attach myminio episodes-readonly --user="$RO_ACCESS_KEY"
-              echo "[minio-olga-readonly-setup] done"
+              echo "[minio-eval-readonly-setup] done"
           env:
             - name: MINIO_ROOT_USER
               valueFrom:
@@ -80,12 +94,12 @@ spec:
             - name: RO_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: minio-olga-readonly-credentials
+                  name: minio-eval-readonly-credentials
                   key: access-key
             - name: RO_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: minio-olga-readonly-credentials
+                  name: minio-eval-readonly-credentials
                   key: secret-key
           volumeMounts:
             - name: policy
@@ -94,4 +108,4 @@ spec:
       volumes:
         - name: policy
           configMap:
-            name: minio-olga-readonly-policy
+            name: minio-eval-readonly-policy

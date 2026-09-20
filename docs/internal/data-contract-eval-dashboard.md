@@ -1,4 +1,4 @@
-# Data contract for the eval dashboard (Olga, APPENG-6295)
+# Data contract for the eval dashboard (APPENG-6295)
 
 Everything the read-only eval dashboard needs, where it lives, and what the fields mean. All of it
 is produced by the flywheel itself; nothing here is hand-made.
@@ -7,7 +7,7 @@ is produced by the flywheel itself; nothing here is hand-made.
 
 | what | where | access |
 |---|---|---|
-| Per-episode records, **curated** (passed the curator: 3/3 cubes) | MinIO `episodes-curated/<model_version>/<episode_id>.json` | S3 `http://10.0.0.49:30900`, read-only creds in Secret `minio-olga-readonly-credentials` (ns `minio`) |
+| Per-episode records, **curated** (passed the curator: 3/3 cubes) | MinIO `episodes-curated/<model_version>/<episode_id>.json` | S3 `http://10.0.0.49:30900`, read-only creds in Secret `minio-eval-readonly-credentials` (ns `minio`; the same Secret in ns `flywheel` for the in-cluster instances) |
 | Per-episode records, **rejected** | MinIO `episodes-rejected/<model_version>/<episode_id>.json` (mirrored every 5 min by the `rejected-mirror` CronJob) | same |
 | Live stream of curated records | Kafka `episode-manifests` (`10.0.0.49:30903`, PLAINTEXT) — `{episode_id, s3_uri, score, model_version, …}` | same host/port |
 | Assembled training datasets | MinIO `episodes-data/<model_version>/<repo_id>.tar.gz` + Kafka `dataset-manifests` | same |
