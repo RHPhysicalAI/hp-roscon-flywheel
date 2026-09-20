@@ -60,6 +60,10 @@ data:
     # Route this is the streams' own https Route; unset, it is the bridge's plain port on CAMERA_HOST.
     CAMERA_URL    = os.environ.get("CAMERA_URL", "").strip().rstrip("/")
     CAMERA_BASE   = CAMERA_URL if CAMERA_URL.startswith(("http://", "https://")) else f"http://{CAMERA_HOST}:8081"
+    # Appended to <base>/static and <base>/wrist: empty for the sim's camera bridge, ".mjpg" for the rendering tenant.
+    CAMERA_SUFFIX = os.environ.get("CAMERA_SUFFIX", "").strip()
+    if not all(c.isalnum() or c in "._-" for c in CAMERA_SUFFIX):
+        CAMERA_SUFFIX = ""
     # Header link to the evaluation dashboard; empty means no link is rendered.
     EVAL_DASHBOARD_URL = os.environ.get("EVAL_DASHBOARD_URL", "").strip()
     FW_NS         = os.environ.get("FLYWHEEL_NS", "flywheel")
@@ -363,7 +367,7 @@ data:
     @app.route("/")
     def index():
         html = HTML_FILE.read_text() if HTML_FILE.exists() else "<h1>index.html not mounted</h1>"
-        html = html.replace("__CAMERA_BASE__", CAMERA_BASE).replace("<!-- __EVAL_LINK__ -->", eval_link())
+        html = html.replace("__CAMERA_BASE__", CAMERA_BASE).replace("__CAMERA_SUFFIX__", CAMERA_SUFFIX).replace("<!-- __EVAL_LINK__ -->", eval_link())
         return Response(html, mimetype="text/html")
 
     @app.route("/api/events")
@@ -1182,8 +1186,9 @@ data:
       const camBase = '__CAMERA_BASE__';
       const staticEl = document.getElementById('cam-static');
       const wristEl = document.getElementById('cam-wrist');
-      if (staticEl) staticEl.src = camBase + '/static';
-      if (wristEl) wristEl.src = camBase + '/wrist';
+      const camSuffix = '__CAMERA_SUFFIX__';
+      if (staticEl) staticEl.src = camBase + '/static' + camSuffix;
+      if (wristEl) wristEl.src = camBase + '/wrist' + camSuffix;
     })();
 
     // ---- Operator-only controls: ?ops=1 reveals the confirm-gated Clear link --
