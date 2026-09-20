@@ -1,0 +1,105 @@
+# This project was developed with assistance from AI tools.
+#
+# Act 2's training tenant (D164): real ACT fine-tunes, one round after another, on MIG slice 0:2 (1g.31gb) while
+# the other slices serve. A host service that fury-mode owns, like the coding assistant (D156): fury-mode tenants
+# starts it once the slices exist, and any mode switch stops it first (MIG only changes while nothing holds the GPU).
+#
+# It shows isolation and what the machine can carry. It is NOT part of the governed flywheel, and the unit is built
+# so that it cannot become part of it by accident:
+#   - the flywheel's dataset and the two checkpoints are mounted read-only, and without a relabel: not even a label
+#     changes on the flywheel's side (72-training-tenant-install.sh checks the labels are already right)
+#   - the only writable path from the host is its own directory, /data/flywheel/tenant-train. The rest of
+#     /data/flywheel - train/, eval/, bags/, cache/ - is not mounted at all
+#   - Network=none and no EnvironmentFile=: no Kafka, no object store, no registry, and no keys to use on them
+# The installer refuses a copy of this file that breaks one of the three.
+#
+# The image is the signed runtime image the governed runner trains in - same digest, so the same lerobot, torch and
+# CUDA as the measured runs. The installer refuses when the two units' Image= lines differ.
+#
+# What runs is flywheel/training-tenant.sh, mounted over the image like the runner's script: a fix is
+# 72-training-tenant-install.sh and a restart. What to show and what to compare: 72-training-tenant.md
+[Unit]
+Description=Training tenant (ACT fine-tune sweep on MIG slice 0:2)
+After=mig-config.service nvidia-cdi-refresh.service
+# A failed round ends the script (exit 1) and the unit comes back after RestartSec. Ten starts an hour is every
+# mode switch of a rehearsal and then some; a round that fails at once uses them up in a quarter of an hour and
+# the unit stays failed - visible in fury-mode status - instead of cycling all night. fury-mode clears the count
+# before it starts the unit, so a switch always gets a fresh try.
+StartLimitIntervalSec=1h
+StartLimitBurst=10
+
+[Container]
+ContainerName=training-tenant
+Image=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837
+Pull=never
+Network=none
+AddDevice=nvidia.com/gpu=0:2
+# Data-loader workers hand batches over through /dev/shm. 8 workers with two batches each in flight, a batch of 8
+# samples with two 640x480 float32 camera images each: under 1 GiB. The runner has 16g for 24 workers. What sits in
+# here counts towards MemoryMax below.
+ShmSize=4g
+Volume=/data/flywheel/datasets:/flywheel/datasets:ro
+Volume=/data/flywheel/train/upstream-act-teacher/checkpoints/last/pretrained_model:/flywheel/train/upstream-act-teacher/checkpoints/last/pretrained_model:ro
+Volume=/data/flywheel/train/act-v2-ft160/checkpoints/last/pretrained_model:/flywheel/train/act-v2-ft160/checkpoints/last/pretrained_model:ro
+Volume=/data/flywheel/tenant-train:/flywheel/tenant-train:z
+Volume=/usr/local/lib/flywheel/training-tenant.sh:/usr/local/lib/flywheel/training-tenant.sh:ro,z
+# Its own caches, in its own directory: the runner's under /data/flywheel/cache are not mounted. The installer
+# copies the one file a fine-tune downloads (the ResNet18 backbone weights) from there, once; offline after that.
+Environment=HF_HOME=/flywheel/tenant-train/cache/huggingface
+Environment=TORCH_HOME=/flywheel/tenant-train/cache/torch
+Environment=HF_HUB_OFFLINE=1
+Environment=HF_DATASETS_OFFLINE=1
+Environment=PYTHONUNBUFFERED=1
+# CPU cores are what tenants mode is short of: a 32-vCPU hub and up to 24 two-vCPU fleet VMs on 72 cores. Each
+# loader worker decodes video on about one core. Measured on the whole GPU with 4 workers: 0.064 s a step
+# computing, 0.18 s waiting for data - one batch per 0.24 s, so about one worker-second per batch, and 8 workers
+# deliver one every 0.12 s. A 1g slice is a seventh of the GPU's compute and is not expected to take a step
+# faster than that, so 8 keeps the slice busy; the runner's 24 (flywheel mode, machine to itself) would take a
+# third of the host from the fleet. Fixed, not $(nproc): the fleet's size must not change what this tenant takes.
+Environment=TENANT_NUM_WORKERS=8
+# Steps per round: 3000 is about 15 minutes at 0.3 s a step (the estimate and its basis: 72-training-tenant.md).
+# After the first round rounds.jsonl has the real rate: 900 x steps_per_s gives a 15-minute round.
+Environment=TENANT_STEPS=3000
+# round directories kept on disk (a checkpoint with its optimizer state each); older ones are removed
+Environment=TENANT_KEEP_ROUNDS=3
+# the main process only feeds the GPU; without this torch starts one CPU thread per core it can see (72)
+Environment=OMP_NUM_THREADS=4
+# The image's entrypoint is the policy launcher; this runs the sweep under the same ROS environment the runner's
+# stages get, so that lerobot-train sees what it saw when it was measured. $$ is systemd's escape for a literal $.
+# exec: the script is pid 1 in the container and handles SIGTERM itself - a stop ends the round within a second.
+Entrypoint=/bin/bash
+Exec=-c 'source /opt/ros/$${ROS_DISTRO}/setup.bash && source /ws_pai/install/setup.bash && exec bash /usr/local/lib/flywheel/training-tenant.sh'
+# the image's health check asks for a latched model version, which this container never publishes
+HealthCmd=none
+StopTimeout=20
+
+[Service]
+# Not ExecStartPre=: a failed pre-start under Restart=always loops for ever. A condition that exits non-zero
+# skips the start - the unit ends inactive, not failed, and is not restarted. So a boot in flywheel mode, or a
+# start by mistake while MIG is off, does nothing at all.
+ExecCondition=/bin/sh -c 'nvidia-ctk cdi list 2>/dev/null | tr -d "[:blank:]" | grep -qxF "nvidia.com/gpu=0:2" || { echo "CDI device nvidia.com/gpu=0:2 is not there (MIG off): not starting"; exit 1; }'
+SuccessExitStatus=143
+Restart=always
+# a failed round waits a minute before the next try
+RestartSec=60
+TimeoutStartSec=300
+TimeoutStopSec=60
+# So that it cannot starve the robot fleet or the hub. Quadlet runs the container inside this unit's cgroup
+# (--cgroups=split; the installer checks the generated command line for it), so these bind every process in it.
+#   CPU: 8 decoding workers and the training process, 10 cores' worth of 72, however many threads they start.
+#     CPUWeight only orders this unit among the host's other services (the assistant, the exporter); the VMs
+#     live in machine.slice and are protected by the quota, not by the weight.
+#   Memory: expected 15-25 GiB (training process about 6, workers 1-2 each, /dev/shm up to 4; the page cache of
+#     the dataset's videos is charged here too but is given back under pressure). MemoryHigh reclaims first;
+#     MemoryMax is the wall, and an OOM kill inside it ends the round and nothing else. 48 GiB of the 309 GiB the
+#     host has free beside the hub, of which 24 fleet VMs take 72. Not measured yet: after a round,
+#     systemctl show -p MemoryPeak training-tenant   - and tighten.
+CPUQuota=1000%
+CPUWeight=50
+MemoryHigh=40G
+MemoryMax=48G
+MemorySwapMax=0
+
+# a boot in tenants mode brings it back by itself; in flywheel mode the condition above skips it
+[Install]
+WantedBy=multi-user.target

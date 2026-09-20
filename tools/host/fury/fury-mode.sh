@@ -4,7 +4,8 @@
 #   fury-mode flywheel   MIG off. The sim renders its cameras on the GPU (OpenGL only exists without MIG)
 #                        and shares it with policy serving and training, the way the desktop did.
 #   fury-mode tenants    MIG on, 3g + 1g + 1g + 1g. Isolated slices for compute tenants; no graphics.
-#                        Starts the coding assistant on the large slice if its unit is installed.
+#                        Starts the coding assistant on the large slice and the training tenant on 0:2,
+#                        each if its unit is installed.
 #   fury-mode status
 #
 # The GPU has to be idle to change MIG mode, so a switch stops the robot loop first. The choice is
@@ -21,11 +22,24 @@ set -uo pipefail
 cfg=/etc/sysconfig/mig-config
 loop=(flywheel-runner.service act-coordinator.service act-inference.service so-arm-sim.service)   # act-inference.service: before enrolment only
 assistant=llm-assistant.service          # act 2's tenant on slice 0:0 - a host unit of ours, stopped for every switch
+tenant=training-tenant.service           # act 2's tenant on slice 0:2 - the same (72-training-tenant-install.sh)
 policy='act-inference-*-act-inference.service'                             # after: <app id>-<quadlet>, named by the agent
 telemetry=dcgm-exporter.service          # runs in both modes (70-dcgm.sh). Not installed is fine: every call below is quiet
 die() { echo "fury-mode: $*" >&2; exit 1; }
 mig() { nvidia-smi -i 0 --query-gpu=mig.mode.current --format=csv,noheader; }
 policy_state() { systemctl list-units --all --no-legend --plain "$policy" | awk '{print $3 "/" $4}'; }
+# A lerobot-train or an assembler that is NOT the training tenant's: the governed runner's, or somebody's by hand.
+# Told apart by the unit that owns the process - quadlet keeps a container's processes in its unit's cgroup,
+# .../training-tenant.service/libpod-payload-<id> - not by the command line, which the tenant shares. A process
+# that cannot be placed counts as governed: the switch is refused, never a run lost.
+governed_run() {
+    local p cg
+    for p in $(pgrep -f 'lerobot-train|assemble_dataset'); do
+        cg=$(cat "/proc/$p/cgroup" 2>/dev/null) || continue        # gone since pgrep looked
+        [[ $cg == *"/$tenant/"* ]] || { echo "pid $p in ${cg##*:}"; return 0; }
+    done
+    return 1
+}
 
 drain() {
     # first, so that a refusal leaves the sim and the recorder running. A loaded but idle policy holds
@@ -36,13 +50,15 @@ drain() {
     flightctl app stop device/<name> --name act-inference --yes
 then run this again. Hub unreachable: sudo systemctl stop '${policy%-act-inference.service}-flightctl-quadlet-app.target'" ;;
     esac
-    # hours of work would go with the stop below: make the operator end a run on purpose
-    if pgrep -f 'lerobot-train|assemble_dataset' >/dev/null || podman pod exists eval-rig 2>/dev/null; then
-        die "a training run or an eval is in progress (journalctl -u flywheel-runner -n 5). Wait for it, or end it yourself:
+    # hours of work would go with the stop below: make the operator end a run on purpose. The training tenant's
+    # rounds are not that - minutes each, a showcase that starts over - and the stop below takes them.
+    local run
+    if run=$(governed_run) || podman pod exists eval-rig 2>/dev/null; then
+        die "a training run or an eval is in progress${run:+ ($run)} (journalctl -u flywheel-runner -n 5). Wait for it, or end it yourself:
     sudo systemctl stop flywheel-runner.service flywheel-eval.service"
     fi
     systemctl disable --now fury-flywheel.target 2>/dev/null
-    systemctl stop "${loop[@]}" "$assistant" 2>/dev/null
+    systemctl stop "${loop[@]}" "$assistant" "$tenant" 2>/dev/null
     # DCGM holds the driver open without being a compute process, and MIG mode does not change under a client.
     # From here on it comes back on every way out, a refusal included.
     systemctl stop "$telemetry" 2>/dev/null
@@ -54,7 +70,7 @@ then run this again. Hub unreachable: sudo systemctl stop '${policy%-act-inferen
 status() {
     echo "mig mode:  $(mig)    configured layout: $(sed -n 's/^MIG_LAYOUT=//p' "$cfg" 2>/dev/null)"
     nvidia-smi -L | sed 's/ (UUID.*//'
-    for u in fury-flywheel.target "${loop[@]}" "$assistant" "$telemetry" disk-guard.service flightctl-agent.service; do
+    for u in fury-flywheel.target "${loop[@]}" "$assistant" "$tenant" "$telemetry" disk-guard.service flightctl-agent.service; do
         printf '%-28s %s\n' "$u" "$(systemctl is-active "$u" 2>/dev/null)"
     done
     printf '%-28s %s\n' "policy (rhem-managed)" "$(policy_state)"
@@ -85,6 +101,13 @@ tenants)
         # --no-block: the model loads for minutes, and the unit reports itself through its health check
         systemctl start --no-block "$assistant"
         echo "the coding assistant is starting on slice 0:0 - minutes, not seconds: journalctl -fu ${assistant%.service}"
+    fi
+    if systemctl cat "$tenant" >/dev/null 2>&1; then
+        # it ends non-zero when a round fails, so an earlier bad hour can have used up its start limit: a switch
+        # always gets a fresh try
+        systemctl reset-failed "$tenant" 2>/dev/null
+        systemctl start --no-block "$tenant"
+        echo "the training tenant is starting on slice 0:2 - loss lines within a few minutes: journalctl -fu ${tenant%.service}"
     fi
     status
     ;;
