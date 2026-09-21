@@ -151,7 +151,6 @@ recorded episodes of the policy's actions; only robot zero (`r00`) is closed loo
 | [`docs/FURY-DEMO-LITE.md`](docs/FURY-DEMO-LITE.md) | a browser-only walk-through of the running system, for a presenter who did not build it |
 | [`docs/FURY-DEMO.md`](docs/FURY-DEMO.md) | the full demo from your own laptop: prerequisites, eight beats, resets, what to do when something goes wrong |
 | [`docs/SETUP.md`](docs/SETUP.md) | bring-up: the host, the hub, the tenants and the fleet |
-| [`docs/NETWORK-ACCESS.md`](docs/NETWORK-ACCESS.md) | how the machine is reached, and what it needs to reach |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | the machine, the hub, the tenants, the fleet, the supply chain, networks and ports |
 | [`docs/DATA-FLOW.md`](docs/DATA-FLOW.md) | an episode's path to a promotion, stage by stage |
 

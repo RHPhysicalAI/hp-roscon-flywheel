@@ -65,7 +65,7 @@ tenant first; the demo never switches.
 **Host network.** A routed libvirt network, `fury-net` (`10.20.0.0/24`), without DHCP or libvirt DNS: the host is
 `10.20.0.1`, the hub `10.20.0.10`, robot `fleet-vm-NN` is `10.20.0.(20+NN)`; the host's dnsmasq answers the cluster's
 names. firewalld's `libvirt-to-host` policy rejects every connection from a guest to the host that it does not list.
-Operators come in over a tailnet route ([`NETWORK-ACCESS.md`](NETWORK-ACCESS.md)); the lab uplink has no route here.
+Operators come in over a tailnet route; the lab uplink has no route here.
 
 ## The hub
 

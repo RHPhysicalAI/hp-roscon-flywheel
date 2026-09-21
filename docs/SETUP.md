@@ -573,7 +573,7 @@ Not in git, or not applied by GitOps. A fresh bring-up does these again:
 | The promotion pull request | opened ahead of a showing (Phase 10) and left open until its beat. The training trigger is disarmed for a show day by the demo owner, in git |
 | The Dev Spaces workspace | created once in the Dev Spaces dashboard and then kept; it never idles out |
 | The laptop's `flightctl` login | lapses within a day: `oc login`, then the `flightctl login ... --token` line of Phase 3. In the demo browser the cluster's self-signed certificate is accepted once per hostname, the fleet wall's included |
-| The tailnet | the route approval and the split DNS entry (Phase 0). Who may reach the machine is described in `docs/NETWORK-ACCESS.md`, where a checkout has it |
+| The tailnet | the route approval and the split DNS entry (Phase 0). Who may reach the machine is the tailnet's own access list |
 
 ## 5. Known gaps
 

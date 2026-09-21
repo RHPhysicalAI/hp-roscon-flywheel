@@ -10,7 +10,7 @@ suspend (`01`), format a disk and move container storage (`02`), install package
 MIG (`04`, `fury-mode.sh`, `21`), replace the host's resolver, libvirt networks and Tailscale routes (`06`), create
 VMs (`30`, `32`). Each one refuses when its preconditions are wrong, but those checks were written for this host.
 
-Numbering follows the plan's phases: `0x` host preparation, `1x` the arm64 flywheel pieces on the host, `2x`
-rendering experiments, `3x` the OpenShift hub VM. `flywheel/` holds the systemd/quadlet units of the robot loop,
-`sno/` the secret-free install templates, `mjwarp-spike/` a rendering spike. Addresses of the machine, its lab
+Numbering follows the plan's phases: `0x` host preparation, `1x` the arm64 flywheel pieces on the host,
+`3x` the OpenShift hub VM. `flywheel/` holds the systemd/quadlet units of the robot loop,
+`sno/` the secret-free install templates. Addresses of the machine, its lab
 network and the operator's tailnet are deliberately not recorded here.

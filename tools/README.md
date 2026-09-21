@@ -38,7 +38,6 @@ order of bring-up:
 |---|---|---|
 | `0x` | host preparation | journal, console boot, the data disk, packages, MIG (`04-mig.sh`, with `mig-config.sh` and `mig-config.service` for every boot), a slice smoke test, the VM network, DNS and tailnet route (`06-network.sh`, `dnsmasq-fury.conf`, `fury-net.xml`), a network probe |
 | `1x` | the flywheel's pieces on the host | first CUDA, the sim image build and smoke test, first inference, the robot loop as systemd units with `fury-mode` (`14-flywheel-services.sh`), the camera port for the hub |
-| `2x` | rendering experiments and measurements | where the sim can render, how many sims fit, CUDA-only ray tracing in a MIG slice, the batch renderer's rate (`mjwarp-spike/`) |
 | `3x` | the hub VM | a full-size guest pre-test, host preparation, the agent-based single-node install (`32-sno-install.sh`, templates in `sno/`) |
 | `4x` | the host as an Edge Manager device | `40-device-provision.sh`, then the operator's steps in `41-device-enroll.md` |
 | `5x` | the training pipeline's host side | the runner and the evaluation rig as units, seeding the incumbent's checkpoint, staging a promotion, checking a model image under the device's own signature policy |
@@ -62,7 +61,7 @@ they are: no comments inside them, no placeholders. The robots' runbook is
 
 | Path | What |
 |---|---|
-| `host/*.sh`, `host/prune_bags.py` | host-side helpers of the recording loop: starting the coordinator, the disk guard that parks the loop before a disk fills (`disk-guard.sh`, installed by `14-flywheel-services.sh`), dataset assembly and bag retention |
+| `host/disk-guard.sh` | the disk guard that parks the recording loop before a disk fills (installed by `14-flywheel-services.sh`) |
 | `fleet/extract_trajectories.py` | turns a dataset's recorded actions into the motion file the robots' worlds replay |
 | `ci/check-ai-marker.sh` | fails when a tracked source file lacks the AI-assistance marker |
 | `lint/` | the documentation lint |

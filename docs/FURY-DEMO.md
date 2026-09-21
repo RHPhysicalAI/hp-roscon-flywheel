@@ -29,11 +29,10 @@ The system stays in this state all day. Nothing is switched on stage; pieces are
 Ask the demo owner for every credential **out of band**. None is in this repository; none belongs in a file.
 
 **Network**
-- [ ] You are a member of the demo owner's tailnet, with access to the machine (`docs/NETWORK-ACCESS.md`; if
-      your checkout does not have it, ask the demo owner).
+- [ ] You are a member of the demo owner's tailnet, with access to the machine (the demo owner grants it).
 - [ ] The cluster's names resolve through the tailnet: on macOS the check below answers `10.20.0.10` (on Linux,
-      any resolver lookup of that name must). If your `/etc/hosts` pins `sno-flywheel.local` names - the
-      development stand-in uses the same ones - comment those lines out first.
+      any resolver lookup of that name must). If your `/etc/hosts` pins `sno-flywheel.local` names,
+      comment those lines out first.
 - [ ] `ssh gb300@hp-fury` gives you a shell on the host.
 
 ```

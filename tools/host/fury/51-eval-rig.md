@@ -8,7 +8,7 @@ its own policy and its own eval coordinator. The pod is a private network namesp
 and `:8081` exist a second time in there, nothing is published, nothing uses host networking — and all three
 containers carry `GZ_PARTITION=evalrig`, so Gazebo discovery cannot cross into production's sim either. Production
 is never stopped, named or touched. `51-eval-rig.sh` builds the pod, waits for sim and policy, runs the pinned evaluation
-scene (`run-coordinator.sh` `MODE=eval`: 60 s episodes, `cube_medium` randomised, arm homed between seeds), moves
+scene (60 s episodes, `cube_medium` randomised, arm homed between seeds), moves
 the record into place and **always** removes the pod again.
 
 Eval mode records no bags (`RECORD=false`, the recorder is not even launched) and sends the emitter no signals.

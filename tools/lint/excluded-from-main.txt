@@ -18,3 +18,17 @@ docs/eval-records/**
 tools/host/fury/52-seed-incumbent.sh
 tools/host/fury/53-stage-promotion.sh
 tools/host/fury/54-teacher-modelcar-check.sh
+# experiments that led to the rendering tenant, and the development stand-in's tooling: working record only
+tools/host/fury/21-render-trial.sh
+tools/host/fury/22-sim-scale.sh
+tools/host/fury/23-warp-probe.sh
+tools/host/fury/24-mjwarp-spike.sh
+tools/host/fury/25-mjwarp-batch.sh
+tools/host/fury/mjwarp-spike/**
+tools/host/after_assemble.sh
+tools/host/assemble_all.sh
+tools/host/run-coordinator.sh
+tools/host/prune_bags.py
+device/vm/**
+device/enroll.sh
+device/provision.sh

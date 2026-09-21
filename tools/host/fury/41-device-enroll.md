@@ -1,8 +1,8 @@
 <!-- This project was developed with assistance from AI tools. -->
 # Enrol the host as the Fleet's device — operator steps
 
-`device/enroll.sh` cannot be used here: it drives the device over
-ssh with passwordless sudo and parks the enrollment key in `/tmp`. On this machine the host half is
+A script that drives the device over ssh with passwordless sudo and parks the enrollment key in `/tmp` cannot
+be used here. On this machine the host half is
 `40-device-provision.sh`, run by the operator, and the hub half is the steps below, run from a laptop on
 the tailnet with `flightctl` 1.3.0 and `jq`.
 

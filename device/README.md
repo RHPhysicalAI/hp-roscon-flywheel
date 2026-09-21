@@ -17,5 +17,4 @@ table.
 `device/spike/bench_cpu_forward.py` measures one ACT forward pass on CPU threads. It runs unchanged
 on aarch64 and is the benchmark the fleet design names for sizing a robot's vCPUs.
 
-`provision.sh`, `enroll.sh` and the scripts under `device/vm/` are from the development stand-in and
-are not used on the Fury.
+The device scripts of the development stand-in are not used on the Fury.
