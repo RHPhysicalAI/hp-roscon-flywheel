@@ -30,7 +30,7 @@ memory, and each belongs to one tenant.
 | Slice | MIG profile | Tenant | What runs on it |
 |---|---|---|---|
 | `0:0` | `3g.126gb` - three compute units, 126 GB | [Coding assistant](#coding-assistant) | a Qwen3 coder model served by vLLM |
-| `0:1` | `1g.31gb` - one compute unit, 31 GB | [Robot zero](#robot-zero-and-the-flywheel) | the signed policy that drives the first robot, delivered by Edge Manager |
+| `0:1` | `1g.31gb` - one compute unit, 31 GB | [Robot Flywheel](#robot-zero-and-the-flywheel) | the signed policy that drives the first robot, delivered by Edge Manager |
 | `0:2` | `1g.31gb` - one compute unit, 31 GB | [Training](#training-tenant) | fine-tunes of the robot's policy, round after round |
 | `0:3` | `1g.31gb` - one compute unit, 31 GB | [Rendering](#rendering-tenant-and-the-fleet) | ray tracing of every robot's cameras for the fleet |
 
