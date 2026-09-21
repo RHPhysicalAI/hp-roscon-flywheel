@@ -23,8 +23,8 @@ gated pipeline, signing, promotion and fleet delivery.
 
 ## One GPU, four tenants
 
-The workstation has one NVIDIA GB300 with 251 GiB of GPU memory, beside a 72-core Grace CPU and 492 GiB of system
-memory. MIG splits the GPU into one large slice and three small ones. Each slice has its own compute and its own
+The workstation has one NVIDIA GB300 with 252 GB of HBM3e GPU memory, beside a 72-core NVIDIA Grace CPU and 496 GB of
+system memory. MIG splits the GPU into one large slice and three small ones. Each slice has its own compute and its own
 memory, and each belongs to one tenant.
 
 | Slice | MIG profile | Tenant | What runs on it |
@@ -121,11 +121,11 @@ More: [fleet](docs/architecture/fleet.md).
 
 | HP ZGX Fury | |
 |---|---|
-| CPU | NVIDIA Grace, 72 Arm cores |
-| GPU | one NVIDIA GB300, 251 GiB, split by MIG into `3g.126gb` + `1g.31gb` + `1g.31gb` + `1g.31gb` |
-| Memory | 492 GiB |
-| Storage | 12 TB of NVMe on four drives |
-| Operating system | Red Hat Enterprise Linux 10.2, aarch64 |
+| CPU | NVIDIA Grace, 72 Arm Neoverse V2 cores |
+| CPU memory | 496 GB LPDDR5x |
+| GPU | one NVIDIA GB300 (Blackwell Ultra), 252 GB HBM3e, split by MIG into `3g.126gb` + `1g.31gb` + `1g.31gb` + `1g.31gb` |
+| Storage | four embedded M.2 NVMe drives, 12 TB |
+| Software | Red Hat Enterprise Linux 10.2, aarch64 |
 
 Everything above runs on it at once:
 
