@@ -43,7 +43,7 @@ time anyway). Better, in this order:
 
 | Setting | Use |
 |---|---|
-| Resolution, frame rate | one fixed 16:9 region for every take, 30 fps, recorded at the screen's native resolution (a 1920x1080-point region on a Retina screen records as 3840x2160); the masters are exported at 1920x1080, which is what a booth screen shows and what the title cards and transitions are made at. Recording above the export size is what lets the loop punch in on one panel and stay sharp. Never mix region sizes |
+| Resolution, frame rate | 1920x1080 at 30 fps, the same window size for every take. For the loop, make the thing being shown fill the window before recording (browser zoom, collapsed dashboard sections), so the edit does not have to zoom |
 | Browser zoom | one zoom for every page (propose 125%); check every page at that zoom before the first take. If one page needs another zoom, write it in the take log and use it on every take of that page |
 | Theme | light, everywhere. The flywheel page and the evaluation pages take `?theme=light` and remember it per hostname; pages with their own theme switch (GPU dashboard, Edge Manager, consoles, the workspace editor) are set once in the recording profile |
 | Browser profile | a new, clean profile: no bookmarks bar, no extensions, no autofill or password-manager popups, no other tabs, no personal history behind the address bar |
@@ -107,9 +107,9 @@ Arranged so that nothing recorded early is disturbed by what comes later, and so
 
 | Block | What | Disturbs | Between takes |
 |---|---|---|---|
-| 1 | The loop's captures C1 to C9 (`docs/internal/FURY-LOOP-RECORDING.md`): dashboard, training, flywheel page, evaluation, pipeline, fleet wall, Edge Manager, Argo CD | nothing | reload the page |
-| 2 | The loop's coding capture, C10 (about 5 min a take) | the workspace | the `reset-demo` command, then a new agent conversation (`/new`) |
-| 3 | The loop's promotion capture, C11: one take from the pull request to all 13 healthy | both Fleets, the pull request | reset (about 5 min), re-open (seconds), check |
+| 1 | The loop's clips 1 to 9 (`docs/internal/FURY-LOOP-RECORDING.md`) | nothing | reload the page |
+| 2 | The loop's coding clip, 10 (about 4 min a take) | the workspace | the `reset-demo` command, then a new agent conversation (`/new`) |
+| 3 | The loop's promotion clip, 11: one take from the pull request to all 13 healthy | both Fleets, the pull request | reset (about 5 min), re-open (seconds), check |
 | 4 | Recording A, the full run-through. It contains one coding run and one promotion | both of the above | both of the above |
 
 The promotion comes **last**, and there is **one take per reset cycle**:
@@ -133,17 +133,16 @@ tools/hub/reopen-promotion.sh --open
   workspace reset.
 - The reset is itself a real rollout, to the previous model. Do not record it and pass it off as the promotion.
 - The minutes after a promotion or a reset are when the live lane shows rejects (the policy's restart interrupts
-  an episode, and the lane records that truthfully). Record the loop's flywheel page capture (C3) before any promotion take, or a quarter of an hour after one.
+  an episode, and the lane records that truthfully). Record the loop's flywheel page clip before any promotion take, or a quarter of an hour after one.
 
 ## 4. Shot list for B (the loop)
 
-In `docs/internal/FURY-LOOP-RECORDING.md`: eleven captures in recording order (its Part 1), and what the loop takes
-from each, with the captions (its Part 2).
+In `docs/internal/FURY-LOOP-RECORDING.md`: eleven short clips, what to set up for each and what each one says.
 
 ## 5. The loop's storyboard
 
-Also in `docs/internal/FURY-LOOP-RECORDING.md`: the strap, the chapter cards, the opening and closing cards and the
-loop point. Title cards and transitions are the owner's to make, at 1920x1080 and 30 fps.
+Also in `docs/internal/FURY-LOOP-RECORDING.md`: the clips' order in the loop and the text of the opening and closing
+cards. Cards, captions and transitions are the owner's to make.
 
 ## 6. Script for A
 
