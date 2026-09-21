@@ -160,7 +160,6 @@ Everything above runs on it at once:
 | Red Hat OpenShift AI | the pipeline and the Model Registry | 3.5 |
 | Red Hat Edge Manager | Fleets, enrollment, staged rollout | 1.3.0 |
 | Red Hat OpenShift Dev Spaces | the coding workspace | 3.30 |
-| Red Hat AI Inference Server | serving code assistant | w/vLLM |
 | cosign, Rekor transparency log | signatures, verified on every device | cosign 2.6.5 |
 
 The system was developed first on an x86 development stand-in; the same manifests run on the Fury.
