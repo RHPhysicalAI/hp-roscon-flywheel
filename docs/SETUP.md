@@ -208,10 +208,14 @@ export KUBECONFIG=~/.kube/fury-login
 oc login https://api.sno-flywheel.local:6443 -u kubeadmin --insecure-skip-tls-verify
 oc apply -f argocd/bootstrap-operators.yaml
 oc adm policy add-cluster-role-to-user cluster-admin -z openshift-gitops-argocd-application-controller -n openshift-gitops
+oc patch argocd openshift-gitops -n openshift-gitops --type merge -p '{"spec":{"server":{"resources":{"requests":{"cpu":"125m","memory":"256Mi"},"limits":{"cpu":"1","memory":"1Gi"}}}}}'
 oc apply -f argocd/storage-app.yaml
 oc apply -f argocd/operators-app.yaml
 oc get csv -A
 ```
+
+The `oc patch` gives Argo CD's page server 1 GiB: with the operator's 256 MiB it is killed for memory when the page
+lists these applications, and the route answers "Application is not available" until it restarts.
 
 When every operator is `Succeeded`, and each hand-made Secret exists before its consumer syncs
 (`minio-credentials` and `minio-eval-readonly-credentials` for `minio-app.yaml`; `hub-credentials` and
