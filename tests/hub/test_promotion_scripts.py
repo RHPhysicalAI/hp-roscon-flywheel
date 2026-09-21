@@ -1,5 +1,6 @@
 # This project was developed with assistance from AI tools.
 """reset-promotion.sh and reopen-promotion.sh on a throwaway repository, with gh, flightctl, oc and sleep stubbed."""
+import base64
 import json
 import os
 import re
@@ -15,6 +16,7 @@ HOST = "gitops/rhem/fleet-act-inference.yaml"
 ROBOTS = "gitops/rhem/fleet-robots.yaml"
 CONSUMER = "gitops/flywheel/manifest-consumer.yaml"
 TEACHER, PROMOTED = ("teacher", "sha256:" + "a" * 64), ("cand", "sha256:" + "b" * 64)
+HUB_TOKEN = "stub-token-not-a-real-one"
 ORIGINAL_PR = dict(number=7, title="Promote cand (82% -> 92%)", headRefName="promote/cand-9fb233e8",
                    createdAt="2026-09-20T11:29:02Z", body="## Promotion: `cand` replaces `teacher`\n\ngate: PASS")
 STUB = """#!{python}
@@ -23,7 +25,11 @@ d, a = os.environ["STUB_DIR"], sys.argv[1:]
 open(d + "/calls.jsonl", "a").write(json.dumps([os.path.basename(sys.argv[0])] + a) + "\\n")
 name = os.path.basename(sys.argv[0])
 if name == "gh" and a[:2] == ["pr", "view"]: print(open(f"{{d}}/pr-{{a[2]}}.json").read())
-elif name == "gh" and a[:2] == ["pr", "create"]: print("https://git.example/org/repo/pull/8")
+elif name == "gh" and a[:2] == ["pr", "create"]:
+    open(d + "/gh-create-token.txt", "w").write(os.environ.get("GH_TOKEN", ""))
+    print("https://git.example/org/repo/pull/8")
+elif name == "oc" and a[2:4] == ["get", "secret"] and os.path.exists(d + "/secret-token.b64"):
+    print(open(d + "/secret-token.b64").read(), end="")
 elif name == "flightctl" and a[:2] == ["get", "devices"]: print(open(d + "/devices.json").read())
 elif name == "flightctl" and a[:2] == ["get", "fleet"]: print(open(d + "/fleet.json").read())
 elif name != "sleep": sys.exit(1)
@@ -58,6 +64,8 @@ class Hub:
         for name in ("gh", "flightctl", "oc", "sleep"):
             (self.stubs / name).write_text(STUB.format(python=sys.executable)); (self.stubs / name).chmod(0o755)
         (self.stubs / "pr-7.json").write_text(json.dumps(ORIGINAL_PR))
+        (self.stubs / "secret-token.b64").write_text(base64.b64encode(HUB_TOKEN.encode()).decode())
+        self.env["KUBECONFIG"] = str(tmp / "kubeconfig")
         (self.stubs / "devices.json").write_text(_devices())
         (self.stubs / "fleet.json").write_text(json.dumps({"spec": {"template": {"spec": {"applications": [{"envVars": {"MODEL_VERSION": TEACHER[0]}}]}}}}))
         self.git("init", "-q", "--bare", "-b", "fury", str(self.origin), cwd=tmp)
@@ -202,3 +210,24 @@ def test_a_showing_can_be_reset_and_reopened_again_and_says_what_it_is(hub):
     assert "| Re-proposes PR #7 (pipeline run 9fb233e8, 2026-09-20)" in again.stdout
     assert "(PR #8), itself a re-opening of PR #7" in again.stdout
     assert ["pr", "view", "8"] not in [c[:3] for c in hub.calls("gh")]
+
+
+def test_the_pull_request_is_opened_with_the_hubs_token_which_is_never_shown(hub):
+    """--open reads the token from the hub's Secret, hands it to the one gh call, and prints it nowhere."""
+    assert hub.run("reset-promotion.sh", "--yes").returncode == 0
+    r = hub.run("reopen-promotion.sh", "--open")
+    assert r.returncode == 0, r.stderr
+    assert (hub.stubs / "gh-create-token.txt").read_text() == HUB_TOKEN
+    assert [c for c in hub.calls("oc") if c[:5] == ["-n", "flywheel", "get", "secret", "github-token"]]
+    assert HUB_TOKEN not in r.stdout + r.stderr and hub.left_clean()
+
+
+def test_without_the_hubs_token_nothing_is_pushed(hub):
+    """A Secret that cannot be read stops --open before the branch is pushed, and names the check."""
+    assert hub.run("reset-promotion.sh", "--yes").returncode == 0
+    (hub.stubs / "secret-token.b64").unlink()
+    before = hub.refs()
+    r = hub.run("reopen-promotion.sh", "--open")
+    assert r.returncode == 1 and "nothing was pushed" in r.stderr and "oc -n flywheel get secret github-token" in r.stderr
+    assert hub.refs() == before and not [c for c in hub.calls("gh") if c[:2] == ["pr", "create"]] and hub.left_clean()
+

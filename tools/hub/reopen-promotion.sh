@@ -19,8 +19,15 @@
 # host Fleet's file pins (a promotion from before D166 knew only the host's file).
 # Refused: when the newest promotion is not reverted (reset first), and while a rollout is in progress.
 #
-#   GITOPS_BRANCH   the branch the hub follows (default: fury)
-#   FLIGHTCTL       flightctl binary, logged in to this hub (default: flightctl, then ~/.local/bin/flightctl)
+# The pull request is opened with the token the pipeline opens its own with: a laptop's login may be allowed to push
+# a branch and still not to open a pull request, and the promotion's PRs should come from one identity anyway. The
+# token is read from the hub (a Secret) into this process for the one call that needs it - never into a file,
+# never printed - and BEFORE anything is pushed, so that a hub out of reach leaves no branch behind.
+#
+#   GITOPS_BRANCH     the branch the hub follows (default: fury)
+#   FLIGHTCTL         flightctl binary, logged in to this hub (default: flightctl, then ~/.local/bin/flightctl)
+#   KUBECONFIG        the hub's kubeconfig (needed with --open, for the token)
+#   PR_TOKEN_SECRET   <namespace>/<name> of the Secret whose key `token` opens pull requests (default: flywheel/github-token)
 set -euo pipefail
 BRANCH=${GITOPS_BRANCH:-fury}
 die() { echo "${0##*/}: $*" >&2; exit 1; }
@@ -99,10 +106,17 @@ if [[ -z $open ]]; then
     exit 0
 fi
 
+secret=${PR_TOKEN_SECRET:-flywheel/github-token}
+[[ $secret == */* ]] || die "PR_TOKEN_SECRET must be <namespace>/<name>, not '$secret'"
+command -v oc > /dev/null || die "oc is not installed - it reads the token pull requests are opened with from the hub"
+[[ -n ${KUBECONFIG:-} ]] || die "KUBECONFIG must be set to the hub's kubeconfig: the token pull requests are opened with is read from Secret $secret"
+pr_token=$(oc -n "${secret%%/*}" get secret "${secret##*/}" -o 'jsonpath={.data.token}' 2> /dev/null | base64 -d 2> /dev/null) || pr_token=
+[[ -n $pr_token ]] || die "could not read key 'token' of Secret $secret on the hub - nothing was pushed. Check:  oc -n ${secret%%/*} get secret ${secret##*/}   (it is the pipeline's; argocd/README.md says how it is made)"
+
 git -C "$wt" commit -q -m "Promote $cand again for a showing: cherry-pick of $short (PR #$pr)" \
     -m "Re-proposes PR #$orig${run:+ (pipeline run $run)}. Same signed image ($ref_digest), same gate record; the pipeline did not run again and nothing was re-measured. Every Fleet file pins what ${HOST_FLEET_FILE##*/} pins."
 git -C "$wt" push -q origin "HEAD:refs/heads/$branch" || die "the push of $branch was refused - this login may not push to the repository. No pull request was opened"
-url=$(gh pr create --base "$BRANCH" --head "$branch" --title "$title" --body "$body") ||
-    die "branch $branch is pushed, but the pull request was not opened. Open it by hand with the title and text above:  gh pr create --base $BRANCH --head $branch"
+url=$(GH_TOKEN=$pr_token gh pr create --base "$BRANCH" --head "$branch" --title "$title" --body "$body") ||
+    die "branch $branch is pushed, but the pull request was not opened (the token of Secret $secret was refused, or GitHub was not reached - the line above says which). Run this again once that is put right; the branch left behind can be deleted:  git push origin --delete $branch"
 echo "opened $url"
 echo "merge it with a merge commit to show the beat; watch the robots with tools/hub/fleet-status.sh. To take it back:  tools/hub/reset-promotion.sh"
