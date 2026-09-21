@@ -2,12 +2,12 @@
 # The eval rig — operator page
 
 The training pipeline scores a candidate checkpoint and the incumbent on the same seeded scenes. Two policy
-servers on one Zenoh graph get every goal rejected (D132), and stopping the production policy needs a human, so
-the eval runs in its **own rig** (D153): one podman pod `eval-rig` holding a second sim with its own Zenoh router,
+servers on one Zenoh graph get every goal rejected, and stopping the production policy needs a human, so
+the eval runs in its **own rig**: one podman pod `eval-rig` holding a second sim with its own Zenoh router,
 its own policy and its own eval coordinator. The pod is a private network namespace on podman's bridge — `:7447`
 and `:8081` exist a second time in there, nothing is published, nothing uses host networking — and all three
 containers carry `GZ_PARTITION=evalrig`, so Gazebo discovery cannot cross into production's sim either. Production
-is never stopped, named or touched. `51-eval-rig.sh` builds the pod, waits for sim and policy, runs the pinned D020
+is never stopped, named or touched. `51-eval-rig.sh` builds the pod, waits for sim and policy, runs the pinned evaluation
 scene (`run-coordinator.sh` `MODE=eval`: 60 s episodes, `cube_medium` randomised, arm homed between seeds), moves
 the record into place and **always** removes the pod again.
 
@@ -36,8 +36,8 @@ with the reason. Output: `journalctl -u flywheel-eval.service` and `/var/log/fly
 
 ## Verify first: five seeds beside the running loop
 
-D153 makes the design conditional on this: the incumbent, scored in the rig while production collects, against
-the **4/5, mean 2.6 cubes, no goal rejected** of D149's addendum (same image, same checkpoint, same seeds
+The design is conditional on this: the incumbent, scored in the rig while production collects, against
+the **4/5, mean 2.6 cubes, no goal rejected** of the first smoke test (same image, same checkpoint, same seeds
 1000–1004, scored against the production sim). Before: MIG off, the loop running, no rig.
 
 ```
@@ -80,7 +80,7 @@ the noise of five episodes — run it again with `n` 10 before judging); product
 frame count stays near 300; no file under `rig-raw`; the pod is gone (`1`). `served_model_version: null` in the
 episode lines is what eval mode has always written, not a fault. **Fail:** production rejects goals or drops
 frames while the rig is up — `./51-eval-rig.sh down` at once — or the rig scores clearly below the smoke on the
-same seeds. Then D153's fallback stands: an attended window with `flightctl app stop`.
+same seeds. Then the fallback stands: an attended window with `flightctl app stop`.
 
 ## When it fails
 

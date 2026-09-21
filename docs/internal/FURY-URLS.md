@@ -1,7 +1,7 @@
 <!-- This project was developed with assistance from AI tools. -->
 # The Fury demo's URLs
 
-As of 2026-09-20, tenants mode (D166). The `*.sno-flywheel.local` names resolve on the tailnet (the host's dnsmasq).
+As of 2026-09-20, tenants mode. The `*.sno-flywheel.local` names resolve on the tailnet (the host's dnsmasq).
 The routes use the cluster's self-signed certificate: a browser has to accept it **once per hostname** - a page
 that embeds another host's pictures (the flywheel page embeds the fleet wall's streams) shows nothing until that
 other host's certificate has been accepted too.

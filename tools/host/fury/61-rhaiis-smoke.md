@@ -1,7 +1,7 @@
 <!-- This project was developed with assistance from AI tools. -->
 # RHAIIS smoke on the large slice — operator page
 
-Phase 6 of `docs/internal/FURY-PLAN.md`, first step (D143): before any quadlet or Fleet work, does Red Hat AI
+The coding assistant's first step: before any quadlet or Fleet work, does Red Hat AI
 Inference Server 3.5.1 serve `RedHatAI/Qwen3-Coder-Next-NVFP4` on this machine at all. `61-rhaiis-smoke.sh`
 starts one hand-run container on a CDI device, waits for it, asks it two things and measures it.
 
@@ -98,7 +98,7 @@ over `/tmp` sits well with the image; NVML calls against a MIG parent from insid
    name. Check that the uuid survives `fury-mode flywheel` → `tenants`; if not, a stable alias is needed.
 3. **The act switch.** In flywheel mode the slice does not exist and the unit would restart forever. Who stops and
    starts it: `fury-mode` refusing as it does for the policy (`fury-mode.sh:30-35`), a hub-side `flightctl app stop`,
-   or the MIG layout becoming a Fleet-delivered file (D143).
+   or the MIG layout becoming a Fleet-delivered file.
 4. **Health.** `/health` on the API port. The image may not carry `curl`: a `python3 -c` urllib one-liner is the safe
    `HealthCmd`. Start period = this smoke's measured cold start with margin — `HealthStartupCmd` plus
    `Notify=healthy` fits better than one long `HealthStartPeriod`; `TimeoutStartSec=300` and the Fleet's
@@ -109,7 +109,7 @@ over `/tmp` sits well with the image; NVML calls against a MIG parent from insid
    `HealthOnFailure=kill` as for the policy.
 7. **Model mount.** `:ro,z` relabels once and is right for a directory shared with nothing else but re-used across
    container instances (`Z` would relabel privately on every start); plain `:ro` needs `SecurityLabelDisable=true`,
-   which this host has not needed (D144). Or Red Hat's signed ModelCar
+   which this host has not needed. Or Red Hat's signed ModelCar
    (`registry.redhat.io/rhai/modelcar-qwen3-coder-next-nvfp4:3.0` [3]) as a `Driver=image` volume like the ACT
    one — governed and verified on pull, at the price of a second 48 GB copy in root's storage; arm64 not checked.
 8. **Rootful or rootless.** The docs run rootless with `--userns=keep-id:uid=1001` [1]; the Fleet is rootful by choice

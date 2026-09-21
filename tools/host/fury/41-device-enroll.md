@@ -1,7 +1,7 @@
 <!-- This project was developed with assistance from AI tools. -->
 # Enrol the host as the Fleet's device — operator steps
 
-Phase 4 of `docs/internal/FURY-PLAN.md`. `device/enroll.sh` cannot be used here: it drives the device over
+`device/enroll.sh` cannot be used here: it drives the device over
 ssh with passwordless sudo and parks the enrollment key in `/tmp`. On this machine the host half is
 `40-device-provision.sh`, run by the operator, and the hub half is the steps below, run from a laptop on
 the tailnet with `flightctl` 1.3.0 and `jq`.
@@ -153,7 +153,7 @@ because the agent's container is the only policy on the graph (the `podman ps` l
 
 ## 6. Later: serving from a MIG slice (`gpu_device`)
 
-This is robot zero (D164), and it is wrapped: `tools/hub/robot-zero.sh up` and `down` do what follows in the
+This is robot zero, and it is wrapped: `tools/hub/robot-zero.sh up` and `down` do what follows in the
 right order and check each step, `tools/hub/fury-switch.sh` calls them around a mode switch, and
 `74-robot-zero.md` is the operator page. The policy needs something to talk to in tenants mode - the Zenoh
 router in `robot-zero-sim` (`74-robot-zero-install.sh`); without it the policy never passes its health check and
@@ -238,7 +238,7 @@ If the hub is down, the local equivalent is
 leaves a hand-stopped target alone, but RHEM will show the application in error until it runs again.
 
 The same stop is what makes a local eval safe: never a second `/run_policy` on this host while the device
-serves (D132) — stop the application first, start it again afterwards.
+serves (two policy servers on one Zenoh graph reject every goal) — stop the application first, start it again afterwards.
 
 ## 8. If something is off
 

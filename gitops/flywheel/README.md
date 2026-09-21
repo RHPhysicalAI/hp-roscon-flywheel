@@ -6,7 +6,7 @@ Owned by the Argo `flywheel` Application (`argocd/flywheel-app.yaml`, `prune: tr
 ## The live lane: `curator-show`
 
 `curator-show.yaml` is a second Deployment of the curator's own code (the `curator-code` ConfigMap, one code, two
-deployments) that judges robot zero's episodes for the flywheel page while the demo stays in tenants mode (D166).
+deployments) that judges robot zero's episodes for the flywheel page while the demo stays in tenants mode.
 It reads **no** Secret and has no way to the flywheel's data: its own PVC instead of the node's
 `/var/lib/episodes`, its own ServiceAccount without an SCC grant (the pod requires `restricted-v2`, which has no
 host paths), no token, no egress. Two pages mount its volume, both read-only: the dashboard, and
@@ -20,12 +20,11 @@ Service's `externalTrafficPolicy: Local` keeping the client's address). Both cur
 ## Hand-created Secret: `hub-credentials`
 
 The S3 credentials every workload here (and the DSP pipeline, `gitops/operators-config/dspa.yaml`)
-reads are **not in git** (Phase 4.5 F, D026 row 13). Argo does not track the Secret, so a sync or
-prune never touches it. Create or refresh it from the desktop's `~/.minio-env` without echoing the
-values:
+reads are **not in git**. Argo does not track the Secret, so a sync or
+prune never touches it. Create or refresh it without echoing the values - `MINIO_ACCESS_KEY` and
+`MINIO_SECRET_KEY` are set in the shell beforehand, from wherever the operator keeps them:
 
 ```bash
-set -a; source ~/.minio-env; set +a
 oc create secret generic hub-credentials -n flywheel \
   --from-literal=s3-access-key="$MINIO_ACCESS_KEY" --from-literal=s3-secret-key="$MINIO_SECRET_KEY" \
   --dry-run=client -o yaml | oc apply -f -

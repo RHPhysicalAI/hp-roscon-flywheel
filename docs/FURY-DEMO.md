@@ -2,8 +2,8 @@
 # The Fury demo: full runbook
 
 For a presenter who did not build this system and runs the demo from their own laptop: about 20 minutes, eight
-beats, each of which stands alone. Addresses are from `docs/internal/FURY-URLS.md`, the reasoning is in
-`docs/internal/DECISIONS.md` (D157-D169). Shorter: `docs/FURY-DEMO-LITE.md`. Recorded: `docs/internal/FURY-RECORDING.md`.
+beats, each of which stands alone. Addresses are from `docs/internal/FURY-URLS.md`. Shorter:
+`docs/FURY-DEMO-LITE.md`. Recorded: the recording plan (kept by the demo owner).
 
 ## 1. What this demo is
 
@@ -282,7 +282,7 @@ gh pr merge --merge NUMBER
   - "Every clone has its own identity: 12 distinct host keys, device identities and hardware ids."
 - **Don't say:** that the twelve robots' policies move the arms on the wall. Their worlds replay recorded
   episodes of the policy's actions; each robot's computer runs the delivered, verified policy. Only `r00` is
-  closed loop (D163).
+  closed loop.
 
 **Optional - needs the host's sudo password, and is not rehearsed on the real fleet (section 8):** robots leave
 and come back. **Only after the rollout has finished:** a shut-off robot stalls its batch. On the host, first

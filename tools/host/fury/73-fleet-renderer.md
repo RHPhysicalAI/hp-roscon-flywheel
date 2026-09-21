@@ -1,7 +1,7 @@
 <!-- This project was developed with assistance from AI tools. -->
 # The fleet's rendering tenant — operator page
 
-In tenants mode slice `nvidia.com/gpu=0:3` (1g.31gb) draws the fleet (D163, D164): every robot's world sends its
+In tenants mode slice `nvidia.com/gpu=0:3` (1g.31gb) draws the fleet: every robot's world sends its
 state — six joints, three cube poses — to `10.20.0.1:9701` over UDP, MuJoCo-Warp ray-traces both cameras of all
 of them in one batch per tick, and `10.20.0.1:9702` serves the pictures: `/wall.mjpg` (a labelled mosaic of every
 robot's overhead camera), `/robot/<id>/static|wrist.mjpg|jpg`, `/status`, `/healthz`, and a small page at `/`.
@@ -42,7 +42,7 @@ or a new image: `install` again (it restarts the unit).
 |---|---|
 | `device` | the slice, e.g. `NVIDIA … MIG 1g.31gb (cuda:0)` — not `cpu` |
 | `render rate` | the target (15) with robots sending; `late ticks` not climbing |
-| `ms per batch` | D163 measured about 4.3 ms a robot at 640x480 with shadows; 480 px should be under that. 20 robots must stay under 66 ms |
+| `ms per batch` | the batch benchmark measured about 4.3 ms a robot at 640x480 with shadows; 480 px should be under that. 20 robots must stay under 66 ms |
 | `robots` | as many live as there are worlds, `datagrams/s` near 30 each, `dropped` flat |
 | `pictures` | `the wall mosaic` under 66 ms each, or the wall shows fewer frames than are rendered |
 
@@ -69,7 +69,7 @@ frames a second, never more than one; a robot's own stream 2.9 ms a frame. The u
 |---|---|---|
 | `inactive` in tenants mode, journal: `CDI device nvidia.com/gpu=0:3 is not there` | the CDI spec is older than the slices | `sudo systemctl restart nvidia-cdi-refresh.service`, then `sudo systemctl start fleet-renderer.service` |
 | journal: `cannot listen on udp 10.20.0.1:9701 …`, restarting every 15 s | `virbr-fury` is not up yet, or something else holds the port | wait for libvirt; `sudo ss -lunp 'sport = 9701'` |
-| journal: a CUDA or Warp error at the first start; `/status` never leaves `warming up` | the image's first start on a slice as uid 1001 without capabilities is not verified | comment `DropCapability=all` and `NoNewPrivileges=true` in the unit, `install`; if that is it, say so in `DECISIONS.md` |
+| journal: a CUDA or Warp error at the first start; `/status` never leaves `warming up` | the image's first start on a slice as uid 1001 without capabilities is not verified | comment `DropCapability=all` and `NoNewPrivileges=true` in the unit, `install`; if that is it, record it in the unit's header comment |
 | `install` times out waiting for `/healthz`, the journal shows Warp compiling | a slow first compile | `WAIT_S=1800 ./73-fleet-renderer-install.sh install` |
 | tiles grey although the worlds run | the states do not arrive: `dropped` in `status` names why; nothing accepted at all is the port | `status` shows the ports; from a pod `10.20.0.1:9701/udp` must be the target |
 | `dropped` shows `over_capacity` | more robots than `RENDER_MAX_ROBOTS=24` | raise it in the unit, `install` |
@@ -81,7 +81,7 @@ frames a second, never more than one; a robot's own stream 2.9 ms a frame. The u
 
 Everything above ran end to end on Warp's CPU device, in this image, rootless (a rootless container cannot
 open the GPU on this host). On the slice, still to see: CUDA under uid 1001 with every capability dropped; the
-time of the first kernel compile; the render rate at 480 px (D163's 228 pairs a second were 640x480 with the
+time of the first kernel compile; the render rate at 480 px (the benchmark's 228 pairs a second were 640x480 with the
 spike's loop — this service's loop is that loop plus rendering only the first n worlds of a fixed allocation,
 checked against a full batch on the CPU device at every image build); memory; and the router carrying
 `/wall.mjpg` at about 20 Mbit/s a viewer.

@@ -1,7 +1,7 @@
 <!-- This project was developed with assistance from AI tools. -->
 # Robot zero — operator page
 
-In tenants mode slice `nvidia.com/gpu=0:1` (1g.31gb) serves the GPU host's **own policy** (D164): the Fleet's signed
+In tenants mode slice `nvidia.com/gpu=0:1` (1g.31gb) serves the GPU host's **own policy**: the Fleet's signed
 `act-inference` application, the one promoted in act 1, **placed on that slice by RHEM** through the device's
 `gpu_device` label. Nothing about the policy is a host unit of ours. What the host adds is the robot around it,
 four units with no GPU in them:
@@ -11,7 +11,7 @@ four units with no GPU in them:
 | `robot-zero-sim` | the physics-only world (the fleet worlds' signed image, `SIM_CAMERAS=off`), the Zenoh router the policy connects to, and the state forwarder that reports to the rendering tenant as `r00` |
 | `robot-zero-frames` | fetches `r00`'s two pictures from `10.20.0.1:9702` and publishes them as `/static_camera/image_raw` and `/wrist_camera/image_raw`, 640x480 `rgb8`: the 480x480 picture centred and padded, never stretched (`src/robot-zero/`) |
 | `robot-zero-episodes` | the flywheel's coordinator with `RECORD=false`: homes the arm, re-places the cubes, runs the policy for up to a minute, repeats |
-| `robot-zero-emitter` | the image's own episode emitter, listening only: one summary per episode (a few KB of JSON, no bag behind it) posted to the **show curator** on the hub, `http://10.20.0.10:30812/episode` — the live lane of the flywheel page (D166) |
+| `robot-zero-emitter` | the image's own episode emitter, listening only: one summary per episode (a few KB of JSON, no bag behind it) posted to the **show curator** on the hub, `http://10.20.0.10:30812/episode` — the live lane of the flywheel page |
 
 `robot-zero-sim` is the handle: starting it starts the other three, stopping or restarting it takes them along, and
 whenever it has (re)started it restarts the policy **if that is running** (the policy's action server does not
@@ -117,7 +117,7 @@ started last, and its placement only ever changes while it is stopped.
 | the episode reporter | `Episode … -> SUCCESS` or `FAIL`, `cubes=n [k total]` after each episode, and no `POST to curator failed` |
 | slice 0:1 | a `policy pid` line with a few GiB — only after the first goal, the model loads lazily |
 
-Whether the arm picks cubes from the ray-traced pixels is **not** a criterion (D163, D164): it must run, move and
+Whether the arm picks cubes from the ray-traced pixels is **not** a criterion: it must run, move and
 be managed correctly.
 
 ## When it fails
@@ -167,11 +167,11 @@ the shell of the world's `ExecStartPost=`, and `robot-zero.sh`'s order of stop, 
 hub that rejects a careless write; `robot-zero.sh
 status` ran against the real hub and host. Still to see on the machine: the three units under podman with the
 hardening; rmw_zenoh carrying two 0.9 MB frames fifteen times a second from a client to the policy; the policy
-starting with `AddDevice=nvidia.com/gpu=MIG-…` (D148's label, never exercised); that `flightctl apply` of the
+starting with `AddDevice=nvidia.com/gpu=MIG-…` (the `gpu_device` label, never exercised before); that `flightctl apply` of the
 device document changes the label and RHEM re-renders it at once while the application is stopped; that a
 restart of the world pulls the other three units and the policy along as designed; a boot in tenants mode.
 
-The fourth unit (D166) was added after those ran. Tested off the host: its rules, spoiled one line at a time, and
+The fourth unit, the episode reporter, was added after those ran. Tested off the host: its rules, spoiled one line at a time, and
 the same rule on quadlet-shaped output. **First thing to check on the machine, before anything else about it: the
 emitter's Zenoh session.** It is the one assumption everything after it rests on. The emitter has no router
 setting; it uses the image's default session — a peer that connects to the router on `localhost:7447` — from a

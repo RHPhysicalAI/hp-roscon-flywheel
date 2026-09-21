@@ -1,7 +1,7 @@
 <!-- This project was developed with assistance from AI tools. -->
 # Fleet rendering tenant: the contract between the robots' worlds and the renderer
 
-Stage B of the fleet tenant (D163, D164). Two halves are built separately against this page: the **worlds**
+Stage B of the fleet tenant. Two halves are built separately against this page: the **worlds**
 (physics-only sims, pods on the hub) and the **rendering tenant** (one process on MIG slice `0:3` of the GPU host).
 Nothing here is about the policy; stage C adds the frames' path to each robot's computer.
 
@@ -29,7 +29,7 @@ at most 1200 bytes:
            "cube_large": [x, y, z, qw, qx, qy, qz]}}
 ```
 
-- `robot`: `r` + two digits, the same number as the robot's computer `fleet-vm-NN`; `r00` is robot zero (D164).
+- `robot`: `r` + two digits, the same number as the robot's computer `fleet-vm-NN`; `r00` is robot zero.
 - `t`: the world's sim time in seconds. The renderer ignores a datagram whose `t` is older than the last one it
   accepted from that robot, unless it is more than 5 s older (a restarted world starts again from zero).
 - `q`: radians, **Gazebo's values as `/joint_states` reports them**, keyed by joint name - the joint names are
@@ -55,7 +55,7 @@ HTTP on `RENDER_HTTP_ADDR` (default `10.20.0.1:9702`), no authentication, read-o
 | `GET /healthz` | 200 when the render loop has produced a frame in the last 2 s. With no robot live it renders one world at rest twice a second, so it is healthy before any world exists |
 | `GET /`, `GET /wall.jpg` | a small page with the mosaic and the status table; the mosaic once |
 
-Defaults (D163's measurement: about 228 camera pairs a second per 1g.31gb slice at 640x480): render **480x480**,
+Defaults (measured on this slice: about 228 camera pairs a second per 1g.31gb slice at 640x480): render **480x480**,
 **15 frames a second**, shadows on - about twenty robots from one slice. `RENDER_SIZE`, `RENDER_FPS`,
 `RENDER_SHADOWS` change them; `RENDER_DEVICE` (default `cuda:0`) and `RENDER_MAX_ROBOTS` (default 24: the batch is
 allocated once, and a robot beyond it is dropped and counted as `over_capacity`) size it. The output is converted from the renderer's linear colour to sRGB before encoding.
@@ -65,5 +65,5 @@ allocated once, and a robot beyond it is dropped and counted as `over_capacity`)
 The worlds are pods on the hub (`10.20.0.10`, traffic leaves as the node); the renderer listens on the host's
 hub-side address only. The host lists `9701/udp` and `9702/tcp` for guests in the `libvirt-to-host` policy
 (pattern: `tools/host/fury/15-camera-port.sh`). Browsers reach the pictures through the hub's https Route in front
-of a Service whose one endpoint is `10.20.0.1:9702` (pattern: D159; the EndpointSlice is applied by hand because
+of a Service whose one endpoint is `10.20.0.1:9702` (the same pattern as the sim's camera streams; the EndpointSlice is applied by hand because
 Argo CD does not manage EndpointSlices).

@@ -272,7 +272,7 @@ Before the laptop goes to a lite presenter, all of this is true. How to get ther
       arranged - or the presenter is told to leave stop 8 out.
 - [ ] Show day: the training trigger is disarmed, so nothing fires unattended.
 - [ ] Laptop on mains power; sleep, screen lock and screen saver off; notifications off; on the demo's network.
-- [ ] The recorded video on the desktop, played once on this laptop (see `docs/internal/FURY-RECORDING.md`). The presenter
+- [ ] The recorded video on the desktop, played once on this laptop (see the recording plan, kept by the demo owner). The presenter
       has this document on paper or a second screen, and knows how to reach you.
 
 ## Not rehearsed yet

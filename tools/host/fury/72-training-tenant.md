@@ -1,7 +1,7 @@
 <!-- This project was developed with assistance from AI tools. -->
 # The training tenant — operator page
 
-In tenants mode the GPU is four MIG slices (D164). Slice `nvidia.com/gpu=0:2` (1g.31gb) trains: real ACT
+In tenants mode the GPU is four MIG slices. Slice `nvidia.com/gpu=0:2` (1g.31gb) trains: real ACT
 fine-tunes, one short round after another, for as long as the machine is in that mode — a busy slice beside the
 coding assistant (`0:0`), robot zero (`0:1`) and the fleet's renderer (`0:3`). It is there to show isolation and
 what the machine carries. **It is not part of the governed flywheel**: nothing it produces is evaluated,
@@ -84,11 +84,12 @@ ordinary user:
 ./61-rhaiis-smoke.sh bench
 ```
 
-The number to hold it against was taken with the other slices idle (D160): **time to first token 0.132 s,
+The number to hold it against was taken with the other slices idle: **time to first token 0.132 s,
 decode 245.7 tokens/s, end to end 218.7 tokens/s**. MIG gives each slice its own compute and memory, so decode
 should not move; if anything does it is time to first token, which has a CPU part, and the CPU is shared. Then
 `sudo systemctl stop training-tenant.service`, `bench` again, `sudo systemctl start training-tenant.service`.
-Write both results into `DECISIONS.md`: this beat has not been measured yet.
+Measured on 2026-09-20 with the tenant training next door: **time to first token 0.135 s, decode 246.6 tokens/s,
+end to end 218.9** - no measurable difference.
 
 ## How long a round is — an estimate, to be replaced by the first round
 

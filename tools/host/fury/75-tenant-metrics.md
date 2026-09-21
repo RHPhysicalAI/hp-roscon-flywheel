@@ -136,7 +136,7 @@ the variable *Training round* at the top shows the same N.
 DCGM labels a slice with the driver's GPU instance id, not with `0:2`. The dashboard maps `1` = assistant, `11` =
 robot zero, `12` = training, `13` = rendering — in its header comment, in the shared panels' queries and in the
 tenant groups' GPU panels. The ids follow from profile and placement, and `mig-config.sh` makes the layout with one
-command in one order (`-cgi 9,19,19,19`), so they repeat — like the MIG UUIDs D164 relies on. Read, no root:
+command in one order (`-cgi 9,19,19,19`), so they repeat — like the MIG UUIDs robot zero's placement relies on. Read, no root:
 
 ```
 nvidia-smi | sed -n '/MIG devices/,/Processes/p'
@@ -185,7 +185,7 @@ copies together.
   round's log), so `tenant_training_step` is the last `n/total` of the `Training:` bar in the log's tail, which
   also gives the round's length. The abbreviated field is only the fallback.
 - **Steps per second is `1 / (updt_s + data_s)`**, lerobot's own means over its last 100 steps: 9.8 on this slice,
-  which is what D165 measured. The ledger's `steps_per_s` is lower (9.7) because it counts a round's start and
+  which is what the isolation measurement saw. The ledger's `steps_per_s` is lower (9.7) because it counts a round's start and
   save.
 - **Running means the log moves.** `tenant_training_up` is 1 while the newest round's `train.log` was written in
   the last `TRAINING_STALE_S` (120) seconds — the bar writes several times a second. When it is 0 the round's
