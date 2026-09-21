@@ -5752,3 +5752,38 @@ new chart, where it ran and completed (same version: nothing to migrate). The ch
 encryption-key jobs ran again and left every secret unchanged. After: app Synced and Healthy, 13 devices Online,
 UpToDate and Healthy, both Fleets valid, the page titled "Red Hat Edge Manager". Going back is the same change in
 reverse (the project chart's registry Secret is still there), with the dump as the last resort.
+
+## D169 — The promotion beat across both Fleets, run and timed: reset, re-open, merge
+
+**Date:** 2026-09-21 (UTC). **Status:** done once end to end; this is the rehearsal and the show path (D166).
+
+**Reset** (`tools/hub/reset-promotion.sh`, one push: the revert of PR #7's merge plus the commit that brings the
+robots' Fleet along - the merge predates the two-Fleet PR step). Host serving the teacher on its slice about 50 s
+after the push. Then the first template change ever to walk the twelve robots: waves of 1, 2, 3, 5 and 1 (canary,
+25 %, 50 %, the rest split by `maxUnavailable: 5`), each under a minute **including each robot's first pull of the
+teacher model** (about 230 MB) - which also settles that the amd64-era teacher image mounts on the arm64 robots.
+All 13 devices UpToDate and Healthy about 5 minutes after the push.
+**Re-open** (`tools/hub/reopen-promotion.sh --open`): PR #8, "Promote act-v2-ft160 (82% -> 92%) - re-opened for a
+showing", opening with "Re-proposes PR #7 (pipeline run 9fb233e8, 2026-09-20): same signed image and
+transparency-log entry, same gate record. The pipeline did not run again; nothing was re-measured." and quoting
+PR #7 unchanged; one commit, every Fleet file pinned alike. No pipeline run, no image, signature, registry version
+or evaluation record written - the Model Registry entry for `act-v2-ft160` stays the one the governed run made
+(operator: one pristine entry; no further full run for this candidate). The laptop's login may push a branch but not
+open a pull request on this repository, so the script opens the PR **with the token the pipeline opens its own
+with**, read from the hub's Secret into the one call - never a file, never printed - and before anything is pushed
+(operator's instruction; tested).
+**Merge** (operator, merge commit, 00:03:55 UTC):
+
+| after the merge | what |
+|---|---|
+| 45 s | both Fleets carry the new template (the ResourceSync's poll) |
+| 1 min 32 s | the host serves `act-v2-ft160` on slice `0:1`, Healthy (D158's first promotion, MIG off: 1 min 38 s) |
+| 3 min 23 s | twelve of twelve robots UpToDate - waves of about 16 s each, nothing pulled: every device holds both models |
+| 3 min 39 s | all 13 devices Healthy |
+
+Robot zero's episode loop saw the new label and the flywheel page's badge followed; the live lane logged the
+restart's failed episodes as rejects, truthfully. So the beat fits a stage: merge, narrate for a minute and a half
+while the host comes back on its slice, and the fleet is done before the fleet has been introduced. It needs every
+enrolled robot running (a shut-off robot stalls its batch for 30 minutes), a reachable GitHub for the merge, and
+the hub; it does not need the registry once both models are on every device. **Between showings:** reset (about 5
+minutes), re-open (seconds; the PR can sit open until the beat), merge.
