@@ -218,7 +218,7 @@ spec:
           appType: quadlet
           envVars:
             ROLE: policy
-            MODEL_VERSION: act-v2-ft160
+            MODEL_VERSION: upstream-act-teacher
             POLICY_PATH: /modelcar/models/act
             ACTIONS_PER_CHUNK: "100"
             CHUNK_SIZE_THRESHOLD: "0.5"
@@ -228,7 +228,7 @@ spec:
                 [Volume]
                 Driver=image
                 # same modelcar as fleet-act-inference.yaml today; a robots' rollout replaces this digest and MODEL_VERSION above
-                Image=quay.io/jary/soarm-act-modelcar@sha256:d741db2bd5f7e2bb1762594ffb49a98da67f4e6096d4359839dc3f2faab3eab8
+                Image=quay.io/jary/soarm-act-modelcar@sha256:d5e5897ff3b917e81d2b16d026c91dc603242f31b5aa4e054d3673fb2ad308ac
             - path: zenoh-router.container
               content: |
                 [Unit]
