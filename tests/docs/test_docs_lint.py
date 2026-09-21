@@ -169,14 +169,20 @@ def test_ai_note_finds_unmarked_files(tmp_path):
 
 @pytest.mark.parametrize("body", [
     "# Title\n\nSummary.\n\n## Overview\n",
-    f"# Title\n\n> [!NOTE]\n> {MARKER}\n\nSummary.\n",
+    f"> [!NOTE]\n> {MARKER}\n\n# Title\n\nSummary.\n\n## Overview\n",
     f"# Title\n\nSummary.\n\n## Overview\n\n> [!NOTE]\n> {MARKER}\n",
     "# Title\n\nSummary.\n\n> [!NOTE]\n> This project used AI tools.\n",
-], ids=["absent", "before-summary", "after-first-section", "reworded"])
-def test_ai_note_wants_the_readme_callout_after_the_summary(tmp_path, body):
-    """The README callout must be the exact two lines, after the H1 and summary and before the first section."""
+], ids=["absent", "before-title", "after-first-section", "reworded"])
+def test_ai_note_wants_the_readme_callout_before_the_first_section(tmp_path, body):
+    """The README callout must be the exact two lines, after the H1 and before the first section."""
     root = tree(tmp_path, {"README.md": f"<!-- {MARKER} -->\n{body}"})
     assert found(root, "ai-note") == [("README.md", 1)]
+
+
+def test_ai_note_accepts_the_readme_callout_directly_under_the_title(tmp_path):
+    """The callout may come before the summary paragraph as well as after it."""
+    root = tree(tmp_path, {"README.md": f"<!-- {MARKER} -->\n# Title\n\n> [!NOTE]\n> {MARKER}\n\nSummary.\n\n## Overview\n"})
+    assert found(root, "ai-note") == []
 
 
 def test_links_checks_relative_links_and_backticked_paths(tmp_path):

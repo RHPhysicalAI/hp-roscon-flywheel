@@ -234,9 +234,8 @@ def rule_ai_note(root: Path, files: list[str], opts: argparse.Namespace) -> Iter
             h1 = next((i for i, line in enumerate(text) if line.startswith("# ")), len(text))
             h2 = next((i for i, line in enumerate(text) if line.startswith("## ")), len(text))
             note = next((i for i in range(len(text) - 1) if text[i:i + 2] == ["> [!NOTE]", "> " + MARKER]), -1)
-            summary = any(line and line[0] not in "#><" for line in text[h1 + 1:max(note, 0)])
-            if not (h1 < note < h2 and summary):
-                yield Finding(rel, 1, "ai-note", "the [!NOTE] callout must follow the H1 and the summary paragraph")
+            if not h1 < note < h2:
+                yield Finding(rel, 1, "ai-note", "the [!NOTE] callout must sit between the H1 and the first section")
 
 
 def rule_links(root: Path, files: list[str], opts: argparse.Namespace) -> Iterator[Finding]:
