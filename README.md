@@ -32,7 +32,7 @@ memory, and each belongs to one tenant.
 | `0:0` | `3g.126gb` - three compute units, 126 GB | [Coding assistant](#coding-assistant) | a Qwen3 coder model served by vLLM |
 | `0:1` | `1g.31gb` - one compute unit, 31 GB | [Robot Flywheel](#robot-zero-and-the-flywheel) | the signed policy that drives the first robot, delivered by Edge Manager |
 | `0:2` | `1g.31gb` - one compute unit, 31 GB | [Training](#training-tenant) | fine-tunes of the robot's policy, round after round |
-| `0:3` | `1g.31gb` - one compute unit, 31 GB | [Rendering](#rendering-tenant-and-the-fleet) | ray tracing of every robot's cameras for the fleet |
+| `0:3` | `1g.31gb` - one compute unit, 31 GB | [Fleet Scaling](#rendering-tenant-and-the-fleet) | ray tracing of every robot's cameras for the fleet |
 
 ![Compute busy and memory used for all four slices, one line per tenant](docs/images/gpu-slices.png)
 
@@ -100,7 +100,7 @@ run from a terminal.
 The neighbours do not feel it. The coding assistant decodes 246.6 tokens a second while a round trains on the next
 slice, and 245.7 with that slice idle.
 
-### Rendering tenant and the fleet
+### Rendering tenant and the scaling fleet
 
 Slice `0:3`, `1g.31gb`. A MIG slice is compute only, so no simulator draws its own cameras. Every robot's world is
 physics only, and this tenant ray-traces the pictures with CUDA (MuJoCo-Warp): two cameras for each of thirteen robots,
