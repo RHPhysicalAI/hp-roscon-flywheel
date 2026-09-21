@@ -3,7 +3,7 @@
 
 These scripts prepared and operate **one particular HP ZGX Fury (NVIDIA DGX Station GB300, RHEL 10.2 aarch64)**
 for the flywheel demo. They are kept as the record of what was done and why — each script's header comment has
-the reasoning, `docs/FURY-SETUP.md` the lessons, and `tools/README.md` the map of the numbers.
+the reasoning, `docs/SETUP.md` the bring-up in order and its lessons, and `tools/README.md` the map of the numbers.
 
 **Do not run them on anything else.** They re-run themselves under `sudo` and change the host: boot target and
 suspend (`01`), format a disk and move container storage (`02`), install packages (`03`), partition the GPU with
