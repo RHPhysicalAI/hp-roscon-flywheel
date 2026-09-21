@@ -5787,3 +5787,20 @@ while the host comes back on its slice, and the fleet is done before the fleet h
 enrolled robot running (a shut-off robot stalls its batch for 30 minutes), a reachable GitHub for the merge, and
 the hub; it does not need the registry once both models are on every device. **Between showings:** reset (about 5
 minutes), re-open (seconds; the PR can sit open until the beat), merge.
+
+**D166, addendum (2026-09-21) - the live lane gets its own episodes page.** The Live episodes page is the governed
+collection's record and rightly shows nothing of robot zero, so a third instance of the evaluation page's image,
+`eval-dashboard-show` (`2bfe0a5`), reads the show curator's `curated/` and `rejected/` directories - read-only
+sub-path mounts, so unjudged records and the totals file are not in the pod at all - under its own service account
+with no grant, credential, token or way out of the pod. It says what it is ("Live episodes - live lane ... judged,
+not kept: the newest few hundred verdicts, no recordings") and links to the collection's page; the flywheel page
+links "Live episodes" to it on the live lane only, and the paired page now calls the other one "Live episodes
+(collection)". Two findings on the way: the show curator keeps the newest 300 records of *each* verdict, so both
+directories read whole tend to 50 % whatever the policy does - the page reads the newest 300 files of the two
+together, which are exactly the last 300 episodes judged (a test ties the window to the curator's setting); and the
+evaluation page wrote `rollout.steps` into a table row unescaped (masked by the curator's validation, fixed for all
+three instances). One rebuilt, signed image (Rekor 24), pinned by one digest in all three, which a test holds
+equal. On the machine: admitted under the restricted profile; the paired page still pinned to `9fb233e8` with 720
+episodes, the collection's page still on its own 18; the new page, an hour into the lane and across the promotion
+cycle, shows `act-v2-ft160` with 28 of 37 episodes placing all three cubes on rendered cameras and the teacher 6 of
+9 - small counts, but they are what D166's open question asked for, and they keep growing by themselves.
