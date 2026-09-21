@@ -1,6 +1,9 @@
 <!-- This project was developed with assistance from AI tools. -->
 # Red Hat and HP: Empowering Physical AI from Bench to Fleet
 
+> [!NOTE]
+> This project was developed with assistance from AI tools.
+
 One HP ZGX Fury workstation carries a physical AI project from the engineer's bench to a managed fleet of robots. On
 its single NVIDIA GB300 GPU a coding assistant, a robot's policy, a training job and a ray-tracing renderer run side by
 side. On the same machine a Red Hat OpenShift hub gates, signs and promotes the policy, and Red Hat Edge Manager rolls
@@ -17,13 +20,6 @@ The arm, its simulation and the policy architecture are upstream work of the
 [ROS physical AI community](https://github.com/ros-physical-ai/demos) and
 [LeRobot](https://github.com/huggingface/lerobot). This project is the platform around them: GPU tenancy, curation, the
 gated pipeline, signing, promotion and fleet delivery.
-
-> [!NOTE]
-> This project was developed with assistance from AI tools.
-
-![The HP ZGX Fury and its key specifications: a 72-core NVIDIA Grace CPU, 496 GB of LPDDR5x, an NVIDIA Blackwell Ultra GPU with 252 GB of HBM3e, four M.2 drives, Red Hat Enterprise Linux 10.2 with Red Hat OpenShift and OpenShift AI](docs/images/hp-zgx-fury.png)
-
-*The HP ZGX Fury as it is set up for this project.*
 
 ## One GPU, four tenants
 
