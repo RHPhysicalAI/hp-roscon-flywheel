@@ -21,6 +21,10 @@ gated pipeline, signing, promotion and fleet delivery.
 > [!NOTE]
 > This project was developed with assistance from AI tools.
 
+![The HP ZGX Fury and its key specifications: a 72-core NVIDIA Grace CPU, 496 GB of LPDDR5x, an NVIDIA Blackwell Ultra GPU with 252 GB of HBM3e, four M.2 drives, Red Hat Enterprise Linux 10.2 with Red Hat OpenShift and OpenShift AI](docs/images/hp-zgx-fury.png)
+
+*The HP ZGX Fury as it is set up for this project.*
+
 ## One GPU, four tenants
 
 The workstation has one NVIDIA GB300 with 252 GB of HBM3e GPU memory, beside a 72-core NVIDIA Grace CPU and 496 GB of
