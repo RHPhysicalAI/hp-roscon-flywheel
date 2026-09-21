@@ -14,3 +14,7 @@ docs/internal/phase3-ladder.html
 docs/DEMO_RUNBOOK.md
 docs/demo-kit/**
 docs/eval-records/**
+# one machine's staging steps for a promotion's inputs: part of the working record, not of the reading copy
+tools/host/fury/52-seed-incumbent.sh
+tools/host/fury/53-stage-promotion.sh
+tools/host/fury/54-teacher-modelcar-check.sh

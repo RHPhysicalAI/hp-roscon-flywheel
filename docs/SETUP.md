@@ -326,9 +326,6 @@ cd ~/flywheel-setup
 ./15-camera-port.sh open
 ./50-runner-install.sh
 ./51-eval-rig.sh status
-./52-seed-incumbent.sh
-./53-stage-promotion.sh
-./54-teacher-modelcar-check.sh
 ```
 
 | Script | Does |
@@ -336,9 +333,11 @@ cd ~/flywheel-setup
 | `15-camera-port.sh open`, `status`, `close` | lists `8081/tcp` for the guests, so the hub's https Route `sim-cameras` can carry the camera streams (a browser will not load an http stream into an https page) |
 | `50-runner-install.sh` | installs the host half of a governed training run as a root quadlet from the runtime image, plus the evaluation rig with its path and service units; starts nothing. Its first run writes the two object storage keys to `/etc/flywheel-runner/env` (root, 0600), taken from Secret `flywheel/hub-credentials` with root's kubeconfig, never echoed |
 | `51-eval-rig.sh run`, `serve-one`, `status`, `down` | the evaluation rig: a candidate and the incumbent scored on the same seeds in a pod of its own, beside the running loop ([operator page](../tools/host/fury/51-eval-rig.md)) |
-| `52-seed-incumbent.sh` (`force` replaces) | seeds the incumbent: re-packs the serving model's checkpoint from the signed model image already on the machine and uploads it where a training run looks for it. After `50-` |
-| `53-stage-promotion.sh [staging-dir]` | stages a promotion's inputs from a staging directory the builder brings (default `/data/models/import-dev`; not in git). It also puts under `/data/flywheel` the dataset and the two checkpoints the training tenant reads (Phase 7) |
-| `54-teacher-modelcar-check.sh` (`nopolicy` skips the last) | three checks before a Fleet is pointed at a model image: it pulls by digest under the device's own signature policy, the weights match, they serve on the GPU. About ten minutes |
+
+A governed run also needs its inputs in place: the incumbent's checkpoint where the runner looks for it in object
+storage, and on the host under `/data/flywheel` the training dataset and the checkpoints a run and the training
+tenant start from ([the training tenant's page](../tools/host/fury/72-training-tenant.md) lists the paths it
+checks). Putting them there is a one-time step that depends on where a builder's models and data come from.
 
 From the laptop a run is started by hand with `tools/hub/start-promotion-run.sh <candidate> [steps_per_frame]
 [eval_n]`. The training trigger (`TRAINING_PIPELINE_NAME` in `gitops/flywheel/manifest-consumer.yaml`) starts one by
@@ -568,7 +567,7 @@ Not in git, or not applied by GitOps. A fresh bring-up does these again:
 | The fleet VMs after a host reboot | they do not start by themselves: `./81-fleet-scale.sh 12` (no approval, no pull). New clones need a valid enrolment certificate on the host, short-lived on purpose: `tools/hub/fleet-enrol-config.sh`, then `./81-fleet-scale.sh enrol-config` |
 | MIG mode and the tenants after a reboot | `fury-mode tenants` |
 | Robot zero's placement | the device's `gpu_device` label is set from the laptop (`tools/hub/robot-zero.sh up`), not from git |
-| Fetched or built by hand on the host | the model weights in `/data/models`, the assistant's serving image, NVIDIA's exporter image, the local sim and renderer images, the training tenant's backbone weights, the staging directory that `53-stage-promotion.sh` reads |
+| Fetched or built by hand on the host | the model weights in `/data/models`, the assistant's serving image, NVIDIA's exporter image, the local sim and renderer images, the training tenant's backbone weights, a governed run's inputs under `/data/flywheel` |
 | In the hub's object storage | the evaluation page's clips; the evaluation records the paired page is pinned to (`EVAL_RUN_ID` in `gitops/flywheel/eval-dashboard.yaml`); the seeded incumbent; the read-only account (its Secret is hand-made in two namespaces, a sync hook then creates the account) |
 | The show curator's volume | throwaway: a rebuilt hub, or a deleted claim, starts the live lane at zero. A total written by hand for a rehearsal is put back before an audience ([robot zero's page](../tools/host/fury/74-robot-zero.md)) |
 | The promotion pull request | opened ahead of a showing (Phase 10) and left open until its beat. The training trigger is disarmed for a show day by the demo owner, in git |
