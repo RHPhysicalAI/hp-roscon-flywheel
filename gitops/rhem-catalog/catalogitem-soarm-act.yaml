@@ -41,8 +41,8 @@ spec:
     - version: "2.0.0-ft160"
       channels: [stable]
       references:
-        container: "sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b"
-      readme: "candidate act-v2-ft160 -- quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b"
+        container: "sha256:d741db2bd5f7e2bb1762594ffb49a98da67f4e6096d4359839dc3f2faab3eab8"
+      readme: "candidate act-v2-ft160 -- quay.io/jary/soarm-act-modelcar@sha256:d741db2bd5f7e2bb1762594ffb49a98da67f4e6096d4359839dc3f2faab3eab8"
     - version: "2.0.0-ft160-rhem"
       channels: [rolled-back]
       references:
