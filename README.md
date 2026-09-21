@@ -1,5 +1,5 @@
 <!-- This project was developed with assistance from AI tools. -->
-# Red Hat and HP: Empowering Physical AI from Bench to Fleet
+# Red Hat and HP: Physical AI from Bench to Fleet
 
 > [!NOTE]
 > This project was developed with assistance from AI tools.
