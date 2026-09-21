@@ -229,17 +229,18 @@ def test_main_only_runs_only_when_asked(tmp_path):
 
 
 def test_main_only_finds_excluded_paths_references_and_citations(tmp_path):
-    """With --main: one finding per pattern present, per reference to it, and per citation in audience-facing text."""
+    """With --main: one finding per pattern present, per reference to it, and per citation in any document's prose."""
     root = tree(tmp_path, {
         "README.md": "[log](docs/internal/DECISIONS.md)\nsee `DECISIONS.md`\nruns are under `docs/records/`\n"
                      "as decided in D123\nfollow FURY-PLAN step 4\n[setup](docs/SETUP.md) and `docs/SETUP.md`\n",
-        "docs/SETUP.md": "[run](records/a/run.md)\n", "tools/notes.md": "D123 is not audience-facing here\n",
+        "docs/SETUP.md": "[run](records/a/run.md)\n", "tools/notes.md": "the rule string `(D123)` in a code span is not a citation\n",
+        "tools/other.md": "as decided in D123\n",
         "src/a.py": "# D123\n", "docs/internal/DECISIONS.md": "D001\n",
         "docs/records/a/run.md": "x\n", "docs/records/b.md": "x\n"})
     findings = docs_lint.lint(root, main=True, only="main-only", exclude_file=tmp_path / "exclude.txt")
     assert sorted({(f.path, f.line) for f in findings}) == [
         *[("README.md", n) for n in range(1, 6)], ("docs/SETUP.md", 1), ("docs/internal/DECISIONS.md", 1),
-        ("docs/records/a/run.md", 1)]
+        ("docs/records/a/run.md", 1), ("tools/other.md", 1)]
     assert any("docs/records/** (2 files)" in f.message for f in findings)
 
 

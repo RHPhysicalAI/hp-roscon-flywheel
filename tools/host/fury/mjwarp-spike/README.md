@@ -14,7 +14,7 @@ Expect: `build_mjcf.py` lists `static_camera` and `wrist_camera` at 640x480, 13 
 
 Verified on a Mac (MuJoCo 3.13.0, mujoco-warp 3.13.0, Warp 1.17.0 CPU device): the upstream arm xacro with its real STL meshes composes, flattens and compiles; the whole benchmark runs; images are upright and show arm meshes, shadows and skybox; both read-back paths give identical pixels.
 
-Since run on the target: the whole thing inside a MIG 1g slice — 152 camera pairs a second with shadows (D143 addendum). At the time of writing NOT verified: the `sdformat_mjcf` conversion (no Gazebo bindings on the Mac, so the world in that test was hand-written); the pip install on aarch64.
+Since run on the target: the whole thing inside a MIG 1g slice — 152 camera pairs a second with shadows. At the time of writing NOT verified: the `sdformat_mjcf` conversion (no Gazebo bindings on the Mac, so the world in that test was hand-written); the pip install on aarch64.
 
 Risks to check on the target:
 - `python3 -c "import sdformat, gz.math"` must work after sourcing ROS. Read from source only: kilted's sdformat_vendor / gz_math_vendor build the bindings and add an unversioned shim to PYTHONPATH.

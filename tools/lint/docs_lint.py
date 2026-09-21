@@ -274,12 +274,16 @@ def rule_main_only(root: Path, files: list[str], opts: argparse.Namespace) -> It
             yield Finding(present[0], 1, "main-only", message)
     for rel in (f for f in files if not matches(f, opts.exclude)):
         lines = read_lines(root / rel) or ()
+        seen: set[int] = set()   # a line that names an excluded path is reported once, not again as a citation
         for no, kind, target in refs(rel, lines, root, need_slash=False) if rel.endswith(".md") else ():
             named = [s for s in resolve(rel, kind, target) if matches(s, opts.exclude)]
             if named or target in bare:
+                seen.add(no)
                 yield Finding(rel, no, "main-only", f"names a path excluded from main: {(named or [target])[0]}")
-        for no, line in enumerate(lines if matches(rel, AUDIENCE) else (), 1):
-            if CITATION.search(line):
+        # every Markdown document that reaches main, not only the front-facing set; code blocks and spans are
+        # left alone (a recorded JSON field or a path inside a command is not a citation)
+        for no, line in enumerate(prose(rel, lines) if rel.endswith(".md") else (), 1):
+            if no not in seen and CITATION.search(re.sub(r"`[^`]*`", "", line)):
                 yield Finding(rel, no, "main-only", "cites the decision log or plan, which main does not carry")
 
 
