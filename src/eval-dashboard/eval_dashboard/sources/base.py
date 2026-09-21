@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 """The contract every source implements.
 
 `read()` must be safe to call from scratch with no prior state and must

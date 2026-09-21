@@ -43,7 +43,7 @@ time anyway). Better, in this order:
 
 | Setting | Use |
 |---|---|
-| Resolution, frame rate | 1920x1080 at 30 fps: what a booth screen shows, and what the `animation/` project renders (section 5). 2560x1440 only if every take uses it and the master is scaled down once. Never mix |
+| Resolution, frame rate | 1920x1080 at 30 fps: what a booth screen shows, and what the title cards and transitions are made at (section 5). 2560x1440 only if every take uses it and the master is scaled down once. Never mix |
 | Browser zoom | one zoom for every page (propose 125%); check every page at that zoom before the first take. If one page needs another zoom, write it in the take log and use it on every take of that page |
 | Theme | light, everywhere. The flywheel page and the evaluation pages take `?theme=light` and remember it per hostname; pages with their own theme switch (GPU dashboard, Edge Manager, consoles, the workspace editor) are set once in the recording profile |
 | Browser profile | a new, clean profile: no bookmarks bar, no extensions, no autofill or password-manager popups, no other tabs, no personal history behind the address bar |
@@ -217,12 +217,9 @@ not kept. This is the system that produced that promotion, still running.`
 > One workstation. 13 managed devices. Everything delivered by GitOps; every image signed, logged and verified.
 > Ask us about it.
 
-**Where cards can come from.** The checkout's untracked `animation/` directory is an explainer-animation project:
-a storyboard and a theme file rendered to 1920x1080, 30 fps booth loops with large captions, no audio, and a clean
-seam when the first and last scene are the same. Title cards and transitions rendered from it would give the cards
-and the explainer one look. Two cautions. Its existing cuts tell the development stand-in's story, with that
-system's numbers and component names (one of them a storage product's): reuse the look, not the text - card text
-comes from this document. And its theme is dark while the pages are recorded light: the owner's call (section 8).
+**Where cards come from.** Title cards and transitions are the owner's to make, at 1920x1080 and 30 fps to match
+the capture. Card text comes from this document. The pages are recorded light; whether the cards are light or dark
+is the owner's call (section 8).
 
 ## 6. Script for A
 
@@ -334,7 +331,7 @@ its pull request re-opened if another showing follows, the workspace reset, all 
 
 - Music, or silent. (B must work silent either way.)
 - A voice-over for B as well, or captions only.
-- The title-card template and branding; whether the cards come from `animation/`, and light or dark.
+- The title-card template and branding, and light or dark.
 - Where the loop plays from with no network: propose a local file on the booth machine, played by a local player
   set to repeat, **tested with the network switched off** - no streaming site, no shared drive, no web fonts.
 - Account names that pages show by themselves - the merging account on the pull request's page, the account

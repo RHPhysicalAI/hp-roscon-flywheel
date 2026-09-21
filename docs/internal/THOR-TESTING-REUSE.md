@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # What Reuses from thor-testing
 
 Source repo: `~/redhat/git/thor-testing` (do NOT modify — copy and adapt into this repo).
@@ -147,7 +148,7 @@ reusable pieces are the install block, the enrollment CLI, and the trust config 
    the hub and MicroShift-on-Thor as the device. The manifests that assumed a tunnel between them
    (RHACM cluster-proxy, D007) need to be dropped/adapted.
 4. **Gazebo visualization** — making the arm visible in a browser. The `gz-camera-stream` plugin
-   and `rhork` viewer from `github.com/RHPhysicalAI/` are candidates (Olga evaluating, APPENG-6261).
+   and `rhork` viewer from `github.com/RHPhysicalAI/` are candidates (a contributing engineer evaluating).
 
 ## thor-testing repo structure reference
 

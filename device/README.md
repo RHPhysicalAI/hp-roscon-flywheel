@@ -23,7 +23,7 @@ pass takes ~75 ms on 8 P-core threads against a 1000 ms budget, so this size is 
 `VCPU_CPUSET=0,2,4,6,8,10,12,14` pins the vCPUs to one thread per P-core if latency ever needs it.
 
 Current instance (2026-09-08): `act-device`, **10.0.0.51** (DHCP), RHEL 10.2 (kernel
-6.12.0-211.7.3.el10_2), root grown to 60 GB, user `jary` with the desktop's `~/.ssh/id_rsa.pub`
+6.12.0-211.7.3.el10_2), root grown to 60 GB, user `<user>` with the desktop's `~/.ssh/id_rsa.pub`
 and passwordless sudo, provisioned and registered, agent installed and enabled but not started
 (waiting for the hub). `<memoryBacking>` (memfd, shared) is defined and the guest fstab entry for the
 bags share is in place; the share itself waits on the host `virtiofsd` package (see D043 below).
@@ -32,11 +32,11 @@ bags share is in place; the share itself waits on the host `virtiofsd` package (
 
 1. **RHEL 10.2 KVM Guest Image** (needs a Red Hat login in a browser):
    https://access.redhat.com/downloads/content/rhel → RHEL 10.2 → *KVM Guest Image* (x86_64),
-   saved on the desktop as `/home/jary/images/rhel-10.2-x86_64-kvm.qcow2` (or set `BASE_IMG`).
+   saved on the desktop as `~/images/rhel-10.2-x86_64-kvm.qcow2` (or set `BASE_IMG`).
    `create-vm.sh` refuses to run without it and prints this instruction.
 2. **Registration input** — an activation key from console.redhat.com, as a root-only file with
    two shell lines, `ORG_ID=...` and `ACTIVATION_KEY=...` (desktop copy:
-   `/home/jary/activation-key`, mode 600). `provision.sh --env-file <path>` sources it (or
+   `~/activation-key`, mode 600). `provision.sh --env-file <path>` sources it (or
    `/root/activation-key` if present); `RHSM_USER`/`RHSM_PASS` in the environment are the
    alternative. Values are never printed; registration output is redacted.
 3. The **flightctl CLI 1.3.0** logged in to the hub, wherever `enroll.sh` runs (the presenting
@@ -50,14 +50,14 @@ device/vm/create-vm.sh
 virsh -c qemu:///system domifaddr act-device --source agent      # bridged: DHCP from the LAN
 
 # 2. copy the script and the key to the VM; provision as root; the key is shredded on the VM
-scp device/provision.sh /home/jary/activation-key jary@<vm-ip>:/tmp/
-ssh jary@<vm-ip> 'sudo install -o root -g root -m 0600 /tmp/activation-key /root/activation-key && shred -u /tmp/activation-key
+scp device/provision.sh ~/activation-key <user>@<vm-ip>:/tmp/
+ssh <user>@<vm-ip> 'sudo install -o root -g root -m 0600 /tmp/activation-key /root/activation-key && shred -u /tmp/activation-key
   && sudo RHEM_HUB_IP=10.0.0.49 bash /tmp/provision.sh --env-file /root/activation-key
   && sudo shred -u /root/activation-key'
 
 # 3. enroll + approve with labels (flightctl CLI logged in; hub must be up)
-device/enroll.sh jary@<vm-ip>                          # desktop defaults
-SITE=fury GPU=nvidia POLICY_DEVICE=cuda ZENOH_ROUTER=<fury-ip> device/enroll.sh jary@<fury>
+device/enroll.sh <user>@<vm-ip>                        # desktop defaults
+SITE=fury GPU=nvidia POLICY_DEVICE=cuda ZENOH_ROUTER=<fury-ip> device/enroll.sh <user>@<fury>
 ```
 
 `provision.sh` (root, arch-neutral, idempotent): register (skipped if already registered) →
@@ -112,7 +112,7 @@ directory into the VM keeps every one of those contracts intact; the Fleet mount
 in-container path the host `docker run` uses (`/data/bags`).
 
 **How (desktop).** `create-vm.sh` defines it at creation (`BAGS_DIR`, default
-`/home/jary/flywheel-data/bags`; tag `BAGS_TAG=bags`); `bags-share.sh` adds it to an existing VM.
+`~/flywheel-data/bags`; tag `BAGS_TAG=bags`); `bags-share.sh` adds it to an existing VM.
 Both need only the libvirt group on the host and both refuse to run without the host `virtiofsd`
 package:
 
@@ -167,5 +167,5 @@ versioned source.
 | `vm/cloud-init/{user-data,meta-data}` | operator user, ssh key placeholder, grow root |
 | `spike/bench_cpu_forward.py` | CPU forward-latency benchmark (D024 criterion 1) |
 
-Staged copies on the desktop live under `/home/jary/act-device/` (not a git checkout). The host-side
+Staged copies on the desktop live under `~/act-device/` (not a git checkout). The host-side
 bag flow scripts are under `tools/host/` in this repo.

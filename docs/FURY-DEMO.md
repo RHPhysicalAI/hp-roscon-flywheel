@@ -3,7 +3,7 @@
 
 For a presenter who did not build this system and runs the demo from their own laptop: about 20 minutes, eight
 beats, each of which stands alone. Addresses are from `docs/internal/FURY-URLS.md`, the reasoning is in
-`docs/internal/DECISIONS.md` (D157-D169). Shorter: `docs/FURY-DEMO-LITE.md`. Recorded: `docs/FURY-RECORDING.md`.
+`docs/internal/DECISIONS.md` (D157-D169). Shorter: `docs/FURY-DEMO-LITE.md`. Recorded: `docs/internal/FURY-RECORDING.md`.
 
 ## 1. What this demo is
 

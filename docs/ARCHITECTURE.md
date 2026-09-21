@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # Architecture
 
 Three logical planes — a **hub**, a **managed device**, and a **sim/producer** — connected by a

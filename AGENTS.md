@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # hp-roscon-flywheel
 
 Physical AI Edge Flywheel demo for HP's ROSCon 2026 booth on the ZGX Fury (GB300). Single-box
@@ -18,7 +19,7 @@ same numbered format as thor-testing's decision log (D001, D002, ...).
 ## Key facts
 
 - **Desktop (dev stand-in):** i9-13900K / RTX 5090 / 128 GB / Ubuntu / x86_64 / 10.0.0.48
-  SSH as `jary`. Ubuntu stays — SNO runs in a KVM VM with GPU passthrough.
+  SSH as `<user>`. Ubuntu stays — SNO runs in a KVM VM with GPU passthrough.
 - **Target (demo):** HP ZGX Fury GB300 / Grace Blackwell / 748 GB / RHEL 10.2 / aarch64
 - **Reuse source:** `~/redhat/git/thor-testing` — gitops/, tekton/, pipeline/ are the reusable
   manifests. Do NOT modify that repo; copy/adapt into this one.

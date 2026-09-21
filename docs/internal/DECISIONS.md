@@ -1,4 +1,7 @@
+<!-- This project was developed with assistance from AI tools. -->
 # Decisions Log
+
+*2026-09-21 — Editorial note: individuals' names were replaced by roles, including inside historical resource names, and usernames and handles in recorded commands were redacted. Nothing else was changed.*
 
 ## D001 — Defer VFIO GPU passthrough to Phase 2-3
 
@@ -93,7 +96,7 @@ must match whatever the node actually gets.
 local network resolves this.
 
 **Decision:** Added `10.0.0.49 api.sno-flywheel.local` to `/etc/hosts` on the desktop.
-Same entry needed on any machine that wants `oc` access (e.g. Jeremy's Mac).
+Same entry needed on any machine that wants `oc` access (e.g. the project lead's Mac).
 
 **Future:** If a wildcard is needed for routes (`*.apps.sno-flywheel.local`), either add
 individual `/etc/hosts` entries per route or set up a lightweight DNS (dnsmasq) on the desktop.
@@ -397,7 +400,7 @@ the full window.
 **⚠️ Deployment status — NOT yet permanent:** both fixes are running but **hot-patched**, not baked
 into images or committed:
 - `task_eval.py` → `docker cp`'d into the running `so-arm-sim` container.
-- `coordinator.py` + `task_eval.py` → bind-mounted into `act-inference` from `/home/jary/patches/`.
+- `coordinator.py` + `task_eval.py` → bind-mounted into `act-inference` from `~/patches/`.
 A container rebuild-from-image or a `/tmp` wipe (host reboot) reverts them. **Follow-up:** commit
 both files, rebuild the sim image (`:sim-only`) and the `act-inference` image, and redeploy so the
 fixes persist. Also copy the kept weak checkpoints out of `/tmp/weak-training/` (root-owned;
@@ -597,12 +600,12 @@ velocity/effort, new joint mapping) or replay it faithfully. For the project's a
 (ACT/LeRobot BC, D015) the ported form is exactly what training consumes — full bags add nothing
 to training; they are a hedge for schema change and the Phase 3+ bootstrap experiments.
 
-**Olga's dashboard does not change this.** Her read-only eval dashboard is metadata-only — it
+**A contributing engineer's dashboard does not change this.** Their read-only eval dashboard is metadata-only — it
 groups the episode JSON records (success rate, cube-count distribution, smoothness, side-by-side)
 by `model_version`, consuming `episodes-curated` + `episodes-rejected` (already in MinIO) and Kafka
-manifests. It needs neither raw bags nor the LeRobot dataset. (Her MinIO/Kafka access was already
+manifests. It needs neither raw bags nor the LeRobot dataset. (Their MinIO/Kafka access was already
 provisioned 2026-09-04: external NodePorts 30900/30903, a `rejected-mirror` CronJob, scoped
-`olga-readonly` creds.) So the raw-vs-ported choice is independent of her.
+`[engineer]-readonly` creds.) So the raw-vs-ported choice is independent of them.
 
 **Decision (operator-approved):**
 - **The hub's canonical trainable artifact is the ported LeRobot dataset**, uploaded as a single
@@ -1099,8 +1102,8 @@ definition, gate, packaging, signing, PR, and gitops manifests are written once,
   `nvidia.com/gpu`) schedules. Rollback is the same three edits reversed; the other side keeps the
   previous digest. (Fixed 2026-09-08: the first version always wrote green, which would have
   overwritten the live side in place on the second promotion.)
-- **Artifacts on Hugging Face (private, `jeremyary/`, 2026-09-08)** — LeRobot-native, so they load the
-  same way the upstream ones do (`LeRobotDataset("jeremyary/…")`, `--policy.path=jeremyary/…`),
+- **Artifacts on Hugging Face (private, `<account>/`, 2026-09-08)** — LeRobot-native, so they load the
+  same way the upstream ones do (`LeRobotDataset("<account>/…")`, `--policy.path=<account>/…`),
   and the only copies that don't share the desktop's single disk: datasets
   `soarm-flywheel-teacher-all-2026-09-08` (450 eps) and `soarm-flywheel-ladder-160` (the proof corpus,
   with `rung_plan.json`); models `soarm-act-v2-ft160` (the promoted v2), `soarm-act-ft-ladder-{20,40,80}ep`
@@ -1570,7 +1573,7 @@ C cut-over window, where the host container stops anyway.
 
 **Date:** 2026-09-08
 **Context:** the `images` pool (`/var/lib/libvirt/images`) is root-owned and the desktop user has
-no sudo; a qcow2 backing file under `/home/jary` would also need to stay readable by the qemu
+no sudo; a qcow2 backing file under `~` would also need to stay readable by the qemu
 user forever.
 **Decision:** `device/vm/create-vm.sh` does `virsh vol-create-as` (qcow2, 60 G) →
 `virsh vol-upload` of the RHEL 10.2 KVM guest image → `virsh vol-resize`, then
@@ -1580,7 +1583,7 @@ desktop's osinfo db), bridged on `br0`, `--autostart`. cloud-init only creates t
 with the desktop's key and grows the root fs; provisioning is a separate, explicit step.
 **Alternatives:** backing chain (rejected above); bootc image mode (rejected in D024).
 **Consequences:** rebuilding the VM is `virsh destroy; virsh undefine --remove-all-storage` then
-re-run; the base qcow2 at `/home/jary/images/` is untouched.
+re-run; the base qcow2 at `~/images/` is untouched.
 
 ---
 
@@ -1592,7 +1595,7 @@ without ever appearing in a transcript, log, or repo file.
 **Decision:** `provision.sh --env-file <path>` (default `/root/activation-key` if present) sources
 `ORG_ID=`/`ACTIVATION_KEY=`; `RHSM_USER`/`RHSM_PASS` remain the documented alternative. The file
 is copied to the device as `root:root 0600`, and shredded on the device once
-`subscription-manager identity` succeeds (the desktop copy at `/home/jary/activation-key` stays).
+`subscription-manager identity` succeeds (the desktop copy at `~/activation-key` stays).
 Registration output is piped through a redaction of UUIDs and org lines.
 **Consequences:** re-running `provision.sh` on a registered device skips registration and needs no
 key; the Fury run uses the same file.
@@ -1858,11 +1861,11 @@ exact thing C exists to prove); sign with `--tlog-upload=false` because the SNO 
 `virtiofsd` and Ubuntu 24.04 does not ship it with QEMU 8.2.2 (`apt-cache policy virtiofsd`:
 candidate 1.10.0-1ubuntu0.1, not installed). Everything tried without sudo failed for the same
 reason, AppArmor:
-- `<binary path='/home/jary/act-device/virtiofsd/virtiofsd'/>` (binary extracted from the .deb with
+- `<binary path='/home/<user>/act-device/virtiofsd/virtiofsd'/>` (binary extracted from the .deb with
   `apt-get download` + `dpkg-deb -x`): libvirtd's enforced profile only allows
   `/usr/{lib,lib64,lib/qemu,libexec}/virtiofsd PUx` (`/etc/apparmor.d/usr.sbin.libvirtd:97`) →
   "virtiofsd died unexpectedly".
-- Unprivileged socket mode (`virtiofsd --sandbox=none` as jary in a user unit + `<source
+- Unprivileged socket mode (`virtiofsd --sandbox=none` as `<user>` in a user unit + `<source
   socket=…>`): DAC verified OK as uid 64055 (`DAC-write-ok`), yet QEMU got `Permission denied` on
   the socket — the per-VM QEMU profile (virt-aa-helper) adds no rule for a virtiofs socket source,
   and the shared abstraction deliberately gives no blanket rw under /tmp or /home. Disabling the
@@ -1877,7 +1880,7 @@ assemble/prune flow, which already runs inside root containers, is unchanged.
 **Consequences:** `create-vm.sh` and `bags-share.sh` exit 2 with that instruction when the package is
 missing (same pattern as the missing base image). `<memoryBacking memfd/shared>` is already defined
 on `act-device` (cold restart done 2026-09-08), so attaching the share later is define + one more
-cold restart. All socket-mode artefacts were removed from the host; `/home/jary` is back to 0750.
+cold restart. All socket-mode artefacts were removed from the host; `~` is back to 0750.
 Port-as-you-go log and safety details recorded alongside this: `after_assemble.sh` keeps writing to
 `~/prune-dryrun.txt` (name kept so the retention log stays in one file; entries are now appended
 under a timestamp header) and judges the **last** `[assemble-all] DONE|FAILED` marker, not any DONE
@@ -2147,7 +2150,7 @@ reads `gz topic -e -t /world/pai_world/pose/info -n 1` (8 s timeout, returns `{}
 the coordinator's peak-cube poll swallows exceptions. From inside the VM container: `gz topic -l`
 lists the pose topic (multicast discovery crosses `br0`) but `gz topic -e … -n 1` receives nothing
 in 20 s and `gz service -l` shows no `set_pose` — the data/service path back to the guest never
-comes up (`so-arm-sim` is `--network host` on `jary-ubuntu`). Consequences already visible in the
+comes up (`so-arm-sim` is `--network host` on `<host>`). Consequences already visible in the
 live loop: after the first post-cut-over episode the cubes were never re-randomised, so
 `ba0d930c` (3/3 two seconds after `start`, 30 steps) and the later "successes" inherited cubes
 already on the tray. Separately, in eval mode the coordinator counts `/joint_states` itself from a
@@ -2339,7 +2342,7 @@ hard number attached: ~1.3 GB per kept episode, ~100 GB per hour of successes.
 at cut-over and never replaced, and it also had a silent-park bug; both VMs paused on I/O error.
 **Decision:** operator authorized (2026-09-09): `docker image prune -a` (reclaimed 0 B — shared
 layers) and moving the 172 proof bags (timestamp < 1788560700, 288 GB) to
-`/media/jary/videos/flywheel-bags-archive/` via a root container with copy → size-list compare →
+`/media/<user>/videos/flywheel-bags-archive/` via a root container with copy → size-list compare →
 `cmp metadata.yaml` → rename → remove source (logged to `~/bag-archive-2026-09-09.log`); declined
 deleting the night's 62 bags and mounting `sdb1` (4.5 TB ext4, unmounted — inbox todo). Free space:
 991 MB → 198 GB by 11:01Z. VMs resumed 10:58Z; SNO Ready, COs clean, MinIO 200, Argo Synced; device
@@ -3697,12 +3700,12 @@ C2: the curator's HTTP receiver (`0.0.0.0:8082`, NodePort 30802, no auth) builds
 `raw/` — including straight into `curated/`, which `sync-agent` ships to MinIO/Kafka as trusted
 training data, bypassing `score_episode()` entirely.
 **Investigated before touching anything:** whether the Kafka NodePort could simply be deleted or
-locked down. `docs/data-contract-eval-dashboard.md` documents a real external consumer — Olga
-Lavtar's read-only eval dashboard (APPENG-6295) — but it only *consumes* `episode-manifests` and
+locked down. `docs/data-contract-eval-dashboard.md` documents a real external consumer — a contributing
+engineer's read-only eval dashboard — but it only *consumes* `episode-manifests` and
 `dataset-manifests`; it never publishes to `training-triggers`, the topic the RCE path actually
 reads. Adding broker-level SASL/ACLs would be the complete fix, but it requires rotating
 credentials for a consumer whose code lives in a separate, inaccessible repo — not verifiable
-without a live end-to-end test against Olga's dashboard, which risks breaking a real external
+without a live end-to-end test against that engineer's dashboard, which risks breaking a real external
 integration blind. Deferred (see Consequences); fixed the actually-exploitable path instead.
 **Decision:**
 1. `src/host-runner/host_runner.py`: added `_SAFE_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]
@@ -3722,8 +3725,8 @@ integration blind. Deferred (see Consequences); fixed the actually-exploitable p
 **Consequences:** the Kafka NodePort (30903) stays open, PLAINTEXT, unauthenticated — an attacker
 can still publish garbage to `training-triggers`, but the worst outcome now is a rejected trigger
 in the log, not code execution. Broker-level SASL/ACL hardening (and coordinating a credential for
-Olga's dashboard) is a real residual, tracked as a follow-up for a session that can reach and test
-against her actual consumer — not closed here. C9 (MinIO creds in git history, same NodePort-family
+that engineer's dashboard) is a real residual, tracked as a follow-up for a session that can reach and test
+against their actual consumer — not closed here. C9 (MinIO creds in git history, same NodePort-family
 risk class) was separately waived by the operator as out of scope for this project.
 
 ---
@@ -3760,7 +3763,7 @@ risk class) was separately waived by the operator as out of scope for this proje
     `docker buildx imagetools inspect` that this digest *is* the multi-arch manifest list (amd64/
     arm64/ppc64le), matching the live pod's `imageID` exactly.
   - `gitops/minio/minio-readonly-user.yaml`: `quay.io/minio/mc@sha256:a7fe349e…` — same
-    verification, matches the completed `minio-olga-readonly-setup` Job's `imageID`.
+    verification, matches the completed `minio-[engineer]-readonly-setup` Job's `imageID`.
   - `gitops/storage/local-path-provisioner.yaml`: `registry.access.redhat.com/ubi9/ubi-minimal:9.8`
     — a real, resolvable version tag, not a digest: no helper pod has run recently to read a live
     `imageID` from, and this is baked into a ConfigMap template rather than a running container.
@@ -3781,7 +3784,7 @@ risk class) was separately waived by the operator as out of scope for this proje
 **Verification:** all five touched YAML files parse (`yaml.safe_load`); server-side dry-run
 (`oc apply --dry-run=server`) against the live desktop cluster succeeded for `minio.yaml`,
 `local-path-provisioner.yaml`, and `so-arm-sim.yaml`. `minio-readonly-user.yaml`'s dry-run reports
-"field is immutable" on the completed `minio-olga-readonly-setup` Job — expected Kubernetes
+"field is immutable" on the completed `minio-[engineer]-readonly-setup` Job — expected Kubernetes
 behavior (Job pod templates are immutable once created; this Job finished successfully 5 days ago)
 and unrelated to the digest pin itself. Actually applying this file requires deleting the completed
 Job first, a one-time step left for the operator/orchestrator rather than done here (out of this
@@ -3941,7 +3944,8 @@ to something already in the repo, verified against a couple of live checks (`doc
   verified on aarch64 today (the multi-arch signed build, the per-arch torch pin) versus what's
   designed but unrehearsed (the `ENGINE=podman` coordinator path, any real inference on Blackwell
   silicon, a from-scratch SNO bring-up done back-to-back). Also surfaces two untracked external
-  dependencies (Rick Gosalvez's access window, Manny's on-site logistics) as open, not assumed.
+  dependencies (the partner's access coordinator's access window, the partner's on-site contact's on-site
+  logistics) as open, not assumed.
 Terminology matches the parallel cleanup pass: "the presenting laptop," not personal-device
 references.
 **Consequences:** the `minio` OutOfSync finding and the unidentified container are new information
@@ -4067,7 +4071,7 @@ ladder JSON parses; live after Argo sync — see the commit's follow-up check.
 **Date:** 2026-09-09 (operator decision)
 **Context:** D124 replaced the dead Cosmos-era "Policy comparison" video card with a panel rendering the
 frozen Phase 3 ladder. On review the operator judged it a stopgap: it duplicates the read-only eval
-dashboard's scope (APPENG-6295 — success rate, cube distribution, smoothness per lineage, success vs.
+dashboard's scope (success rate, cube distribution, smoothness per lineage, success vs.
 dataset size, replayable from a frozen file directory), and it is not the comparison the demo wants.
 The comparison that would actually land is paired *video*: the eval harness already runs identical
 seeded scenes per policy, so recording a chosen seed set for v1 and v2 (and later lineages), porting
@@ -4081,7 +4085,7 @@ dropped card numbering. The old video card is not reinstated — the page simply
 The runbook's Beat 4 section, kit-table row and "What's real" line revert to the static chart
 (`docs/internal/phase3-ladder.html`) as primary with the eval dashboard taking the slot when it lands;
 the "Policy comparison card is empty" known-artifact bullet stays removed.
-**Consequences:** Beat 4 is the eval dashboard's (Olga's) or the static chart; the ops dashboard is
+**Consequences:** Beat 4 is the eval dashboard's (a contributing engineer's) or the static chart; the ops dashboard is
 Beats 1, 2 and 6 only. The paired-video design is the next Beat 4 conversation.
 
 ---
@@ -4263,7 +4267,7 @@ a registry (a mirror on the Fury, for example) is a Fleet edit, reviewed like a 
 dashboard's Beat 4, replacing the removed ladder-panel stopgap (D125). Two prerequisites surfaced:
 the host root disk was at 99 GB free (below the loop guard's 100 GB floor) with 319 loop bags
 (485 GB), and the eval harness records nothing.
-**Bag archive:** all 319 bags (485 GB) moved to `/media/jary/videos/flywheel-bags-archive/
+**Bag archive:** all 319 bags (485 GB) moved to `/media/<user>/videos/flywheel-bags-archive/
 loop-bags-2026-09-04_09` — the same NTFS HDD the D062 proof bags live on. Two gotchas, both handled:
 `rsync -a` fails on that fuseblk mount (it rejects ownership/time ops — `mkstemp: Operation not
 permitted`), so the copy uses `rsync -rlD --no-perms --no-owner --no-group --no-times --size-only`;
@@ -4282,8 +4286,8 @@ registers a second `/run_policy` on the sim's zenoh graph, which collides with t
 is *always* serving the policy into that same sim — every goal is rejected (`/rosetta_client/
 change_state` timeout). This is new since Phase 3 (pre-RHEM there was no device). Resolved by
 suspending the device VM for the recording window (`virsh suspend act-device`, operator — needs
-sudo; jary can't control the system domains), which detaches its policy from the sim. Confirmed no
-impact on Olga's eval dashboard (APPENG-6295): her sources are the SNO hub (Kafka/MinIO, a separate
+sudo; `<user>` can't control the system domains), which detaches its policy from the sim. Confirmed no
+impact on a contributing engineer's eval dashboard: their sources are the SNO hub (Kafka/MinIO, a separate
 VM) and the loop was stopped, so no live flow. The sim had also stalled (~2.6 h stale camera) and
 was restarted. After recording, `virsh resume` + the D063 recovery (chrony resync stepped the
 ~27-min clock skew, policy container restarted to reconnect to the restarted sim) returned the
@@ -4469,59 +4473,59 @@ mount writes to the underlying dir.
 armed. Follow-up: optionally neuter the GNOME auto-mount so it can't re-grab sdb1 on boot (fstab is
 authoritative now).
 
-## D138 — Standalone MinIO/Kafka for Olga while SNO was down, and a fresh clean paired-eval (r2) to replace contaminated comparison data
+## D138 — Standalone MinIO/Kafka for a contributing engineer while SNO was down, and a fresh clean paired-eval (r2) to replace contaminated comparison data
 
 **Date:** 2026-09-13/14
 **Context:** the SNO VM was shut down over the weekend to free the desktop's RAM/cores for other GPU
-work. Olga's eval dashboard (APPENG-6295) reads MinIO + Kafka off the SNO node IP `10.0.0.49`
+work. A contributing engineer's eval dashboard reads MinIO + Kafka off the SNO node IP `10.0.0.49`
 (NodePorts 30900 / 30903), which die with the VM. Separately, v2's *operational* curated data was
 contaminated — after a cut-over the sim stopped re-randomising cubes, so episodes inherited
 tray-placed cubes and logged inflated "successes" (the D2155-area finding) — making the v1/v2
 comparison unfair. The fair method is the eval harness (homes the arm each episode, pins the scene),
 not the loop's operational rate.
-**Decision A — standalone data plane for Olga (no cluster):** stood up plain host containers
-`olga-minio` (`quay.io/minio/minio`, digest-pinned to the cluster's) and `olga-kafka`
-(`quay.io/strimzi/kafka:0.45.0-kafka-3.9.0`, KRaft) via `~/olga-stack/up.sh`, mirrored Olga's two
-buckets + Kafka log dir off the (still-up) cluster, recreated the scoped `olga-readonly` user, and
-**gave the host the freed `10.0.0.49` as a br0 secondary IP** so her endpoints/ports are byte-for-byte
-unchanged (the desktop already routes that range for remote users, so her tailnet
-traffic terminates there). Creds live in mode-600 files under `~/olga-stack/`, never printed.
+**Decision A — standalone data plane for that engineer (no cluster):** stood up plain host containers
+`[engineer]-minio` (`quay.io/minio/minio`, digest-pinned to the cluster's) and `[engineer]-kafka`
+(`quay.io/strimzi/kafka:0.45.0-kafka-3.9.0`, KRaft) via `~/[engineer]-stack/up.sh`, mirrored that engineer's two
+buckets + Kafka log dir off the (still-up) cluster, recreated the scoped `[engineer]-readonly` user, and
+**gave the host the freed `10.0.0.49` as a br0 secondary IP** so their endpoints/ports are byte-for-byte
+unchanged (the desktop already routes that range for remote users, so their tailnet
+traffic terminates there). Creds live in mode-600 files under `~/[engineer]-stack/`, never printed.
 Kafka's external listener hard-codes `advertised.listeners=10.0.0.49:30903`, so the standalone maps
 host `10.0.0.49:30903 → container 9094` to match.
 **Decision B — fresh clean paired-eval (r2):** ran teacher (v1, `upstream-act-teacher`) vs
 `act-v2-ft160` (v2) on the **same seeds**, homed arm, pinned `RANDOM_RADIUS=0.03`, **served locally
 on the RTX 5090** (`ROLE=all POLICY_DEVICE=cuda`, device off — no `/run_policy` collision, D132) via
-`tools/host/local/paired-eval-shifted.sh` wrapped by `~/olga-stack/r2/run-r2.sh` (resumable, chunked).
+`tools/host/local/paired-eval-shifted.sh` wrapped by `~/[engineer]-stack/r2/run-r2.sh` (resumable, chunked).
 Started 160, appended to **360 each** in one continuous re-run (resume skips finished chunks).
 **Result (360 paired): teacher 81.9% (295/360), v2 92.5% (333/360); fixed=57 broken=19 net=+38
 sign_p=0.0000 verdict=PASS** (D022 rule). Report at `~/flywheel-data/eval/r2-clean/paired-report.md`.
-**Bridge to the dashboard's contract:** `~/olga-stack/r2/explode.py` converts the eval JSON's
+**Bridge to the dashboard's contract:** `~/[engineer]-stack/r2/explode.py` converts the eval JSON's
 `episodes[]` into the dashboard's per-episode record schema — clean labels (NOT `eval-*`, which the
 dashboard drops), `task_success`→`curation_verdict` pass/reject, `rollout.{steps,duration_s}` — and
 lands them in **new isolated buckets `episodes-curated-r2` / `episodes-rejected-r2`** (both pass and
-reject per version, so the dashboard's success rate isn't hidden). Olga points her dashboard at those
+reject per version, so the dashboard's success rate isn't hidden). That engineer points their dashboard at those
 two buckets (2 env vars) + `versions.yaml` (`upstream-act-teacher: 0`, `act-v2-ft160: 160`); old
 buckets untouched. Final clean state: 628 curated + 92 rejected = **720**.
 **Gotchas (all fixed):** (1) the teacher HF-cache snapshot's files are **symlinks into `../../blobs/`**,
 which dangle when only the snapshot dir is bind-mounted — materialized a flat copy at
-`~/olga-stack/r2/teacher-ckpt` via `cp -rL`. (2) Re-run seeds (1150–1159) **flipped outcome** between
+`~/[engineer]-stack/r2/teacher-ckpt` via `cp -rL`. (2) Re-run seeds (1150–1159) **flipped outcome** between
 runs, leaving stale duplicate object copies across buckets (723 vs 720); reconciled by re-exploding
 from the authoritative raw chunk files into `records-final` and `mc mirror --overwrite --remove`.
 (3) `pkill -f run-r2.sh` matched its **own** SSH command line → self-kill; and `ssh -n` + a heredoc
 silently no-ops (stdin is `/dev/null`). (4) the `minio/mc` image lacks `grep`/`awk`, and parens in an
-`echo` break its `sh`. **Fallback preserved:** `~/olga-stack/r2/records.bak160` (the verified 160-each
+`echo` break its `sh`. **Fallback preserved:** `~/[engineer]-stack/r2/records.bak160` (the verified 160-each
 state) + `r2-clean.bak160`.
 
 ### D138 addendum — reclaim ordering (bring SNO + the loop back; tear the standalone down)
 
 The r2 eval data lives **only** in the standalone MinIO, so the reclaim must preserve it. Order
 (⚠️ the IP release must precede the VM start, or node and host fight over `10.0.0.49`):
-1. r2 data is already on disk (`~/olga-stack/r2/records-final`, 720) — no export needed.
-2. Stop `olga-minio` + `olga-kafka` (docker).
+1. r2 data is already on disk (`~/[engineer]-stack/r2/records-final`, 720) — no export needed.
+2. Stop `[engineer]-minio` + `[engineer]-kafka` (docker).
 3. **`sudo ip addr del 10.0.0.49/24 dev br0`** (operator), then **`sudo virsh start sno-flywheel`**
    (+ `act-device` for the loop). Wait ~10–15 min for the single node to stabilise.
 4. Re-create `episodes-curated-r2` / `episodes-rejected-r2` in the **cluster** MinIO and upload
-   `records-final`; extend the cluster `olga-readonly` policy to those buckets — so Olga's endpoint
+   `records-final`; extend the cluster `[engineer]-readonly` policy to those buckets — so that engineer's endpoint
    (`10.0.0.49:30900`) and data are unchanged, now served by the cluster.
 5. Bring the collection loop back (device clock-step after suspend per D132/D063, sim already up,
    `run-coordinator.sh` on the Tekton digest, disk-guard first).

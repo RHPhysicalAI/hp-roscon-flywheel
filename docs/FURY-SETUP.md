@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # Standing This Up on the Fury
 
 A pre-flight guide for whoever has hands-on access to the physical HP ZGX Fury and is bringing the

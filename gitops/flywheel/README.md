@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # gitops/flywheel — the hub-side flywheel workloads
 
 Owned by the Argo `flywheel` Application (`argocd/flywheel-app.yaml`, `prune: true`).

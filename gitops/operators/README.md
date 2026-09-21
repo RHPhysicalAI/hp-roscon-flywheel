@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # Cluster operators for the governed pipeline (D022)
 
 GitOps-managed OLM subscriptions. Owned by the Argo `operators` Application (`argocd/operators-app.yaml`

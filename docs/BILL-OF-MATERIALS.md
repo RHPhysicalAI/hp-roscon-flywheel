@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # Bill of Materials
 
 Every component this project runs, which machine it runs on, and what it's built from. The

@@ -1,4 +1,5 @@
-# Data contract for the eval dashboard (APPENG-6295)
+<!-- This project was developed with assistance from AI tools. -->
+# Data contract for the eval dashboard
 
 Everything the read-only eval dashboard needs, where it lives, and what the fields mean. All of it
 is produced by the flywheel itself; nothing here is hand-made.
@@ -86,5 +87,5 @@ From `docs/eval-records/phase3-ladder/` (run `python3 src/eval-report/ladder_rep
 | 80 | 76% | 8 / 7 |
 | 160 (= v2) | 86% (N=100) | 20 / 7, p = 0.019 |
 
-Off-box copies of the datasets and checkpoints: private Hugging Face repos under `jeremyary/`
+Off-box copies of the datasets and checkpoints: private Hugging Face repos under the project lead's account
 (`soarm-flywheel-*`, `soarm-act-*`) — ask for access.

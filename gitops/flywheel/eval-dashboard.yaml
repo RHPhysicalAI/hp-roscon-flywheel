@@ -1,6 +1,6 @@
 # This project was developed with assistance from AI tools.
 #
-# Evaluation dashboard (APPENG-6295): one image (src/eval-dashboard), two read-only instances here.
+# Evaluation dashboard: one image (src/eval-dashboard), two read-only instances here.
 #
 # - eval-dashboard       SOURCE_MODE=eval  the latest promotion run's paired comparison, read from
 #                                          MinIO episodes-data/eval/<run_id>/.

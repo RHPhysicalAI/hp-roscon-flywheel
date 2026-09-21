@@ -1,6 +1,8 @@
 <!-- This project was developed with assistance from AI tools. -->
 # CPU inference spike — desktop stand-in device (D024)
 
+*2026-09-21 — Editorial note: individuals' names were replaced by roles, including inside historical resource names, and usernames and handles in recorded commands were redacted. Nothing else was changed.*
+
 **Date:** 2026-09-08, updated 2026-09-09 · **Gates:** Phase 4.5 C (Fleet-delivered application) · **Decision:** D024
 
 The desktop stand-in device is a RHEL 10 KVM VM (8 vCPU / 16 GiB, no GPU) that runs the ACT
@@ -17,7 +19,7 @@ for criteria 2–3.
 
 ## Model under test
 
-`act-v2-ft160` (`/data/models/act-v2-ft160/act/config.json` on the host, `/home/jary/flywheel-data/models/act-v2-ft160/act`):
+`act-v2-ft160` (`/data/models/act-v2-ft160/act/config.json` on the host, `~/flywheel-data/models/act-v2-ft160/act`):
 
 | Field | Value |
 |---|---|
@@ -63,7 +65,7 @@ Command (host, 2026-09-08 15:14):
 ```bash
 docker run --rm --network none --cpus=8 --cpuset-cpus=0,2,4,6,8,10,12,14 --memory=16g \
   -e CUDA_VISIBLE_DEVICES= -e OMP_NUM_THREADS=8 \
-  -v /home/jary/flywheel-data:/data:ro -v /tmp/act-spike:/spike \
+  -v ~/flywheel-data:/data:ro -v /tmp/act-spike:/spike \
   --entrypoint python3 act-inference:latest \
   /spike/bench_cpu_forward.py --threads 8 --iters 200 --warmup 10 --json /spike/result-t8.json
 ```
@@ -111,7 +113,7 @@ promoted modelcar mounted as a podman image volume (`systemd-models-test`, `Driv
 ```bash
 sudo podman run --rm --network none --cpus 8 --memory 14g \
   -e CUDA_VISIBLE_DEVICES= -e OMP_NUM_THREADS=8 \
-  -v systemd-models-test:/models:ro -v /home/jary/spike:/spike:z \
+  -v systemd-models-test:/models:ro -v ~/spike:/spike:z \
   --entrypoint python3 docker.io/library/act-inference:latest \
   /spike/bench_cpu_forward.py --model /models/models/act --threads 8 --iters 200 --warmup 10 --json /spike/result-vm-t8.json
 ```
@@ -153,7 +155,7 @@ container must be stopped for the duration (`docker stop act-inference`; restart
 `docker start act-inference` afterwards). Schedule it; do not do it as a side effect. The sim
 (`so-arm-sim`) and its zenoh router (`10.0.0.48:7447`) stay up. The VM needs the x86_64
 `act-inference` image (Phase 4.5 F builds it for both arches; until then
-`docker save act-inference:latest | ssh jary@10.0.0.51 sudo podman load`, 11.2 GB — **done
+`docker save act-inference:latest | ssh <user>@10.0.0.51 sudo podman load`, 11.2 GB — **done
 2026-09-08**, present as `docker.io/library/act-inference:latest`) and the checkpoint: on the VM
 it is the modelcar image volume (`-v systemd-models-test:/models:ro`, path `/models/models/act`,
 see the in-guest run above), not a `/var/lib/act-inference/data/models/...` bind mount. Adjust
@@ -335,7 +337,7 @@ impossible rather than a policy outcome:
 ```
 
 Container stopped and removed 23:17:18–23:17:29Z (full log kept on the VM as
-`/home/jary/spike/eval-cpu-v2-ft160-INVALID-*.log`; no result JSON was written). The Fleet app
+`~/spike/eval-cpu-v2-ft160-INVALID-*.log`; no result JSON was written). The Fleet app
 target was started again at 23:17:29Z and was `healthy` at 23:18:20Z with
 `Published model_version: act-v2-ft160`.
 
@@ -345,7 +347,7 @@ Why it cannot work from the VM: the coordinator's seeded reset (`sim_reset.py` �
 not ROS/zenoh. From inside the VM container: `gz topic -l` does list `/world/pai_world/pose/info`
 (multicast discovery crosses `br0`), but `gz topic -e … -n 1` receives nothing in 20 s and
 `gz service -l` shows no `set_pose` service — the publisher/service data path back to the guest
-does not come up (`so-arm-sim` runs `--network host` on `jary-ubuntu`, so its advertised endpoints
+does not come up (`so-arm-sim` runs `--network host` on `<host>`, so its advertised endpoints
 are host-side). So on the VM every `Resetting cubes (seed=N)` is a silent no-op and every cube
 count is 0. The `steps` figure (~6 Hz of `/joint_states`) is a second, separate artefact: in eval
 mode the coordinator counts joint states itself from a Python thread that is starved on a VM whose

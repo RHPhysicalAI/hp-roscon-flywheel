@@ -1,6 +1,8 @@
 <!-- This project was developed with assistance from AI tools. -->
 # Promotion 2 — first RHEM Fleet promotion: `act-v2-ft160` → `act-v2-ft160-rhem` (Phase 4.5 D1, D025)
 
+*2026-09-21 — Editorial note: individuals' names were replaced by roles, including inside historical resource names, and usernames and handles in recorded commands were redacted. Nothing else was changed.*
+
 **Date:** 2026-09-09 (run 06:53–06:57 CDT; merged 12:04:27Z; D2 rollout + rollback rehearsal 12:04–12:21Z, section at the end). **State: PR #2 merged and rolled out (D2); rollback PR #3 merged 12:35:10Z and observed (D3, last section);
 `act-serving`/swap agent retired (D025).**
 
@@ -52,7 +54,7 @@ port-forward loop on 3443, `~/flightctl-pf.log`); the UI is
    `Degraded`/`Unknown` for up to the health start period (`HealthStartPeriod=240s`, policy load on CPU)
    then returns to **Healthy**. The device does not pull anything new (the digest is already in local
    storage — table above); it re-creates `models.volume` and restarts the container.
-4. **The container publishes the new lineage.** On the VM (`ssh jary@10.0.0.51`, or `flightctl console`):
+4. **The container publishes the new lineage.** On the VM (`ssh <user>@10.0.0.51`, or `flightctl console`):
    `sudo podman ps` shows a **new** container name (`act-inference-<newid>-act-inference`) and
    `sudo podman logs <name> | grep 'Published model_version'` →
    `Published model_version: act-v2-ft160-rhem`; `sudo podman inspect <name> --format '{{.Config.Env}}'`
@@ -76,7 +78,7 @@ git push origin desktop-gpu-split          # or open a PR from a branch and merg
 #    device renderedVersion 5 -> 6; container restarts with Published model_version: act-v2-ft160
 #    and NO "Copying blob" / pull in the agent log or podman events (image volume reclaimPolicy: Retain,
 #    bdb513ca… still in storage)
-ssh jary@10.0.0.51 'sudo podman events --since 10m --filter event=pull 2>/dev/null | tail; sudo podman images --digests | grep modelcar'
+ssh <user>@10.0.0.51 'sudo podman events --since 10m --filter event=pull 2>/dev/null | tail; sudo podman images --digests | grep modelcar'
 ```
 
 Rollback is `git revert` + merge (D025). The pipeline does nothing on rollback; the

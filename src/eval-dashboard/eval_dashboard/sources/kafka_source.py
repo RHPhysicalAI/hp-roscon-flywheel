@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 """Consumes `episode-manifests` change-notifications: {episode_id, s3_uri, ...}.
 
 This is a notification stream, not the source of truth -- MinIO is. On

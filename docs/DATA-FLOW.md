@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # Data Flow
 
 How an episode becomes training data, how training data becomes a promoted model, and how a

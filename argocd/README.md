@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # argocd/ — Argo CD bootstrap Applications
 
 Everything in `gitops/` is delivered by Argo CD (OpenShift GitOps, ns `openshift-gitops`).

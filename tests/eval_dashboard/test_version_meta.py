@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 from eval_dashboard.main import load_version_meta
 
 

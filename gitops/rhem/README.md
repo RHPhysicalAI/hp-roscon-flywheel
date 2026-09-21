@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # gitops/rhem/ — Fleets and CatalogItems rendered by RHEM
 
 This directory is synced by the flightctl `ResourceSync/rhem-fleets`

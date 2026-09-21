@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # Pre-RHEM archive
 
 Real project history, not the current demo's screens. These artifacts document the first governed

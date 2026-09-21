@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # Operator configuration for the governed pipeline (D022)
 
 Applied AFTER the operators in `gitops/operators/` reach `Succeeded` (Argo cannot sync kinds whose

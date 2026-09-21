@@ -1,6 +1,6 @@
 # This project was developed with assistance from AI tools.
 #
-# Scoped read-only MinIO user for the eval dashboard (APPENG-6295).
+# Scoped read-only MinIO user for the eval dashboard.
 # GetObject/ListBucket only, on episodes-curated, episodes-rejected and the
 # eval/ prefix of episodes-data (promotion evidence) — no write access, no
 # access to other buckets or prefixes, not the root account.

@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # rhem/bootstrap/ — flightctl API objects applied once
 
 Fleets and CatalogItems are flightctl **API objects**, not Kubernetes CRs, so Argo CD cannot

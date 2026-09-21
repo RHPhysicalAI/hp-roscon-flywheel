@@ -1,3 +1,4 @@
+# This project was developed with assistance from AI tools.
 from eval_dashboard import schema
 
 

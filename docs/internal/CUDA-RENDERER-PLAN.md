@@ -6,7 +6,7 @@ Design plan, 2026-09-20; produced read-only from the code at branch fury and the
 Nothing was edited or run against the host. Upstream sources were read over HTTPS at the pinned commits, without cloning.
 
 Notation for upstream files:
-- `demos@4d35` = ros-physical-ai/demos @ 4d3564cd, the sim image pin (`/Users/jary/redhat/git/hp-roscon-flywheel/docker/Dockerfile:39-42`).
+- `demos@4d35` = ros-physical-ai/demos @ 4d3564cd, the sim image pin (`docker/Dockerfile:39-42`).
 - `demos@80dc` = the same repo @ 80dc00cf, the inference image pin (`docker/Dockerfile.gpu-inference:44-47`).
 - `rosetta@fb38`, `lrr@e4ed` (lerobot-robot-rosetta) and `so_arm@12fb` (ros2_so_arm) come from `pai.repos` at those pins.
 - `gzmj@79de` = francocipollone/gz-mujoco, `sdformat_mjcf` (`tools/host/fury/mjwarp-spike/requirements.txt:14`).
@@ -304,8 +304,8 @@ Effort:
 - The x86 desktop (`AGENTS.md:19-20`) is still usable.
 
 ### Critical Files for Implementation
-- /Users/jary/redhat/git/hp-roscon-flywheel/tools/host/fury/mjwarp-spike/build_mjcf.py
-- /Users/jary/redhat/git/hp-roscon-flywheel/tools/host/fury/mjwarp-spike/render_bench.py
-- /Users/jary/redhat/git/hp-roscon-flywheel/tools/host/fury/51-eval-rig.sh
-- /Users/jary/redhat/git/hp-roscon-flywheel/docker/entrypoint.sh
-- /Users/jary/redhat/git/hp-roscon-flywheel/docker/inference-entrypoint.sh
+- tools/host/fury/mjwarp-spike/build_mjcf.py
+- tools/host/fury/mjwarp-spike/render_bench.py
+- tools/host/fury/51-eval-rig.sh
+- docker/entrypoint.sh
+- docker/inference-entrypoint.sh

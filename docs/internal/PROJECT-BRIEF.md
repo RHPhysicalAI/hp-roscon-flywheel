@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # HP ROSCon Flywheel — Physical AI Edge Flywheel on the GB300
 
 ## What this project is
@@ -12,7 +13,7 @@ arm gets visibly better. Loop closes.
 
 ## Origin
 
-This project reuses ~70% of the `thor-testing` Physical AI Edge Flywheel (Jeremy Ary's prior
+This project reuses ~70% of the `thor-testing` Physical AI Edge Flywheel (the project lead's prior
 project, demo-ready as of 2026-08-19, `~/redhat/git/thor-testing`). The adaptation: collapse
 the two-tier topology (Thor edge device + OSD-on-AWS hub) onto a single GB300 running SNO, and
 swap the data producer from a Cosmos3 world-model generator to the ROS community's **SO-ARM101**
@@ -59,7 +60,7 @@ episodes re-stamped with the new lineage -> loop closes
 ## The simulated robot: SO-ARM101
 
 The sim is based on the ROS community's own upstream Physical AI examples at
-`github.com/ros-physical-ai/demos` (org-level, Apache-2.0). Building on this rather than
+`github.com/ros-physical-ai/demos`. Building on this rather than
 creating our own is a deliberate credibility move for a ROSCon audience — Red Hat adds the layer
 the repo lacks (signed artifacts, fleet delivery, path-to-scale).
 
@@ -84,29 +85,29 @@ The policy architecture used by the SO-ARM upstream:
 ## Hardware
 
 **Target (demo):** HP ZGX Fury (GB300) — Grace Blackwell, 748 GB unified memory, aarch64,
-RHEL 10.2. Remote SSH access targeted Sept 20-25 (Rick Gosalvez, HP).
+RHEL 10.2. Remote SSH access targeted Sept 20-25 (the partner's access coordinator).
 
 **Development stand-in:** Ubuntu desktop — i9-13900K, RTX 5090, 128 GB RAM, x86_64.
-At 10.0.0.48 on Jeremy's local network (SSH as `jary`). Ubuntu stays as the host OS; SNO runs
+At 10.0.0.48 on the project lead's local network (SSH as `<user>`). Ubuntu stays as the host OS; SNO runs
 in a KVM VM with the RTX 5090 passed through via VFIO. This answers the topology/contention
 question (does the whole flywheel collapse onto one GPU node?) but not architecture-specific
 questions (aarch64/Blackwell issues surface on the Fury, not here).
 
 **Nano (GB10):** Temporary aarch64 testing box only. Stock Ubuntu (RHEL not NVIDIA-blessed on
-GB10). Used for container correctness testing once Docker access lands (Carlos, over Tailscale).
+GB10). Used for container correctness testing once Docker access lands (a colleague's machine, over Tailscale).
 Not part of the demo.
 
-**Thor:** Jeremy's personal Jetson AGX Thor dev kit, currently running xlerobot on Ubuntu.
+**Thor:** The project lead's personal Jetson AGX Thor dev kit, currently running xlerobot on Ubuntu.
 NOT available as a validation box — do not plan around reflashing it.
 
 ## Constraints
 
-- **Reuse thor-testing, don't rebuild** (Kelly's directive).
+- **Reuse thor-testing, don't rebuild** (the sponsor's directive).
 - **Single machine, no cloud backend** — everything self-contained.
 - **HP wants limited technical scope** — first ROSCon, tight and reliable, ~5-min booth demo.
 - **Honest framing** — device is simulated; pipeline is exactly what runs to real fleets.
-- **HP scope stops at ROSCon** — GTC Berlin is a separate effort (Staer).
-- **ZGX toolkit de-prioritized by Kelly** — do not design around it.
+- **HP scope stops at ROSCon** — GTC Berlin is a separate effort.
+- **ZGX toolkit de-prioritized by the demo's sponsor** — do not design around it.
 - **Desktop is x86_64; Fury is aarch64** — build multi-arch from the start.
 
 ## Out of scope until Fury phase (Sept 20-25)
@@ -120,15 +121,15 @@ NOT available as a validation box — do not plan around reflashing it.
 
 ## Key people
 
-- **Jeremy Ary** — project lead, built thor-testing
-- **Kelly Switt** — decision-maker for demo direction
-- **Leonardo Rossetti** — Fedora SIG, ROS community liaison
-- **Sayan Paul** — platform build vision, LeRobot/sim integration
-- **Olga Lavtar** — SO-ARM sim + streaming evaluation (APPENG-6261)
-- **Rick Gosalvez (HP)** — Fury access coordination
-- **Manny (HP)** — on-site at ROSCon booth
+- **The project lead** — leads and architects the project, built thor-testing
+- **The demo's sponsor** — decision-maker for demo direction
+- **The ROS community liaison** — Fedora SIG
+- **A contributing engineer** — platform build vision, LeRobot/sim integration
+- **A contributing engineer** — SO-ARM sim + streaming evaluation
+- **The partner's access coordinator** — Fury access coordination
+- **The partner's on-site contact** — on-site at ROSCon booth
 
 ## Jira
 
-- Epic: APPENG-6058 (HP GB300 / RHEL AI Partnership)
-- Olga's task: APPENG-6261 (SO-ARM sim + Gazebo streaming evaluation)
+- Epic: HP GB300 / RHEL AI Partnership
+- A contributing engineer's task: SO-ARM sim + Gazebo streaming evaluation

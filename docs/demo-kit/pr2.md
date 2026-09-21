@@ -1,8 +1,10 @@
 # PR #2 — Promote act-v2-ft160-rhem (73% -> 86%)
 
+*2026-09-21 — Editorial note: individuals' names were replaced by roles, including inside historical resource names, and usernames and handles in recorded commands were redacted. Nothing else was changed.*
+
 https://github.com/RHPhysicalAI/hp-roscon-flywheel/pull/2
 
-Merged: 2026-09-09T12:04:27Z by jeremyary (merge commit `4ce6a8a5`, head `promote/act-v2-ft160-rhem`); rolled back by PR #3 (merge `1eab0824`, 2026-09-09T12:35:10Z)
+Merged: 2026-09-09T12:04:27Z by the project lead (merge commit `4ce6a8a5`, head `promote/act-v2-ft160-rhem`); rolled back by PR #3 (merge `1eab0824`, 2026-09-09T12:35:10Z)
 
 Files changed: gitops/flywheel/manifest-consumer.yaml, gitops/rhem/fleet-act-inference.yaml (2 + 3 lines, D066)
 
