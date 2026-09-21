@@ -4,7 +4,7 @@
 # One-time bring-up tool, not a demo-time step. Builds the evaluation dashboard image (src/eval-dashboard)
 # with the hub's governed runtime-image Tekton pipeline - clone, buildah, push, cosign sign + verify into the
 # hub's Rekor - rather than by hand, follows the run, and prints the digest that
-# gitops/flywheel/eval-dashboard.yaml pins. KUBECONFIG must be set; needs oc, jq and git.
+# gitops/flywheel/eval-dashboard.yaml and eval-dashboard-show.yaml pin. KUBECONFIG must be set; needs oc, jq and git.
 #
 #   tools/hub/build-eval-dashboard.sh                  start a build of the current commit and follow it
 #   tools/hub/build-eval-dashboard.sh --follow <run>   pick up a run started earlier (the run outlives this script)
@@ -18,19 +18,21 @@
 # The body is shared with the other image build scripts: tools/hub/lib-build-image.sh.
 set -euo pipefail
 MANIFEST=gitops/flywheel/eval-dashboard.yaml
+SHOW_MANIFEST=gitops/flywheel/eval-dashboard-show.yaml
 # shellcheck source=/dev/null
 . "$(dirname "$0")/lib-build-image.sh"
 
 pin_hint() {
-    local image=$1 root=$2 lines
-    echo "Pin it by hand in $MANIFEST: the file has two image lines, one in Deployment eval-dashboard and one in"
-    echo "Deployment eval-dashboard-live. Make both read exactly"
+    local image=$1 root=$2 lines manifest
+    echo "Pin it by hand, one image, three Deployments: $MANIFEST has two image lines (eval-dashboard,"
+    echo "eval-dashboard-live) and $SHOW_MANIFEST has one (eval-dashboard-show). Make all three read exactly"
     echo "    image: $image"
-    if [[ -f $root/$MANIFEST ]]; then
-        lines=$(grep -n "image: ${image%%@*}@" "$root/$MANIFEST" | cut -d: -f1 | paste -sd' ' -) || true
-        echo "In this checkout they are on lines: ${lines:-none found - check the file}"
-    fi
-    echo "Then commit and push; Argo CD rolls both Deployments. Never commit the file with IMAGE_DIGEST_PLACEHOLDER in it."
+    for manifest in "$MANIFEST" "$SHOW_MANIFEST"; do
+        [[ -f $root/$manifest ]] || continue
+        lines=$(grep -n "image: ${image%%@*}@" "$root/$manifest" | cut -d: -f1 | paste -sd' ' -) || true
+        echo "In this checkout, $manifest: lines ${lines:-none found - check the file}"
+    done
+    echo "Then commit and push; Argo CD rolls the Deployments. Never commit a file with IMAGE_DIGEST_PLACEHOLDER in it."
 }
 
 build_image --src src/eval-dashboard --tag-prefix eval-dashboard- --run-prefix eval-dashboard-image- -- "$@"

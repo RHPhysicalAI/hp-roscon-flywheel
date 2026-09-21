@@ -104,7 +104,7 @@ function niceTicks(maxCount, targetLines = 4) {
   const step = Math.max(1, Math.ceil(maxCount / targetLines));
   return { step, top: step * targetLines };
 }
-function fmtNum(x, d = 4) { return x == null ? '--' : x.toFixed(d); }
+function fmtNum(x, d = 4) { return typeof x === 'number' ? x.toFixed(d) : '--'; }
 function fmtDuration(s) { return s == null ? '--' : `${Number(s).toFixed(1)}s`; }
 
 function originLabel(origin) {
@@ -190,7 +190,20 @@ function setHeaderLink(id, url, label) {
   if (label != null) link.textContent = label;
 }
 
+// An instance may name itself (PAGE_TITLE) and say in one line what it shows (PAGE_NOTE, with one link): text only.
+function renderPageNote(stats) {
+  if (stats.page_title) {
+    document.title = stats.page_title;
+    document.getElementById('page-title').textContent = stats.page_title;
+  }
+  document.getElementById('page-note').hidden = !stats.page_note;
+  document.getElementById('page-note-text').textContent = stats.page_note || '';
+  const linked = stats.page_note_link_url && stats.page_note_link_label;
+  setHeaderLink('page-note-link', linked ? stats.page_note_link_url : '', stats.page_note_link_label);
+}
+
 function renderHeader(stats) {
+  renderPageNote(stats);
   document.getElementById('source-label').textContent = stats.source_label || '--';
   document.getElementById('source-chip').classList.toggle('live', stats.source_mode === 'live');
   document.getElementById('loaded-chip').textContent = 'Loaded ' + new Date().toLocaleTimeString();
@@ -624,16 +637,17 @@ function resultCellMarkup(r) {
 }
 
 function evidenceRowsMarkup(rows) {
+  // A record is whatever its file or object says: every field is escaped here, the numbers too.
   // Evaluation ids share the policy name as their prefix; the seed is what tells rows apart.
   const rowLabel = r => (r.origin === 'eval' && r.seed != null ? `seed ${r.seed}` : (r.episode_id || '').slice(0, 8));
   return rows.map(r => `
     <tr>
       <td title="${esc(r.episode_id || '')}">${esc(rowLabel(r))}</td>
       ${resultCellMarkup(r)}
-      <td>${r.cubes_placed != null ? r.cubes_placed + ' / 3' : '--'}</td>
-      <td title="${r.task_success ? '' : 'Excluded from success-only mean'}">${r.task_success ? fmtNum(r.avg_smoothness) : '--'}</td>
-      <td>${r.rollout_steps != null ? r.rollout_steps : '--'}</td>
-      <td>${fmtDuration(r.rollout_duration_s)}</td>
+      <td>${r.cubes_placed != null ? esc(r.cubes_placed) + ' / 3' : '--'}</td>
+      <td title="${r.task_success ? '' : 'Excluded from success-only mean'}">${r.task_success ? esc(fmtNum(r.avg_smoothness)) : '--'}</td>
+      <td>${r.rollout_steps != null ? esc(r.rollout_steps) : '--'}</td>
+      <td>${esc(fmtDuration(r.rollout_duration_s))}</td>
     </tr>`).join('');
 }
 

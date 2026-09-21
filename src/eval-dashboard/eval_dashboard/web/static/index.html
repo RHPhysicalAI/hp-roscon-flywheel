@@ -17,12 +17,12 @@
       document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
     })();
   </script>
-  <link rel="stylesheet" href="styles.css?v=34">
+  <link rel="stylesheet" href="styles.css?v=35">
 </head>
 <body>
   <header>
     <div>
-      <h1>SO-ARM Policy Evaluation</h1>
+      <h1 id="page-title">SO-ARM Policy Evaluation</h1>
       <div class="subtitle" id="subtitle">Observed success rates &middot; read-only &middot; not a statistical proof of improvement</div>
     </div>
     <div class="header-actions">
@@ -38,6 +38,12 @@
   </header>
 
   <main>
+    <!-- What this instance is, when it has said so (PAGE_NOTE): filled as text by dashboard.js, never as markup. -->
+    <div class="notice page-note" id="page-note" hidden>
+      <span id="page-note-text"></span>
+      <a id="page-note-link" hidden></a>
+    </div>
+
     <div class="notice">
       <strong>Primary metric</strong>: success rate (all three cubes on the tray, <code>task_success</code>),
       including rejected episodes in the denominator when curator verdicts exist.
@@ -126,6 +132,6 @@
     <span id="footer-counts"></span>
   </footer>
 
-  <script src="dashboard.js?v=34"></script>
+  <script src="dashboard.js?v=35"></script>
 </body>
 </html>

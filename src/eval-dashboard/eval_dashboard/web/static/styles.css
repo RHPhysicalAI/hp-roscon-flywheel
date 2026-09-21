@@ -102,6 +102,9 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px 24px 48px; }
   background: var(--info-surface); padding: 10px 14px; border-radius: 4px;
   margin-bottom: 16px; font-size: 12px; color: var(--text-2);
 }
+/* What this instance is (PAGE_NOTE): the first thing under the header, louder than the metric note below it. */
+.notice.page-note { border-left-color: var(--warning); font-size: 13px; color: var(--text); }
+.notice.page-note a { color: var(--link); font-weight: 600; white-space: nowrap; }
 
 .section-heading { display: flex; align-items: baseline; gap: 10px; margin: 28px 0 10px; flex-wrap: wrap; }
 .section-heading h2 { margin: 0; font-size: 16px; }

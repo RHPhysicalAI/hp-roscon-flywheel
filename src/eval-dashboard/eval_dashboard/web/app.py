@@ -16,6 +16,12 @@ STATIC_DIR = pathlib.Path(__file__).parent / "static"
 SOURCE_LABELS = {"files": "Saved files", "live": "Live", "eval": "Paired evaluation"}
 
 
+def http_url(value: str) -> str:
+    """The value when it is an http(s) address, else empty: the page makes a link of it."""
+    value = value.strip()
+    return value if value.startswith(("http://", "https://")) else ""
+
+
 def create_app(store, source_mode: str, paired_provider=None) -> Flask:
     app = Flask(__name__, static_folder=None)
 
@@ -36,6 +42,11 @@ def create_app(store, source_mode: str, paired_provider=None) -> Flask:
                 "live_dashboard_url": os.environ.get("LIVE_DASHBOARD_URL", ""),
                 "other_view_url": os.environ.get("OTHER_VIEW_URL", ""),
                 "other_view_label": os.environ.get("OTHER_VIEW_LABEL", ""),
+                # What this instance is, in its own words: a heading, and a line above the numbers with one link.
+                "page_title": os.environ.get("PAGE_TITLE", ""),
+                "page_note": os.environ.get("PAGE_NOTE", ""),
+                "page_note_link_url": http_url(os.environ.get("PAGE_NOTE_LINK_URL", "")),
+                "page_note_link_label": os.environ.get("PAGE_NOTE_LINK_LABEL", ""),
                 "snapshot": store.snapshot(),
             }
         )

@@ -42,6 +42,9 @@ Two rules apply in every mode:
 | `SOURCE_LABEL` | by mode | Text of the source chip. Defaults: `Saved files`, `Live`, `Paired evaluation`. |
 | `OTHER_VIEW_URL`, `OTHER_VIEW_LABEL` | unset | A header link to another instance. Rendered only when both are set. |
 | `LIVE_DASHBOARD_URL` | unset | Target of the "Back to Live Flywheel" header link. Hidden when unset. |
+| `PAGE_TITLE` | unset | Replaces the page's heading and title, for an instance that has to say what it is. |
+| `PAGE_NOTE` | unset | One line shown above everything else. Set as text, never as markup. |
+| `PAGE_NOTE_LINK_URL`, `PAGE_NOTE_LINK_LABEL` | unset | One link at the end of the note. Rendered only when both are set and the address is http(s). |
 
 ### `files`
 
@@ -49,6 +52,12 @@ Two rules apply in every mode:
 |---|---|---|
 | `RECORDS_DIR` | `/records` | Directory of episode JSON (flat, `<model_version>/<episode_id>.json`, or a JSON array per file). |
 | `FILE_POLL_SECONDS` | `5` | Re-read interval. `0` disables polling. |
+| `FILES_NEWEST` | `0` | Read only this many of the most recently modified files. `0` reads them all. |
+| `FILES_MAX_BYTES` | `0` | Never open a file larger than this. `0` is no limit. |
+
+The two bounds are for a directory something else keeps writing to: files are chosen by `stat` alone, so a full
+volume costs a directory walk. A writer that keeps the newest N records of each verdict leaves N passes and N
+rejects however the policy does; `FILES_NEWEST` at or below N reads exactly the last episodes judged instead.
 
 ### `live`
 
@@ -85,7 +94,7 @@ All endpoints are `GET` and read-only.
 
 | Path | Returns |
 |---|---|
-| `/api/stats` | `source_mode`, `source_label`, the header link settings, and `snapshot` (per-version aggregates plus integrity counters). Suitable as a readiness probe. |
+| `/api/stats` | `source_mode`, `source_label`, the header link and page note settings, and `snapshot` (per-version aggregates plus integrity counters). Suitable as a readiness probe. |
 | `/api/episodes` | Normalised episode rows. Repeat `model_version` to select several; `limit` and `offset` page. |
 | `/api/paired` | `{"available": false}` outside `eval` mode or before a run is found, else the report's fields plus `fixed_seeds` and `broken_seeds`. |
 

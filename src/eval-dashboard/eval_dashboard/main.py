@@ -4,7 +4,8 @@ read-only Flask API/UI.
 
 One view, per `model_version`, fed by whichever source is active:
 
-- SOURCE_MODE=files -- a directory of episode JSON records (RECORDS_DIR).
+- SOURCE_MODE=files -- a directory of episode JSON records (RECORDS_DIR),
+  optionally only its newest small files (FILES_NEWEST, FILES_MAX_BYTES).
 - SOURCE_MODE=live -- Kafka+MinIO curated episodes, merged with the MinIO
   rejected bucket (Kafka never notifies for rejects).
 - SOURCE_MODE=eval -- one promotion run's paired evaluation: the pipeline's
@@ -200,6 +201,15 @@ def infer_size(model_version: str) -> int | None:
     return int(found[-1]) if found else None
 
 
+def file_source(directory: str) -> FileSource:
+    """The directory reader, bounded by FILES_NEWEST and FILES_MAX_BYTES (0, the default: every file is read)."""
+    return FileSource(
+        directory,
+        newest=int(os.environ.get("FILES_NEWEST", "0")),
+        max_bytes=int(os.environ.get("FILES_MAX_BYTES", "0")),
+    )
+
+
 def watch_files(store: Store, directory: str, transform=lambda records: records) -> None:
     interval = float(os.environ.get("FILE_POLL_SECONDS", "5"))
     if interval <= 0:
@@ -209,7 +219,7 @@ def watch_files(store: Store, directory: str, transform=lambda records: records)
         while True:
             time.sleep(interval)
             try:
-                store.replace(transform(FileSource(directory).read()))
+                store.replace(transform(file_source(directory).read()))
             except Exception:
                 log.exception("file poll failed for %s", directory)
 
@@ -402,7 +412,7 @@ def main() -> None:
     elif source_mode == "files":
         if pathlib.Path(records_dir).exists():
             store.origin = f"files:{pathlib.Path(records_dir).resolve()}"
-            store.replace(schema.apply_lineage_rules(FileSource(records_dir).read()))
+            store.replace(schema.apply_lineage_rules(file_source(records_dir).read()))
             watch_files(store, records_dir, transform=schema.apply_lineage_rules)
         else:
             log.info("no episode files at RECORDS_DIR=%s", records_dir)
