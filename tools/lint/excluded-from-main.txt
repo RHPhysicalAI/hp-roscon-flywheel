@@ -1,0 +1,16 @@
+# Paths that stay on the working branch and never reach `main`.
+# One path or `dir/**` pattern per line; `*` stays inside one path segment, `**` crosses segments.
+# Read by tools/lint/docs_lint.py: the link rule skips these documents, and --main checks that they are
+# absent from the tree and that no remaining document links to them or names them.
+docs/internal/DECISIONS.md
+docs/internal/FURY-PLAN.md
+docs/internal/PROJECT-BRIEF.md
+docs/internal/BUILD-PLAN.md
+docs/internal/THOR-TESTING-REUSE.md
+docs/internal/BOOTSTRAP-LOOP.md
+docs/internal/CUDA-RENDERER-PLAN.md
+docs/internal/FURY-RECORDING.md
+docs/internal/phase3-ladder.html
+docs/DEMO_RUNBOOK.md
+docs/demo-kit/**
+docs/eval-records/**

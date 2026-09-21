@@ -115,7 +115,7 @@ on stage.
 | beat | live screen | kit item (exists) | to capture (item 2) |
 |---|---|---|---|
 | 1 | camera stream | — | 30–60 s clip of the arm placing cubes (v2), overhead + wrist |
-| 2 | dashboard | `docs/internal/data-contract-eval-dashboard.md` (what the stream contains) | 60 s screen recording of the dashboard with pass/reject rows landing; MinIO console screenshot of `episodes-curated/act-v2-ft160/` |
+| 2 | dashboard | `docs/internal/data-contract-eval-dashboard.md` (what the stream contains) | 60 s screen recording of the dashboard with pass/reject rows landing; object storage console screenshot of `episodes-curated/act-v2-ft160/` |
 | 3 | runner log, KFP task list | `docs/demo-kit/run-192f3ec5-task-states.txt`, `docs/demo-kit/run-192f3ec5-host-runner.log` (run 6's files stay as history) | screenshot of the terminal; a live run recording from the kit session |
 | 4 | static chart | `docs/internal/phase3-ladder.html`, `docs/eval-records/phase3-ladder/`, `src/eval-report/ladder_report.py` | PNG export of the chart for slides |
 | 5 | PR #2, Rekor UI, RHEM Fleet page | `docs/demo-kit/pr2.md`, `docs/demo-kit/rekor-entry-4.json`, `docs/eval-records/promotion-2.md` (the rollout, second by second) | clips **5a–5e** in the kit script: PR *Files changed*, Rekor entry, the merge, the Fleet rollout with the device tab in frame |
@@ -141,7 +141,7 @@ says otherwise.
 | Overhead camera (MJPEG) | host `so-arm-sim` container, port 8081 | `http://10.0.0.48:8081/static` (wrist: `/wrist`, `/health`) |
 | Rest-pose picker (both cams + live joints) | host `pose-ui` container | `http://10.0.0.48:8090/` |
 | Operational dashboard (Beat 2, Beat 6 badge) | SNO, NodePort | `http://10.0.0.49:30801` (`/api/status` for JSON) |
-| MinIO console | SNO route | `https://minio-console-minio.apps.sno-flywheel.local` |
+| Object storage console | SNO route | `https://minio-console-minio.apps.sno-flywheel.local` |
 | DSP (KFP) API | SNO, via port-forward on the host | `oc port-forward -n flywheel svc/ds-pipeline-dspa 8888:8888` → `https://localhost:8888` + SA token |
 | Host runner / poller logs | host | `~/host-runner.log`, `~/pipeline-run.log` |
 | Static chart (Beat 4) | repo, local file | `open docs/internal/phase3-ladder.html` |
@@ -227,7 +227,7 @@ runtime image (Tekton, multi-arch) `quay.io/jary/soarm-flywheel@sha256:02e66d895
 4. **Credentials you may need on screen** (read them on the host, never paste them into a doc):
    - RHEM UI / Argo: *Log in via OpenShift* as kubeadmin (`~/sno-flywheel/auth/kubeadmin-password`
      on the host), or Argo `admin` with `oc extract secret/openshift-gitops-cluster -n openshift-gitops --keys=admin.password --to=-`.
-   - MinIO console: `oc extract secret/minio-credentials -n minio --to=-` (`root-user`/`root-password`).
+   - Object storage console: `oc extract secret/minio-credentials -n minio --to=-` (`root-user`/`root-password`).
    - Model Registry: a runner SA token, minted on the host inside the Beat 6 curl (10 min lifetime).
 5. **Do not** start the in-cluster `so-arm-sim` Deployment (it is intentionally 0 on the desktop; the
    sim is the host container). **Never run two coordinators** (both drive `/run_policy`, D057):
@@ -282,7 +282,7 @@ to Beat 2 and narrate over the dashboard's last frames.
 **Screen:** tab 2, the dashboard. Point at the *latest episode* card (rollout status, steps,
 duration, **task success, cubes placed, smoothness, curation verdict**) and the curation log
 below it filling with `pass` / `reject` rows, then at the progress bar (**n / 160 curated episodes
-sent to hub** — the live lineage's count since the last promotion). Optional cutaway: MinIO console
+sent to hub** — the live lineage's count since the last promotion). Optional cutaway: the object storage console
 → bucket `episodes-curated` → prefix `act-v2-ft160/` growing. Terminal alternative for the count
 **[not run today]**:
 ```bash
@@ -300,7 +300,7 @@ ssh -n <user>@10.0.0.48 'docker run --rm --network host -v ~/count_curated.py:/c
 
 **If it breaks:** dashboard stale → `curl -s http://10.0.0.49:30801/api/status | python3 -m json.tool | head -30`
 (if the JSON moves, reload the page; if not, `oc delete pod -n flywheel -l app=dashboard` on the
-host, ~40 s with the pip install — **[not run today]**). Dashboard dead → the MinIO console is the
+host, ~40 s with the pip install — **[not run today]**). Dashboard dead → the object storage console is the
 screen (objects have timestamps).
 
 ### Beat 3 — "Training started from the curated data: here's the pipeline" (~45 s)
@@ -647,13 +647,13 @@ teacher's weights, ~2 epochs, LR 1e-5; eval = seeds 1000–1049, +1050–1099 fo
   mean?"* — spec delivered (`UpToDate`), not app healthy; the Applications tab is "serving"
   (D070). *"Why does the registry digest differ from the Fleet's?"* — one row per candidate,
   refreshed by the latest run; the multi-arch modelcar is not byte-reproducible (D090).
-  *"Where are the datasets?"* — MinIO `episodes-data/` and private HF `<account>/soarm-flywheel-*`
+  *"Where are the datasets?"* — object storage, bucket `episodes-data/`, and private HF `<account>/soarm-flywheel-*`
   / `soarm-act-*`, LeRobot-native.
 
 ## What's real (know this if asked)
 
 **Real, running, genuine:** Gazebo SO-ARM101 with the upstream LeRobot ACT policy (`francocipollone/…`)
-· ground-truth scoring and per-episode MCAP recording · curator → MinIO/Kafka with lineage ·
+· ground-truth scoring and per-episode MCAP recording · curator → object storage/Kafka with lineage ·
 LeRobot fine-tune from the incumbent's weights · seeded N=100 paired eval · RHOAI Data Science
 Pipelines run · multi-arch `crane` modelcar · `cosign` v2.6.5 + RHTAS Rekor, recursive · Model
 Registry row · GitOps PR with evidence · RHEM Fleet rollout to an enrolled device with node-side
@@ -693,7 +693,7 @@ served a policy yet.
 | Arm frozen, no `Early stop`/`Resetting cubes` in `docker logs --since 5m act-coordinator` | the loop is off or the device unhealthy: state check; restart the loop (below); if the device app is not Healthy, `flightctl get events --limit 10` says why |
 | **Loop (re)start** | on the host, disk guard first if not resident: `nohup ~/disk-guard.sh >/dev/null 2>&1 &`; then `IMAGE=quay.io/jary/soarm-flywheel@sha256:02e66d895ed4ba328aa43263561027c18406d774887f465ab7acbd81e4c42d08 MODEL_VERSION=<the Fleet's MODEL_VERSION> ~/run-coordinator.sh` (the script refuses without the guard or with < 100 GB free; the last loop ran on the interim digest `2ad1fb1c…` — first run with the Tekton digest **[not run today]**). Stop with `docker stop act-coordinator`. Never two coordinators (D057) |
 | Bags ≥ 330 or free < 100 GB (guard parks the loop) | port + prune first (`~/assemble_all.sh` pattern, `tools/host/prune_bags.py --yes`), then restart the loop |
-| **Host runner not resident** (`pgrep -af host_runner` empty; `trigger-and-wait` FAILED) | on the host: `set -a; source ~/.minio-env; set +a; nohup ~/venv-runner/bin/python ~/host_runner.py </dev/null >> ~/host-runner.log 2>&1 &` (the runner reads the MinIO credentials from the environment) **[not run today — the runner was resident]** |
+| **Host runner not resident** (`pgrep -af host_runner` empty; `trigger-and-wait` FAILED) | on the host: `set -a; source ~/.minio-env; set +a; nohup ~/venv-runner/bin/python ~/host_runner.py </dev/null >> ~/host-runner.log 2>&1 &` (the runner reads the object storage credentials from the environment) **[not run today — the runner was resident]** |
 | Dashboard not updating | `/api/status` moving? reload; else `oc delete pod -n flywheel -l app=dashboard` (host) **[not run today]** |
 | Dashboard badge disagrees with the device | the badge is the hub's view (`manifest-consumer` `COLLECTOR`, Argo-synced ~3 min after the merge); the device's is `flightctl console … podman logs … \| grep Published`; `soarm-act-v1` means the G-prep ConfigMap has not rolled |
 | `flightctl`: `connection refused 127.0.0.1:3443` | the desktop port-forward loop is re-establishing (`tail ~/flightctl-pf.log`); retry in 5 s |
