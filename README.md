@@ -1,61 +1,69 @@
 <!-- This project was developed with assistance from AI tools. -->
-# Physical AI Edge Flywheel
+# Red Hat and HP: Empowering Physical AI from Bench to Fleet
 
-A robot-learning loop with a platform around it. A learned policy for a robot arm improves on curated episodes, has
-to beat the policy it would replace on paired scenes, and ships as a signed image that one merge rolls out to a GPU
-host and a fleet of twelve robots. It runs on one HP ZGX Fury workstation: one NVIDIA GB300 GPU split into four
-isolated tenants, a Red Hat OpenShift hub, and thirteen devices under Red Hat Edge Manager.
+One HP ZGX Fury workstation carries a physical AI project from the engineer's bench to a managed fleet of robots. On
+its single NVIDIA GB300 GPU a coding assistant, a robot's policy, a training job and a ray-tracing renderer run side by
+side. On the same machine a Red Hat OpenShift hub gates, signs and promotes the policy, and Red Hat Edge Manager rolls
+it out to thirteen devices.
 
-The arm, its simulation and the policy architecture are upstream work of the ROS physical AI community and LeRobot.
-This project is what surrounds them: curation, the gated pipeline, signing, promotion, fleet delivery and GPU tenancy.
+It tells two stories:
+
+- **One GPU, four tenants.** MIG splits the GB300 into four isolated slices, and each slice does a different job for a
+  robotics team at the same time: writing code, running a robot, training, and rendering a fleet's cameras.
+- **The flywheel.** A robot's policy improves on its own curated episodes, has to beat the policy it would replace on
+  paired scenes, ships as a signed image, and reaches the GPU host and twelve robots through one merged pull request.
+
+The arm, its simulation and the policy architecture are upstream work of the
+[ROS physical AI community](https://github.com/ros-physical-ai/demos) and
+[LeRobot](https://github.com/huggingface/lerobot). This project is the platform around them: GPU tenancy, curation, the
+gated pipeline, signing, promotion and fleet delivery.
 
 > [!NOTE]
 > This project was developed with assistance from AI tools.
 
-![The fleet wall: thirteen robot arms in a grid, each moving cubes onto a tray](docs/images/fleet-wall.jpg)
+> **Visual to add:** a photo of the workstation on the bench, as the opening picture.
 
-*The fleet wall: thirteen simulated arms, every camera ray-traced on one GPU slice.*
+## One GPU, four tenants
 
-## What it shows
+The workstation has one NVIDIA GB300 with 251 GiB of GPU memory, beside a 72-core Grace CPU and 492 GiB of system
+memory. MIG splits the GPU into one large slice and three small ones. Each slice has its own compute and its own
+memory, and each belongs to one tenant.
 
-- **A learned policy earns its promotion.** A candidate replaces the incumbent only if it fixes more scenes than it
-  breaks on paired, seeded scenes, with a sign test below 0.05.
-- **What is promoted is a signed image.** The model is an OCI image, signed and entered in a transparency log. Every
-  device checks the signature and the log entry before it runs the image.
-- **One merge, thirteen devices, minutes.** A promotion is a pull request. Merging it rolls the model to the GPU host
-  and through twelve robots in batches. Rollback is a `git revert`.
-- **One GPU, four isolated workloads.** MIG splits the GB300 into four slices. A coding assistant, a robot's policy, a
-  training job and a ray-tracing renderer run side by side, isolated from each other.
-- **Everything is delivered from git.** Argo CD delivers the hub, Edge Manager delivers the devices, and nobody logs
-  in to a robot.
+| Slice | MIG profile | Tenant | What runs on it |
+|---|---|---|---|
+| `0:0` | `3g.126gb` - three compute units, 126 GB | [Coding assistant](#coding-assistant) | a Qwen3 coder model served by vLLM |
+| `0:1` | `1g.31gb` - one compute unit, 31 GB | [Robot zero](#robot-zero-and-the-flywheel) | the signed policy that drives the first robot, delivered by Edge Manager |
+| `0:2` | `1g.31gb` - one compute unit, 31 GB | [Training](#training-tenant) | fine-tunes of the robot's policy, round after round |
+| `0:3` | `1g.31gb` - one compute unit, 31 GB | [Rendering](#rendering-tenant-and-the-fleet) | ray tracing of every robot's cameras for the fleet |
 
-## The system at a glance
+![Compute busy and memory used for all four slices, one line per tenant](docs/images/gpu-slices.png)
 
-```mermaid
-flowchart LR
-    GIT["Git"]:::ext -->|GitOps| HUB["Hub (OpenShift)"]:::hub
-    BOTS["12 robots"]:::dev
-    subgraph HOST["GPU host"]
-        direction LR
-        T0["Coding assistant"]:::gpu ~~~ T2["Training tenant"]:::gpu
-        T1["Robot zero's policy"]:::gpu ~~~ T3["Rendering tenant"]:::gpu
-    end
-    HUB -->|Edge Manager| BOTS
-    HUB -->|signed images| REG["Registry"]:::ext
-    HUB -->|Edge Manager| HOST
-    REG --> BOTS
-    REG --> HOST
-    classDef gpu fill:#9fd99a,stroke:#2f7a2b,color:#111
-    classDef hub fill:#f2a9a2,stroke:#a3241b,color:#111
-    classDef dev fill:#9cc4f0,stroke:#1f5799,color:#111
-    classDef ext fill:#d0d0d0,stroke:#5c5c5c,color:#111
-```
+*All four slices on one dashboard. Training and rendering each keep their slice about 80% busy while the assistant
+holds 113 GiB of model and cache in its own.*
 
-The hub runs GitOps, the pipeline and Edge Manager. Edge Manager manages thirteen devices: the GPU host, which is also
-robot zero, and twelve RHEL image mode robots. The hub and the robots are virtual machines on the same workstation
-([architecture](docs/ARCHITECTURE.md)).
+More: [GPU tenants](docs/architecture/gpu-tenants.md).
 
-## How it works
+### Coding assistant
+
+Slice `0:0`, `3g.126gb`. vLLM serves Qwen3-Coder-Next with a 131k-token context and tool calling behind an
+OpenAI-compatible API. A Red Hat OpenShift Dev Spaces workspace on the hub opens this repository with a terminal coding
+agent pointed at the slice, so the code and the model that reads it stay on the workstation. A single stream decodes
+about 245 tokens a second, with the first token after 0.13 s.
+
+![The terminal coding agent in the Dev Spaces workspace, set to the Qwen3 coder model on the Fury's slice](docs/images/coding-assistant.png)
+
+> **Visual to add:** the agent in the middle of a task in the Dev Spaces workspace - an edit and a test run on screen.
+
+### Robot zero and the flywheel
+
+Slice `0:1`, `1g.31gb`. The workstation is also the fleet's first robot. Edge Manager delivers the signed ACT policy to
+it as a Fleet application, and a device label places it on this slice. The policy drives an SO-ARM101 arm in closed
+loop - camera pictures in, joint commands out - putting three cubes on a tray, episode after episode.
+
+![The flywheel page: robot zero's two cameras, the curator's verdict on each episode, and progress toward 160](docs/images/flywheel-page.png)
+
+Robot zero is where the flywheel turns. Every episode it finishes goes to a curator, and the policy it runs is the one
+the loop last promoted.
 
 ```mermaid
 flowchart LR
@@ -64,25 +72,77 @@ flowchart LR
     R --> C
 ```
 
-1. **Collect and curate.** A robot runs the current policy. A curator scores every episode - all three cubes on the
-   tray, smooth motion - and keeps the ones that pass.
-2. **Train.** At 160 new curated successes a trigger starts the pipeline, which fine-tunes the current policy on them.
+1. **Collect and curate.** The curator scores every episode - all three cubes on the tray, smooth motion - and keeps
+   the ones that pass. The page counts them toward 160.
+2. **Train.** At 160 curated successes a trigger starts the pipeline on Red Hat OpenShift AI, which fine-tunes the
+   current policy on them.
 3. **Evaluate and gate.** Candidate and incumbent run the same seeded scenes, paired scene by scene. The gate passes
-   only a candidate that fixes more than it breaks.
+   only a candidate that fixes more scenes than it breaks, with a sign test below 0.05.
 4. **Sign and register.** The model becomes an OCI image, signed with cosign, entered in a transparency log and
-   recorded in the Model Registry.
-5. **Promote and roll out.** The pipeline opens a pull request that pins the image's digest in both Fleets. A person
-   merges it, and Edge Manager does the rest.
+   recorded in the Model Registry. Every device checks the signature and the log entry before it runs the image.
+5. **Promote and roll out.** The pipeline opens a pull request that pins the image's digest for the GPU host and for
+   the robots. A person merges it, and Edge Manager does the rest. Rollback is a `git revert`.
 
-## By the numbers
+The promoted policy took task success from **82% to 92%** on 360 paired scenes: 57 scenes fixed, 19 broken. From the
+merge, the GPU host serves the new model in about a minute and a half, and all twelve robots run it in about three and
+a half.
 
-- **82% to 92%** task success on 360 paired scenes: 57 scenes fixed, 19 broken, and the gate promoted the policy.
-- **About a minute and a half** from merge to the GPU host serving the promoted model; **about three and a half
-  minutes** until all twelve robots run it.
-- **246.6 against 245.7 tokens a second**: the coding assistant's throughput with and without a training job on the
-  neighbouring slice.
-- **Thirteen robots' cameras at 15 frames a second**, two cameras each, ray-traced on one GPU slice.
-- **Twelve robots enrolled and healthy in about 25 minutes**, each a clone of one golden image with its own identity.
+![The evaluation page: the gate's paired result, and both policies' success rates side by side](docs/images/evaluation-comparison.png)
+
+More: [flywheel](docs/architecture/flywheel.md), [supply chain](docs/architecture/supply-chain.md),
+[promotion](docs/architecture/promotion.md), [data flow](docs/DATA-FLOW.md).
+
+### Training tenant
+
+Slice `0:2`, `1g.31gb`. The GPU's standing training load: fine-tunes of the ACT policy with `lerobot-train`, in rounds
+of 9000 steps at about ten steps a second, a round every quarter of an hour. It has run more than seventy rounds back
+to back. A Perses dashboard on the hub shows loss, pace and rounds, and `tools/hub/training-watch.sh` follows the same
+run from a terminal.
+
+![The training tenant: loss, steps per second and rounds on the dashboard, and the same run's output in a terminal](docs/images/training-tenant.png)
+
+The neighbours do not feel it. The coding assistant decodes 246.6 tokens a second while a round trains on the next
+slice, and 245.7 with that slice idle.
+
+### Rendering tenant and the fleet
+
+Slice `0:3`, `1g.31gb`. A MIG slice is compute only, so no simulator draws its own cameras. Every robot's world is
+physics only, and this tenant ray-traces the pictures with CUDA (MuJoCo-Warp): two cameras for each of thirteen robots,
+480x480 at 15 frames a second, in one batch per tick.
+
+![The fleet wall: thirteen robot arms in a grid, each moving cubes onto a tray](docs/images/fleet-wall.jpg)
+
+*The fleet wall: robot zero and the twelve robots behind it, every camera ray-traced on one slice.*
+
+The twelve robots are RHEL image mode virtual machines, each a clone of one golden image with its own identity. They
+enrol with Red Hat Edge Manager, join a Fleet, and take every new model in batches: a canary, then a quarter of the
+Fleet, then half, then the rest. Each robot pulls its images itself and verifies their signatures. Nobody logs in to a
+robot. Twelve robots were enrolled and healthy about 25 minutes after the first one booted.
+
+More: [fleet](docs/architecture/fleet.md).
+
+## The box, by the numbers
+
+| HP ZGX Fury | |
+|---|---|
+| CPU | NVIDIA Grace, 72 Arm cores |
+| GPU | one NVIDIA GB300, 251 GiB, split by MIG into `3g.126gb` + `1g.31gb` + `1g.31gb` + `1g.31gb` |
+| Memory | 492 GiB |
+| Storage | 12 TB of NVMe on four drives |
+| Operating system | Red Hat Enterprise Linux 10.2, aarch64 |
+
+Everything above runs on it at once:
+
+- **Four GPU tenants** on one GPU, isolated from each other.
+- **A Red Hat OpenShift hub** in a virtual machine - 32 vCPUs, 128 GiB - with GitOps, the pipeline, the Model Registry,
+  Edge Manager and Dev Spaces.
+- **Twelve robots** as virtual machines of 2 vCPUs and 3 GiB each, and **thirteen devices** under Edge Manager.
+- **About 245 tokens a second** from the coding assistant, **ten training steps a second**, and **twenty-six cameras
+  ray-traced at 15 frames a second**, side by side.
+- **About three and a half minutes** from a merged pull request to thirteen devices running the new model.
+- **About 285 W** at the GPU with all four tenants busy, at 38 °C.
+
+![GPU power draw and temperature with all four tenants busy](docs/images/gpu-power-temperature.png)
 
 ## Explore
 
@@ -94,23 +154,10 @@ flowchart LR
 | [`docs/SETUP.md`](docs/SETUP.md) | bring-up, from a fresh RHEL install to the running system |
 | [`docs/DATA-FLOW.md`](docs/DATA-FLOW.md) | an episode's path to a promotion, stage by stage |
 
-## Repository layout
-
-| Path | Contents |
-|---|---|
-| `argocd/` | the Argo CD Applications that bootstrap the hub |
-| `gitops/` | what the hub runs, one directory per application; the two Edge Manager Fleets in `gitops/rhem/` |
-| `pipeline/` | the OpenShift AI pipeline: gate, package, sign, register, pull request |
-| `src/` | the services: episode loop, evaluation pages, fleet worlds, renderer, robot zero, tenant metrics, workspace |
-| `tools/hub/` | laptop-side scripts: image builds, fleet approval and status, promotion reset |
-| `tools/host/fury/` | the scripts and units that prepared and operate the GPU host, written for that one machine |
-| `tests/` | pytest suites, by component |
-
 ## Platform
 
 | Component | Role | Version |
 |---|---|---|
-| HP ZGX Fury: NVIDIA GB300, 72-core Grace, aarch64 | the workstation | - |
 | Red Hat Enterprise Linux, RHEL image mode | the GPU host; the robots' operating system | 10.2 |
 | Red Hat OpenShift, single node | the hub | 4.22 |
 | Red Hat OpenShift GitOps, Red Hat OpenShift Pipelines | delivery from git; image builds and signing | - |
@@ -118,16 +165,5 @@ flowchart LR
 | Red Hat Edge Manager | Fleets, enrolment, staged rollout | 1.3.0 |
 | Red Hat OpenShift Dev Spaces | the coding workspace | 3.30 |
 | cosign, Rekor transparency log | signatures, verified on every device | cosign 2.6.5 |
-
-## Built on
-
-- [`ros-physical-ai/demos`](https://github.com/ros-physical-ai/demos) - the SO-ARM101 arm, its Gazebo simulation, the
-  LeRobot ACT policy and the Rosetta ROS 2 to LeRobot bridge
-- [LeRobot](https://github.com/huggingface/lerobot) - policy training and the dataset format
-- ROS 2 with the `rmw_zenoh` middleware
-- [MuJoCo-Warp](https://github.com/google-deepmind/mujoco_warp) - batched ray tracing of the fleet's cameras
-- [vLLM](https://github.com/vllm-project/vllm) - serving the coding model
-- [Flight Control](https://github.com/flightctl/flightctl) - the upstream of Red Hat Edge Manager, and the device agent
-- [sigstore](https://github.com/sigstore) - cosign and Rekor
 
 The system was developed first on an x86 development stand-in; the same manifests run on the Fury.
