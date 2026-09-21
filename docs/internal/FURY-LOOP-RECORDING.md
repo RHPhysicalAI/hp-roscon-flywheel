@@ -41,7 +41,19 @@ Another take: `reset-demo`, then `/new` in the agent.
 
 ## Clip 11, the promotion
 
-Check first: `tools/hub/fleet-status.sh` shows 13 healthy, and the pull request is open. One recording:
+Check first: `tools/hub/fleet-status.sh` shows 13 healthy, and the pull request is open.
+
+**Time the merge.** Edge Manager reads git every two minutes, so after the click nothing moves for anything between
+a few seconds and two minutes. The last read, and so the next one two minutes later:
+
+```
+oc logs deploy/flightctl-periodic -n flightctl --since=3m | grep -i resourcesync | tail -1
+```
+
+Click "Confirm merge" 15 to 20 s before the next read and the devices start to update about half a minute after the
+click. From the read to all 13 up to date is about three minutes.
+
+One recording:
 
 1. Pull request, top of the page (title and first sentence), 10 s. "Files changed", 10 s.
 2. Back to the conversation, merge box: "Merge pull request", "Confirm merge".
