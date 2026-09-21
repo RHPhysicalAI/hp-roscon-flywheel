@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # Build Plan — Desktop-as-Fury Flywheel
 
 ## Goal

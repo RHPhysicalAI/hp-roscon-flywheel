@@ -1,0 +1,63 @@
+# This project was developed with assistance from AI tools.
+# The fleet's rendering tenant (D163, D164; docs/internal/FLEET-RENDER-CONTRACT.md): robot states in over UDP,
+# MuJoCo-Warp ray-tracing both cameras of every robot in one batch, pictures out over HTTP. No ROS, no Gazebo,
+# no CUDA toolkit: Warp compiles its kernels at the first start with what its own wheel carries, and the driver's
+# libraries come in with the CDI device.
+#
+# Two stages, because the scene can only be made where upstream's workspace and Gazebo's python bindings are -
+# the sim image - and the service needs none of that:
+#   scene   FROM the sim image: src/fleet-renderer/scene.py converts upstream's SDF world and arm xacro to one
+#           MJCF, applies the geometry and colour fixes, and FAILS THE BUILD when the six arm joints, the three
+#           cubes or the two cameras are not found in it
+#   final   UBI 10 python 3.12 (minimal): the service, its pinned wheels, scene.xml + scene_map.json + the 13 STL
+#           files the scene names - nothing else of the sim image. Not UBI 9: warp-lang 1.17.0's aarch64 wheel
+#           is tagged manylinux_2_34, but its warp.so asks for GLIBC_2.35 and UBI 9 has 2.34 - found by the
+#           self-test below, which is what it is for
+#
+# SIM_IMAGE has no default on purpose. It is the image docker/Dockerfile builds; the build script passes its
+# digest reference once the hub's pipeline has pushed it, so that the scene is baked from the sim the worlds run:
+#   podman build -f docker/Dockerfile.fleet-renderer --build-arg SIM_IMAGE=<registry>/<sim image>@sha256:<digest> \
+#       -t fleet-renderer:latest .
+# On the GPU host, before that exists, against the local sim image (tools/host/fury/11-sim-build.sh):
+#   podman build -f docker/Dockerfile.fleet-renderer --build-arg SIM_IMAGE=localhost/soarm-sim:arm64 \
+#       -t localhost/fleet-renderer:arm64 .
+#
+# The last step of the build renders a frame on Warp's CPU device and encodes a mosaic: a wheel set that does not
+# import, or a scene that does not load from its final place, fails here and not on the slice.
+
+ARG SIM_IMAGE
+# fully qualified: buildah in the Tekton build refuses to guess a registry for a short name
+ARG BASE_IMAGE=registry.access.redhat.com/ubi10/python-312-minimal:10.2
+
+FROM ${SIM_IMAGE} AS scene
+COPY src/fleet-renderer/requirements-bake.txt /bake/requirements-bake.txt
+# pip's numpy shadows the apt copy ROS uses - fine in a stage that is thrown away
+RUN pip install --no-cache-dir --break-system-packages -r /bake/requirements-bake.txt
+COPY src/fleet-renderer/scene.py /bake/scene.py
+# bash by name and not through SHELL: buildah drops SHELL unless the build says --format docker
+RUN bash -c 'source /opt/ros/"$ROS_DISTRO"/setup.bash && source /ws_pai/install/setup.bash && python3 /bake/scene.py /scene'
+
+FROM ${BASE_IMAGE}
+USER 0
+COPY src/fleet-renderer/requirements.txt /opt/fleet-renderer/requirements.txt
+RUN pip install --no-cache-dir -r /opt/fleet-renderer/requirements.txt
+
+COPY --from=scene /scene/scene.xml /scene/scene_map.json /opt/fleet-renderer/scene/
+COPY --from=scene /scene/meshes /opt/fleet-renderer/scene/meshes
+COPY src/fleet-renderer/render_core.py src/fleet-renderer/mjw_batch.py src/fleet-renderer/server.py \
+     src/fleet-renderer/fake_worlds.py /opt/fleet-renderer/
+
+# Warp writes compiled kernels here; the unit mounts a volume over it so a restart does not compile again
+ENV WARP_CACHE_PATH=/var/cache/warp \
+    RENDER_SCENE_DIR=/opt/fleet-renderer/scene \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+RUN mkdir -p /var/cache/warp && chown 1001:0 /var/cache/warp && chmod 0770 /var/cache/warp
+USER 1001
+WORKDIR /opt/fleet-renderer
+
+RUN RENDER_DEVICE=cpu WARP_CACHE_PATH=/tmp/warp-selftest python3 server.py --selftest \
+  && rm -r /tmp/warp-selftest
+
+EXPOSE 9701/udp 9702
+ENTRYPOINT ["python3", "server.py"]

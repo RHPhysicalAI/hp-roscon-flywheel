@@ -1,0 +1,9 @@
+# This project was developed with assistance from AI tools.
+# The service's runtime (python 3.12, linux aarch64 and x86_64). The three renderer pins are the set measured on the
+# GPU host (tools/host/fury/mjwarp-spike); mujoco-warp is pure python and mjw_batch.py leans on this exact version.
+# warp-lang 1.17.0's aarch64 wheel says manylinux_2_34 but loads only with glibc 2.35 or newer: UBI 10, not UBI 9.
+mujoco==3.13.0
+mujoco-warp==3.13.0
+warp-lang==1.17.0
+numpy>=1.26,<3
+pillow>=10.4,<13

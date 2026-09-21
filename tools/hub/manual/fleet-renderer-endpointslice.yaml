@@ -1,0 +1,22 @@
+# This project was developed with assistance from AI tools.
+#
+# Applied by hand, once per hub:  oc apply -f tools/hub/manual/fleet-renderer-endpointslice.yaml
+# Argo CD excludes EndpointSlices (and Endpoints) from what it manages, so this cannot live under gitops/: it
+# would be reported Synced and never created. It gives Service fleet-renderer (gitops/flywheel/fleet-wall.yaml)
+# its one endpoint: the fleet's rendering tenant on the GPU host's hub-side address (D163).
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: fleet-renderer
+  namespace: flywheel
+  labels:
+    kubernetes.io/service-name: fleet-renderer
+addressType: IPv4
+ports:
+  - name: pictures
+    port: 9702
+    protocol: TCP
+endpoints:
+  - addresses: ["10.20.0.1"]
+    conditions:
+      ready: true

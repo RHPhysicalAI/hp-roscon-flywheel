@@ -3,3 +3,7 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: flywheel
+  labels:
+    # Marks flywheel as a RHOAI Data Science Project so the re-enabled dashboard (D134)
+    # lists this namespace's pipeline server (dspa) and its runs under Data Science Pipelines.
+    opendatahub.io/dashboard: "true"

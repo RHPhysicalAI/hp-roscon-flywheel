@@ -1,0 +1,137 @@
+<!-- This project was developed with assistance from AI tools. -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SO-ARM Policy Evaluation</title>
+  <script>
+    // Theme before first paint: a valid ?theme= (set by links from the sibling dashboards,
+    // which are on other hosts) wins over the saved choice and is saved; default light.
+    (function () {
+      var t = new URLSearchParams(location.search).get('theme');
+      try {
+        if (t === 'light' || t === 'dark') localStorage.setItem('eval-theme', t);
+        else t = localStorage.getItem('eval-theme');
+      } catch (e) { /* storage blocked: the URL or the default still applies */ }
+      document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
+    })();
+  </script>
+  <link rel="stylesheet" href="styles.css?v=35">
+</head>
+<body>
+  <header>
+    <div>
+      <h1 id="page-title">SO-ARM Policy Evaluation</h1>
+      <div class="subtitle" id="subtitle">Observed success rates &middot; read-only &middot; not a statistical proof of improvement</div>
+    </div>
+    <div class="header-actions">
+      <span class="chip" id="source-chip"><span class="dot"></span> <span id="source-label">--</span></span>
+      <span class="chip" id="loaded-chip">Loaded --</span>
+      <a class="backlink" id="other-view-link" title="Switch evaluation view" hidden></a>
+      <a class="backlink" id="backlink" hidden>&larr; Flywheel dashboard</a>
+      <div class="theme-toggle" id="theme-toggle" role="group" aria-label="Theme">
+        <button type="button" id="theme-light" title="Light" aria-label="Light theme">&#9788;</button>
+        <button type="button" id="theme-dark" title="Dark" aria-label="Dark theme">&#9790;</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- What this instance is, when it has said so (PAGE_NOTE): filled as text by dashboard.js, never as markup. -->
+    <div class="notice page-note" id="page-note" hidden>
+      <span id="page-note-text"></span>
+      <a id="page-note-link" hidden></a>
+    </div>
+
+    <div class="notice">
+      <strong>Primary metric</strong>: success rate (all three cubes on the tray, <code>task_success</code>),
+      including rejected episodes in the denominator when curator verdicts exist.
+      A failed episode whose cube count could not be read, or whose rollout did not finish, is not a verdict on
+      the policy: it is left out of the rate and counted on the card as not scored.
+      <strong>Secondary metric</strong>: smoothness among successful episodes only &mdash; failed episodes often
+      barely move, which would make a worse policy look smoother.
+      Wilson confidence intervals are shown; they describe uncertainty in the observed rate, not proof that one
+      policy is statistically better than another.
+    </div>
+
+    <div class="panel" id="paired-panel" hidden>
+      <div class="panel-head">
+        <h3>Paired result</h3>
+        <p>Both policies ran the same seeds. The pipeline&rsquo;s own report, shown as written &mdash; nothing here is recomputed.</p>
+      </div>
+      <div class="panel-body" id="paired-body"></div>
+    </div>
+
+    <div class="section-heading">
+      <h2>Success comparison</h2>
+      <p>All three cubes placed &middot; injected failures excluded</p>
+      <span class="right" id="origin-label"></span>
+    </div>
+    <div id="status-line" class="no-data">Connecting to dashboard…</div>
+    <section class="toolbar" id="version-picker" aria-label="Policy comparison"></section>
+    <div id="version-cards" class="card-grid"></div>
+    <div id="empty-state" class="no-data" style="display:none">
+      <span id="empty-records">
+        No episode records loaded. Mount a directory of episode JSON files at <code>/records</code>
+        (<code>RECORDS_DIR</code>), or run in live mode to read from Kafka + object storage.
+      </span>
+      <span id="empty-eval" hidden>
+        No evaluation run found yet. One appears here once a promotion run has written its
+        <code>eval_report.json</code> under <code>EVAL_DIR</code> or the evaluation bucket.
+      </span>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Episode evidence</h3>
+        <p>Raw rows behind the aggregates below &mdash; use these to verify exactly what was counted</p>
+      </div>
+      <div class="table-note" id="evidence-note" aria-live="polite"></div>
+      <div class="evidence-table-wrap">
+        <div class="evidence-groups" id="evidence-groups"></div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Partial placement</h3>
+          <p>Each row is 100% of that policy&rsquo;s episodes, by peak cubes on the tray</p>
+        </div>
+        <div class="panel-body" id="cubes-table"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Smoothness of successes</h3>
+          <p>Lower avg_smoothness = smoother motion. Failed episodes are excluded. Same bins for every policy.</p>
+        </div>
+        <div class="panel-body"><svg id="smoothness-chart" class="chart" viewBox="0 0 720 300"></svg></div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Learning curve</h3>
+          <p>Success rate vs. curated fine-tune episodes. Baseline is the version tagged with 0.</p>
+        </div>
+        <div class="panel-body"><svg id="learning-curve" class="chart" viewBox="0 0 720 260"></svg></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h3>Data integrity</h3></div>
+        <div class="panel-body integrity" id="integrity-checks"></div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <span>Read-only &middot; no writes to Kafka, object storage, or the sim</span>
+    <span id="footer-counts"></span>
+  </footer>
+
+  <script src="dashboard.js?v=35"></script>
+</body>
+</html>

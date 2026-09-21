@@ -1,0 +1,11 @@
+<!-- This project was developed with assistance from AI tools. -->
+<!-- Routed, not NATed: the tailnet reaches guests directly, and guests leave through the
+     masquerade already on the host's public zone. No libvirt dnsmasq here (dns off, no dhcp):
+     guests are static and the host's own dnsmasq owns 10.20.0.1:53. -->
+<network>
+  <name>fury-net</name>
+  <forward mode='route'/>
+  <bridge name='virbr-fury' stp='on' delay='0'/>
+  <dns enable='no'/>
+  <ip address='10.20.0.1' netmask='255.255.255.0'/>
+</network>

@@ -1,0 +1,16 @@
+# This project was developed with assistance from AI tools.
+[Unit]
+Description=Restore the MIG layout
+Wants=nvidia-persistenced.service
+After=nvidia-persistenced.service
+# the toolkit writes the CDI spec at boot; it has to see the slices when it does
+Before=nvidia-cdi-refresh.service virtqemud.service flightctl-agent.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=-/etc/sysconfig/mig-config
+ExecStart=/usr/local/sbin/mig-config.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,176 @@
+# This project was developed with assistance from AI tools.
+#
+# The live lane's curator (D166): a second Deployment of the curator's own code - the curator-code ConfigMap of
+# curator.yaml, one code, two deployments - that judges robot zero's episodes so the flywheel page can tell the
+# story live, all day. The gates judge physics (completeness, cubes on the tray, smoothness), not pixels, so the
+# verdict on an episode driven from ray-traced cameras is an honest one. No gate looks at a bag or a dataset
+# reference, so an episode with "dataset_path": null (robot zero records nothing) is judged like any other and the
+# shared code needed no knob for it.
+#
+# Judged, not kept. Robot zero's episodes must never reach the dataset, the trigger count or the evaluation pages,
+# and that is a matter of what this Deployment is, not of a setting on the flywheel's curator:
+#   - its own volume, a small PVC. The flywheel's records are the node's /var/lib/episodes, which the sync agent and
+#     the rejected mirror mount; this pod cannot mount a host path at all: its own ServiceAccount has no SCC grant
+#     (scc-rolebinding.yaml gives hostmount-anyuid to `default` and `dashboard` only) and the pod requires
+#     restricted-v2
+#   - no sync agent, no mirror and no consumer reads that volume: the dashboard mounts it read-only, nothing else
+#   - no object storage or Kafka variable, no credential, no ServiceAccount token, a python image with neither client
+#     in it, and a NetworkPolicy that lets nothing out of the pod: it answers the emitter's POST and that is all
+#   - KEEP_NEWEST: only the newest records a verdict are kept, for the page's log; the running totals are one small
+#     file. The PVC can be deleted at any time: the lane starts again at zero.
+# Its only sender is the GPU host's robot-zero-emitter unit (tools/host/fury/flywheel/robot-zero-emitter.container),
+# which 74-robot-zero-install.sh holds to this NodePort and no other address. The flywheel's curator keeps 30802.
+#
+# The port is open to whoever can reach it, and the storage class is local-path: a directory on the node, the
+# "1Gi" below is a label and no quota. So the lane is bounded by the code and the port by the network:
+#   - a body is at most MAX_BODY_BYTES (64 KB; a summary is under 1 KB), must be a JSON object with the emitter's
+#     field types, is stored compact, and raw/ is pruned like the verdict directories (curator.yaml)
+#   - only the GPU host may reach the receiver: see the NetworkPolicy and the Service below.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: curator-show
+  namespace: flywheel
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: curator-show-episodes
+  namespace: flywheel
+spec:
+  # Named, not the cluster's default: the two things this lane relies on are this provisioner's. Its volumes are
+  # hostPath directories, for which the kubelet applies NO fsGroup - so an fsGroup here would not make the
+  # directory writable, and a fixed one would break the pod where the namespace's range differs (restricted-v2
+  # assigns fsGroup itself, from the namespace's range: 1000810000 on this cluster). Writable it is because the
+  # provisioner's setup script creates the directory 0777 with container_file_t
+  # (gitops/storage/local-path-provisioner.yaml; tests/hub/test_show_lane.py holds that script to it), and
+  # readable by the dashboard because both pods get the namespace's one SELinux level.
+  storageClassName: local-path
+  accessModes: ["ReadWriteOnce"]   # one node: the dashboard's read-only mount shares it
+  resources:
+    requests:
+      storage: 1Gi
+---
+# Nothing out, and in only from the GPU host. The host reaches the receiver through the NodePort; with the
+# Service's externalTrafficPolicy: Local OVN-Kubernetes (shared gateway, as on this cluster) does not rewrite the
+# client's address on the way to the pod, so the rule below sees 10.20.0.1 - the host's address on the hub's
+# network (tools/host/fury/fury-net.xml). With the default policy, Cluster, the pod would see the node's join
+# address instead and this rule would shut the host out. Still allowed, by the CNI and not by this rule: the hub
+# node's own host-network processes. Not told apart from the host: what the host forwards under its own address
+# (the tailnet's subnet router). Shut out: every other pod, and every other machine on the hub's network - the
+# fleet's micro-VMs among them. UNVERIFIED until it runs, and the check is one line from the host (74-robot-zero.md):
+# 501 means in; a timeout means this rule sees another address - take the Ingress half out and look at the source.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: curator-show-host-only
+  namespace: flywheel
+spec:
+  podSelector:
+    matchLabels:
+      app: curator-show
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 10.20.0.1/32
+      ports:
+        - protocol: TCP
+          port: 8082
+  egress: []
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: curator-show
+  namespace: flywheel
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer of the totals file at a time
+  selector:
+    matchLabels:
+      app: curator-show
+  template:
+    metadata:
+      labels:
+        app: curator-show
+      annotations:
+        openshift.io/required-scc: restricted-v2
+    spec:
+      serviceAccountName: curator-show
+      automountServiceAccountToken: false
+      containers:
+        - name: curator
+          # the image of curator.yaml
+          image: docker.io/library/python@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
+          command: ["python", "/app/curator.py"]
+          env:
+            # the gates of curator.yaml, value for value: the verdict shown is the one the flywheel would give
+            - name: PASS_THRESHOLD
+              value: "0.5"
+            - name: SMOOTHNESS_THRESHOLD
+              value: "0.15"
+            - name: RECEIVER_PORT
+              value: "8082"
+            - name: KEEP_NEWEST
+              value: "300"
+            # a summary is under 1 KB; the flywheel's curator keeps the code's default of 1 MB
+            - name: MAX_BODY_BYTES
+              value: "65536"
+            # curator.py is read once at process start. The same value as in curator.yaml, always: one code, two
+            # deployments, moved together (tests/hub/test_show_lane.py holds the two equal)
+            - name: CURATOR_CODE_REV
+              value: "2026-09-20-bounded-receiver"
+          ports:
+            - containerPort: 8082
+              name: receiver
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          volumeMounts:
+            - name: code
+              mountPath: /app
+              readOnly: true
+            - name: episodes
+              mountPath: /data/episodes
+      volumes:
+        - name: code
+          configMap:
+            name: curator-code
+        - name: episodes
+          persistentVolumeClaim:
+            claimName: curator-show-episodes
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: curator-show
+  namespace: flywheel
+spec:
+  type: NodePort
+  # keeps the client's address for the NetworkPolicy above; one node, so nothing is lost by it
+  externalTrafficPolicy: Local
+  selector:
+    app: curator-show
+  ports:
+    - name: receiver
+      port: 8082
+      targetPort: 8082
+      nodePort: 30812

@@ -1,0 +1,80 @@
+# This project was developed with assistance from AI tools.
+#
+# The tenants' own numbers for the hub's dashboard, beside the GPU's (dcgm-exporter.container): what the training
+# tenant is doing - loss, step, steps a second, seconds a step computes and waits for data, the round - and what
+# the rendering tenant is doing - frames a second, robots live. One small exporter, Prometheus text on
+# 10.20.0.1:9401, scraped by the hub (gitops/observability/fury-tenants-scrape.yaml).
+#
+# Where the numbers come from - the code reads nothing else:
+#   - the tail of the newest round's train.log and the tail of rounds.jsonl in the training tenant's output
+#     directory (flywheel/training-tenant.sh writes both). No journal, no socket of podman's or systemd's.
+#   - the rendering tenant's GET /status on 10.20.0.1:9702, under a wall-clock deadline and a size cap: the one
+#     connection it makes outwards, and the installer holds the unit to that address.
+# A tenant that is not running is `tenant_training_up 0` / `tenant_renderer_up 0`, not an error.
+#
+# What the container could read is more than what the code reads, and is said here as it is: the mount is the
+# training tenant's WHOLE output directory, read-only - round directories come and go, so no narrower mount follows
+# them. In it: each kept round's log and lerobot output (a checkpoint with its optimizer state), the ledger, and
+# the tenant's caches, cache/huggingface (its HF_HOME) and cache/torch (its TORCH_HOME: the backbone weights). No
+# flywheel data, and no credential of this unit's own: no EnvironmentFile=, no Secret=. One credential COULD lie
+# there - HF_HOME is where a HuggingFace token is kept (cache/huggingface/token, stored_tokens) - though the tenant
+# has no network to use or fetch one with. This container has the host's network, so 75-tenant-metrics-install.sh
+# refuses to install while such a file exists, and its status warns about one.
+#
+# It holds no GPU, so it is NOT fury-mode's: it runs in both modes and through every switch. Not root inside, a
+# read-only root, no capabilities. The code is mounted, not baked into an image (the pattern of the training tenant
+# and robot zero's bridge): a fix is 75-tenant-metrics-install.sh install. The image is the signed runtime image
+# the training tenant runs in - already in root's storage - used here for its python3 and nothing else: the code
+# is standard library only. 75-tenant-metrics-install.sh refuses a copy of this file that gives any of that up.
+# What each choice rests on: 75-tenant-metrics.md
+[Unit]
+Description=Tenant metrics exporter (training and rendering numbers for the hub, 10.20.0.1:9401)
+
+[Container]
+ContainerName=tenant-metrics
+Image=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837
+Pull=never
+# Host networking with one explicit address, not a published port. A published port is a DNAT rule, and firewalld
+# accepts DNATed traffic before it looks at zones or policies: the opening in libvirt-to-host would decide nothing.
+# Who reaches 10.20.0.1:9401: the guests (the hub), through that opening. Not the lab uplink. Peers on the
+# operator's tailnet do, with or without it - accepted, as for 9400: it is the admin network.
+Network=host
+Environment=METRICS_ADDR=10.20.0.1:9401
+Environment=RENDER_STATUS_URL=http://10.20.0.1:9702/status
+Environment=TENANT_TRAIN_DIR=/tenant-train
+# seconds without a write to the round's log before the training numbers are withheld (the progress bar writes
+# several times a second; saving a checkpoint and starting a round are quiet for a few seconds)
+Environment=TRAINING_STALE_S=120
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Volume=/usr/local/lib/flywheel/tenant-metrics:/opt/tenant-metrics:ro,z
+# The tenant's whole output, caches included (the header says what that is). Read-only and no :z - the training
+# tenant's own :z made the directory container_file_t:s0, which any container may read; this unit changes nothing
+# on the tenant's side, not even a label
+Volume=/data/flywheel/tenant-train:/tenant-train:ro
+User=65534
+Group=65534
+ReadOnly=true
+DropCapability=all
+NoNewPrivileges=true
+# the image's entrypoint is the policy launcher, and its health check asks for a model this never publishes
+Entrypoint=python3
+Exec=-u /opt/tenant-metrics/exporter.py
+HealthCmd=none
+StopTimeout=10
+
+[Service]
+# a clear line in the journal instead of a bind error while libvirt has not brought the bridge up yet
+ExecStartPre=/bin/sh -c 'ip -4 -o addr show | grep -qF " 10.20.0.1/" || { echo "10.20.0.1 is not up yet (virbr-fury)"; exit 1; }'
+Restart=always
+# slow enough to stay under systemd's start limit while the bridge is awaited at boot
+RestartSec=15
+TimeoutStartSec=120
+# a python process that reads two file tails and one small JSON document every ten seconds
+CPUQuota=50%
+MemoryHigh=96M
+MemoryMax=128M
+MemorySwapMax=0
+
+[Install]
+WantedBy=multi-user.target

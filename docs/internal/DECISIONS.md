@@ -1,4 +1,7 @@
+<!-- This project was developed with assistance from AI tools. -->
 # Decisions Log
+
+*2026-09-21 — Editorial note: individuals' names were replaced by roles, including inside historical resource names, and usernames and handles in recorded commands were redacted. Nothing else was changed.*
 
 ## D001 — Defer VFIO GPU passthrough to Phase 2-3
 
@@ -93,7 +96,7 @@ must match whatever the node actually gets.
 local network resolves this.
 
 **Decision:** Added `10.0.0.49 api.sno-flywheel.local` to `/etc/hosts` on the desktop.
-Same entry needed on any machine that wants `oc` access (e.g. Jeremy's Mac).
+Same entry needed on any machine that wants `oc` access (e.g. the project lead's Mac).
 
 **Future:** If a wildcard is needed for routes (`*.apps.sno-flywheel.local`), either add
 individual `/etc/hosts` entries per route or set up a lightweight DNS (dnsmasq) on the desktop.
@@ -397,7 +400,7 @@ the full window.
 **⚠️ Deployment status — NOT yet permanent:** both fixes are running but **hot-patched**, not baked
 into images or committed:
 - `task_eval.py` → `docker cp`'d into the running `so-arm-sim` container.
-- `coordinator.py` + `task_eval.py` → bind-mounted into `act-inference` from `/home/jary/patches/`.
+- `coordinator.py` + `task_eval.py` → bind-mounted into `act-inference` from `~/patches/`.
 A container rebuild-from-image or a `/tmp` wipe (host reboot) reverts them. **Follow-up:** commit
 both files, rebuild the sim image (`:sim-only`) and the `act-inference` image, and redeploy so the
 fixes persist. Also copy the kept weak checkpoints out of `/tmp/weak-training/` (root-owned;
@@ -597,12 +600,12 @@ velocity/effort, new joint mapping) or replay it faithfully. For the project's a
 (ACT/LeRobot BC, D015) the ported form is exactly what training consumes — full bags add nothing
 to training; they are a hedge for schema change and the Phase 3+ bootstrap experiments.
 
-**Olga's dashboard does not change this.** Her read-only eval dashboard is metadata-only — it
+**A contributing engineer's dashboard does not change this.** Their read-only eval dashboard is metadata-only — it
 groups the episode JSON records (success rate, cube-count distribution, smoothness, side-by-side)
 by `model_version`, consuming `episodes-curated` + `episodes-rejected` (already in MinIO) and Kafka
-manifests. It needs neither raw bags nor the LeRobot dataset. (Her MinIO/Kafka access was already
+manifests. It needs neither raw bags nor the LeRobot dataset. (Their MinIO/Kafka access was already
 provisioned 2026-09-04: external NodePorts 30900/30903, a `rejected-mirror` CronJob, scoped
-`olga-readonly` creds.) So the raw-vs-ported choice is independent of her.
+`[engineer]-readonly` creds.) So the raw-vs-ported choice is independent of them.
 
 **Decision (operator-approved):**
 - **The hub's canonical trainable artifact is the ported LeRobot dataset**, uploaded as a single
@@ -1099,8 +1102,8 @@ definition, gate, packaging, signing, PR, and gitops manifests are written once,
   `nvidia.com/gpu`) schedules. Rollback is the same three edits reversed; the other side keeps the
   previous digest. (Fixed 2026-09-08: the first version always wrote green, which would have
   overwritten the live side in place on the second promotion.)
-- **Artifacts on Hugging Face (private, `jeremyary/`, 2026-09-08)** — LeRobot-native, so they load the
-  same way the upstream ones do (`LeRobotDataset("jeremyary/…")`, `--policy.path=jeremyary/…`),
+- **Artifacts on Hugging Face (private, `<account>/`, 2026-09-08)** — LeRobot-native, so they load the
+  same way the upstream ones do (`LeRobotDataset("<account>/…")`, `--policy.path=<account>/…`),
   and the only copies that don't share the desktop's single disk: datasets
   `soarm-flywheel-teacher-all-2026-09-08` (450 eps) and `soarm-flywheel-ladder-160` (the proof corpus,
   with `rung_plan.json`); models `soarm-act-v2-ft160` (the promoted v2), `soarm-act-ft-ladder-{20,40,80}ep`
@@ -1570,7 +1573,7 @@ C cut-over window, where the host container stops anyway.
 
 **Date:** 2026-09-08
 **Context:** the `images` pool (`/var/lib/libvirt/images`) is root-owned and the desktop user has
-no sudo; a qcow2 backing file under `/home/jary` would also need to stay readable by the qemu
+no sudo; a qcow2 backing file under `~` would also need to stay readable by the qemu
 user forever.
 **Decision:** `device/vm/create-vm.sh` does `virsh vol-create-as` (qcow2, 60 G) →
 `virsh vol-upload` of the RHEL 10.2 KVM guest image → `virsh vol-resize`, then
@@ -1580,7 +1583,7 @@ desktop's osinfo db), bridged on `br0`, `--autostart`. cloud-init only creates t
 with the desktop's key and grows the root fs; provisioning is a separate, explicit step.
 **Alternatives:** backing chain (rejected above); bootc image mode (rejected in D024).
 **Consequences:** rebuilding the VM is `virsh destroy; virsh undefine --remove-all-storage` then
-re-run; the base qcow2 at `/home/jary/images/` is untouched.
+re-run; the base qcow2 at `~/images/` is untouched.
 
 ---
 
@@ -1592,7 +1595,7 @@ without ever appearing in a transcript, log, or repo file.
 **Decision:** `provision.sh --env-file <path>` (default `/root/activation-key` if present) sources
 `ORG_ID=`/`ACTIVATION_KEY=`; `RHSM_USER`/`RHSM_PASS` remain the documented alternative. The file
 is copied to the device as `root:root 0600`, and shredded on the device once
-`subscription-manager identity` succeeds (the desktop copy at `/home/jary/activation-key` stays).
+`subscription-manager identity` succeeds (the desktop copy at `~/activation-key` stays).
 Registration output is piped through a redaction of UUIDs and org lines.
 **Consequences:** re-running `provision.sh` on a registered device skips registration and needs no
 key; the Fury run uses the same file.
@@ -1858,11 +1861,11 @@ exact thing C exists to prove); sign with `--tlog-upload=false` because the SNO 
 `virtiofsd` and Ubuntu 24.04 does not ship it with QEMU 8.2.2 (`apt-cache policy virtiofsd`:
 candidate 1.10.0-1ubuntu0.1, not installed). Everything tried without sudo failed for the same
 reason, AppArmor:
-- `<binary path='/home/jary/act-device/virtiofsd/virtiofsd'/>` (binary extracted from the .deb with
+- `<binary path='/home/<user>/act-device/virtiofsd/virtiofsd'/>` (binary extracted from the .deb with
   `apt-get download` + `dpkg-deb -x`): libvirtd's enforced profile only allows
   `/usr/{lib,lib64,lib/qemu,libexec}/virtiofsd PUx` (`/etc/apparmor.d/usr.sbin.libvirtd:97`) →
   "virtiofsd died unexpectedly".
-- Unprivileged socket mode (`virtiofsd --sandbox=none` as jary in a user unit + `<source
+- Unprivileged socket mode (`virtiofsd --sandbox=none` as `<user>` in a user unit + `<source
   socket=…>`): DAC verified OK as uid 64055 (`DAC-write-ok`), yet QEMU got `Permission denied` on
   the socket — the per-VM QEMU profile (virt-aa-helper) adds no rule for a virtiofs socket source,
   and the shared abstraction deliberately gives no blanket rw under /tmp or /home. Disabling the
@@ -1877,7 +1880,7 @@ assemble/prune flow, which already runs inside root containers, is unchanged.
 **Consequences:** `create-vm.sh` and `bags-share.sh` exit 2 with that instruction when the package is
 missing (same pattern as the missing base image). `<memoryBacking memfd/shared>` is already defined
 on `act-device` (cold restart done 2026-09-08), so attaching the share later is define + one more
-cold restart. All socket-mode artefacts were removed from the host; `/home/jary` is back to 0750.
+cold restart. All socket-mode artefacts were removed from the host; `~` is back to 0750.
 Port-as-you-go log and safety details recorded alongside this: `after_assemble.sh` keeps writing to
 `~/prune-dryrun.txt` (name kept so the retention log stays in one file; entries are now appended
 under a timestamp header) and judges the **last** `[assemble-all] DONE|FAILED` marker, not any DONE
@@ -2147,7 +2150,7 @@ reads `gz topic -e -t /world/pai_world/pose/info -n 1` (8 s timeout, returns `{}
 the coordinator's peak-cube poll swallows exceptions. From inside the VM container: `gz topic -l`
 lists the pose topic (multicast discovery crosses `br0`) but `gz topic -e … -n 1` receives nothing
 in 20 s and `gz service -l` shows no `set_pose` — the data/service path back to the guest never
-comes up (`so-arm-sim` is `--network host` on `jary-ubuntu`). Consequences already visible in the
+comes up (`so-arm-sim` is `--network host` on `<host>`). Consequences already visible in the
 live loop: after the first post-cut-over episode the cubes were never re-randomised, so
 `ba0d930c` (3/3 two seconds after `start`, 30 steps) and the later "successes" inherited cubes
 already on the tray. Separately, in eval mode the coordinator counts `/joint_states` itself from a
@@ -2339,7 +2342,7 @@ hard number attached: ~1.3 GB per kept episode, ~100 GB per hour of successes.
 at cut-over and never replaced, and it also had a silent-park bug; both VMs paused on I/O error.
 **Decision:** operator authorized (2026-09-09): `docker image prune -a` (reclaimed 0 B — shared
 layers) and moving the 172 proof bags (timestamp < 1788560700, 288 GB) to
-`/media/jary/videos/flywheel-bags-archive/` via a root container with copy → size-list compare →
+`/media/<user>/videos/flywheel-bags-archive/` via a root container with copy → size-list compare →
 `cmp metadata.yaml` → rename → remove source (logged to `~/bag-archive-2026-09-09.log`); declined
 deleting the night's 62 bags and mounting `sdb1` (4.5 TB ext4, unmounted — inbox todo). Free space:
 991 MB → 198 GB by 11:01Z. VMs resumed 10:58Z; SNO Ready, COs clean, MinIO 200, Argo Synced; device
@@ -3697,12 +3700,12 @@ C2: the curator's HTTP receiver (`0.0.0.0:8082`, NodePort 30802, no auth) builds
 `raw/` — including straight into `curated/`, which `sync-agent` ships to MinIO/Kafka as trusted
 training data, bypassing `score_episode()` entirely.
 **Investigated before touching anything:** whether the Kafka NodePort could simply be deleted or
-locked down. `docs/data-contract-eval-dashboard.md` documents a real external consumer — Olga
-Lavtar's read-only eval dashboard (APPENG-6295) — but it only *consumes* `episode-manifests` and
+locked down. `docs/data-contract-eval-dashboard.md` documents a real external consumer — a contributing
+engineer's read-only eval dashboard — but it only *consumes* `episode-manifests` and
 `dataset-manifests`; it never publishes to `training-triggers`, the topic the RCE path actually
 reads. Adding broker-level SASL/ACLs would be the complete fix, but it requires rotating
 credentials for a consumer whose code lives in a separate, inaccessible repo — not verifiable
-without a live end-to-end test against Olga's dashboard, which risks breaking a real external
+without a live end-to-end test against that engineer's dashboard, which risks breaking a real external
 integration blind. Deferred (see Consequences); fixed the actually-exploitable path instead.
 **Decision:**
 1. `src/host-runner/host_runner.py`: added `_SAFE_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]
@@ -3722,8 +3725,8 @@ integration blind. Deferred (see Consequences); fixed the actually-exploitable p
 **Consequences:** the Kafka NodePort (30903) stays open, PLAINTEXT, unauthenticated — an attacker
 can still publish garbage to `training-triggers`, but the worst outcome now is a rejected trigger
 in the log, not code execution. Broker-level SASL/ACL hardening (and coordinating a credential for
-Olga's dashboard) is a real residual, tracked as a follow-up for a session that can reach and test
-against her actual consumer — not closed here. C9 (MinIO creds in git history, same NodePort-family
+that engineer's dashboard) is a real residual, tracked as a follow-up for a session that can reach and test
+against their actual consumer — not closed here. C9 (MinIO creds in git history, same NodePort-family
 risk class) was separately waived by the operator as out of scope for this project.
 
 ---
@@ -3760,7 +3763,7 @@ risk class) was separately waived by the operator as out of scope for this proje
     `docker buildx imagetools inspect` that this digest *is* the multi-arch manifest list (amd64/
     arm64/ppc64le), matching the live pod's `imageID` exactly.
   - `gitops/minio/minio-readonly-user.yaml`: `quay.io/minio/mc@sha256:a7fe349e…` — same
-    verification, matches the completed `minio-olga-readonly-setup` Job's `imageID`.
+    verification, matches the completed `minio-[engineer]-readonly-setup` Job's `imageID`.
   - `gitops/storage/local-path-provisioner.yaml`: `registry.access.redhat.com/ubi9/ubi-minimal:9.8`
     — a real, resolvable version tag, not a digest: no helper pod has run recently to read a live
     `imageID` from, and this is baked into a ConfigMap template rather than a running container.
@@ -3781,7 +3784,7 @@ risk class) was separately waived by the operator as out of scope for this proje
 **Verification:** all five touched YAML files parse (`yaml.safe_load`); server-side dry-run
 (`oc apply --dry-run=server`) against the live desktop cluster succeeded for `minio.yaml`,
 `local-path-provisioner.yaml`, and `so-arm-sim.yaml`. `minio-readonly-user.yaml`'s dry-run reports
-"field is immutable" on the completed `minio-olga-readonly-setup` Job — expected Kubernetes
+"field is immutable" on the completed `minio-[engineer]-readonly-setup` Job — expected Kubernetes
 behavior (Job pod templates are immutable once created; this Job finished successfully 5 days ago)
 and unrelated to the digest pin itself. Actually applying this file requires deleting the completed
 Job first, a one-time step left for the operator/orchestrator rather than done here (out of this
@@ -3941,7 +3944,8 @@ to something already in the repo, verified against a couple of live checks (`doc
   verified on aarch64 today (the multi-arch signed build, the per-arch torch pin) versus what's
   designed but unrehearsed (the `ENGINE=podman` coordinator path, any real inference on Blackwell
   silicon, a from-scratch SNO bring-up done back-to-back). Also surfaces two untracked external
-  dependencies (Rick Gosalvez's access window, Manny's on-site logistics) as open, not assumed.
+  dependencies (the partner's access coordinator's access window, the partner's on-site contact's on-site
+  logistics) as open, not assumed.
 Terminology matches the parallel cleanup pass: "the presenting laptop," not personal-device
 references.
 **Consequences:** the `minio` OutOfSync finding and the unidentified container are new information
@@ -4067,7 +4071,7 @@ ladder JSON parses; live after Argo sync — see the commit's follow-up check.
 **Date:** 2026-09-09 (operator decision)
 **Context:** D124 replaced the dead Cosmos-era "Policy comparison" video card with a panel rendering the
 frozen Phase 3 ladder. On review the operator judged it a stopgap: it duplicates the read-only eval
-dashboard's scope (APPENG-6295 — success rate, cube distribution, smoothness per lineage, success vs.
+dashboard's scope (success rate, cube distribution, smoothness per lineage, success vs.
 dataset size, replayable from a frozen file directory), and it is not the comparison the demo wants.
 The comparison that would actually land is paired *video*: the eval harness already runs identical
 seeded scenes per policy, so recording a chosen seed set for v1 and v2 (and later lineages), porting
@@ -4081,7 +4085,7 @@ dropped card numbering. The old video card is not reinstated — the page simply
 The runbook's Beat 4 section, kit-table row and "What's real" line revert to the static chart
 (`docs/internal/phase3-ladder.html`) as primary with the eval dashboard taking the slot when it lands;
 the "Policy comparison card is empty" known-artifact bullet stays removed.
-**Consequences:** Beat 4 is the eval dashboard's (Olga's) or the static chart; the ops dashboard is
+**Consequences:** Beat 4 is the eval dashboard's (a contributing engineer's) or the static chart; the ops dashboard is
 Beats 1, 2 and 6 only. The paired-video design is the next Beat 4 conversation.
 
 ---
@@ -4263,7 +4267,7 @@ a registry (a mirror on the Fury, for example) is a Fleet edit, reviewed like a 
 dashboard's Beat 4, replacing the removed ladder-panel stopgap (D125). Two prerequisites surfaced:
 the host root disk was at 99 GB free (below the loop guard's 100 GB floor) with 319 loop bags
 (485 GB), and the eval harness records nothing.
-**Bag archive:** all 319 bags (485 GB) moved to `/media/jary/videos/flywheel-bags-archive/
+**Bag archive:** all 319 bags (485 GB) moved to `/media/<user>/videos/flywheel-bags-archive/
 loop-bags-2026-09-04_09` — the same NTFS HDD the D062 proof bags live on. Two gotchas, both handled:
 `rsync -a` fails on that fuseblk mount (it rejects ownership/time ops — `mkstemp: Operation not
 permitted`), so the copy uses `rsync -rlD --no-perms --no-owner --no-group --no-times --size-only`;
@@ -4282,8 +4286,8 @@ registers a second `/run_policy` on the sim's zenoh graph, which collides with t
 is *always* serving the policy into that same sim — every goal is rejected (`/rosetta_client/
 change_state` timeout). This is new since Phase 3 (pre-RHEM there was no device). Resolved by
 suspending the device VM for the recording window (`virsh suspend act-device`, operator — needs
-sudo; jary can't control the system domains), which detaches its policy from the sim. Confirmed no
-impact on Olga's eval dashboard (APPENG-6295): her sources are the SNO hub (Kafka/MinIO, a separate
+sudo; `<user>` can't control the system domains), which detaches its policy from the sim. Confirmed no
+impact on a contributing engineer's eval dashboard: their sources are the SNO hub (Kafka/MinIO, a separate
 VM) and the loop was stopped, so no live flow. The sim had also stalled (~2.6 h stale camera) and
 was restarted. After recording, `virsh resume` + the D063 recovery (chrony resync stepped the
 ~27-min clock skew, policy container restarted to reconnect to the restarted sim) returned the
@@ -4325,3 +4329,1482 @@ to the pod's pip install; `DASHBOARD_CODE_REV` bumped so Argo rolls the pod.
 **Consequences:** live/desktop card only — at the booth (no cluster) Beat 4 still falls back to the
 static chart. The featured seeds (1002, 1019) each show v1 1/3 fail vs v2 3/3 success on the
 identical scene, measured at the deployed 100/0.5 chunking.
+
+---
+
+## D134 — RHOAI dashboard re-enabled; the rest of the RHOAI component set audited (deliberately off)
+
+**Date:** 2026-09-11
+**Context:** the operator noticed there was no RHOAI UI on the cluster and asked whether we should
+run it to see pipeline results, and what other RHOAI integration was overlooked. Audited the live
+DSC: Managed = `datasciencepipelines`, `kserve` (RawDeployment, `serving: Removed`), `modelregistry`;
+Removed = `dashboard`, `workbenches`, `modelmeshserving`, `ray`, `kueue`, `codeflare`,
+`trainingoperator`, `trustyai` (DSCI `monitoring`/`serviceMesh` also Removed). The dashboard was
+Removed during the Phase 4.5 build crunch (D084, node ~99% CPU-requested); runs were read via the
+kfp client / terminal.
+**Decision:** re-enable `dashboard` (`Managed`) — the node recovered to ~67% CPU / 37% mem after the
+KFP-pod cleanup and act-serving retirement, so it fits. It gives the DSP run DAG/logs (Beat 3) and
+the Model Registry UI (Beat 6) as real product screens instead of terminal/curl. For the DSP runs to
+appear, `flywheel` had to be labeled a Data Science Project (`opendatahub.io/dashboard: "true"` on
+the namespace — added to `gitops/flywheel/namespace.yaml` and applied live); without it the
+dashboard lists no pipeline server for the namespace. Route:
+`rhods-dashboard-redhat-ods-applications.apps.sno-flywheel.local` (OpenShift OAuth); added to the
+runbook cheat-sheet, the Mac `/etc/hosts` line, and Beat 3 (the "no graphical run view" caveat is
+replaced). 2/2 dashboard pods Ready; route serving (403 unauthenticated = oauth-proxy gating).
+Reversible (set back to Removed).
+**The rest, and why they stay off (not overlooked):**
+- `kserve` serving + `modelmeshserving` — the model serves at the **edge via RHEM** (D024), not
+  in-cluster; kserve is Managed only for the modelcar format/CRDs, serving nothing.
+- `ray`/`codeflare`/`kueue`/`trainingoperator` — training is a single-GPU LeRobot fine-tune;
+  distributed training is at most a GB300 stretch (PROJECT-BRIEF), not core.
+- `trustyai` — hooks KServe-served models for monitoring/bias; N/A while serving is at the edge.
+  The one genuine "new scope" option if post-deployment model monitoring is ever wanted.
+- `workbenches` — Jupyter; not needed (could optionally host exploratory/eval work).
+- DSCI `monitoring` — RHOAI's own metrics; we use Perses/Tempo instead.
+**Consequences:** dashboard enable committed as `043b852`; namespace label + runbook here. Visual
+confirmation (the flywheel project's pipeline runs rendering in the UI) is the operator's browser
+check — the cluster-side mechanism (dashboard Managed + pods Ready + route + DS-project label +
+live DSPA) is in place.
+
+---
+
+## D135 — ACM (integrated-console RHEM) prepared under GitOps but NOT installed: the SNO has no room
+
+**Date:** 2026-09-11
+**Context:** the operator chose the product path — run RHEM as the RHACM **edge-manager** component
+so fleets/devices appear inside the OpenShift console (as thor-testing had it), rather than the
+standalone `flightctl` UI route we run now. ACM 2.17 (`advanced-cluster-management`, channel
+`release-2.17`, CSV v2.17.1) and its MCE dependency are in the catalog. Mechanism (RHACM docs,
+2.13-era, to re-validate on 2.17): enable the `edge-manager-preview` component in the
+`MultiClusterHub` CR, then add the flightctl console plugin to `console.operator/cluster`.
+**Resource finding (the blocker):** baselined the node before installing anything — it is at **87%
+CPU requested (13499m of 15500m allocatable), ~2 cores free**, memory 46%. That is up from ~67%
+earlier today because the RHOAI dashboard (D134) was enabled (`redhat-ods-applications` is now the
+top requester at 3410m; then `flightctl` 2412m, `openshift-gitops` 1875m, `flywheel` 1615m). ACM's
+MultiClusterHub base needs ~4+ CPU cores. It does not fit on the current 16-vCPU VM; forcing it
+would leave MCH components `Pending` and risk starving the running demo (RHOAI/RHTAS/pipelines/
+MinIO/Kafka/flywheel). Per the resource guardrail, **nothing was applied live.**
+**Decision:** staged the install under GitOps, unapplied: `gitops/acm/operator.yaml` (Namespace +
+OperatorGroup + Subscription), `gitops/acm/multiclusterhub.yaml` (MCH with `edge-manager-preview`
+enabled and heavy components trimmed), `gitops/acm/README.md` (apply order + the migration phase),
+`argocd/acm-app.yaml` (manual-sync, finalizer; deliberately no `automated:` block). The standalone
+`flightctl` (`argocd/rhem-app.yaml`) and the enrolled `act-device` are untouched and stay live.
+**Operator action required:** increase the SNO VM vCPU (≈16 → 24) and restart it (host `virsh`/
+sudo + SNO reboot — only the operator can do this) so the node has ~10 cores free. Then apply
+`argocd/acm-app.yaml`, validate the edge-manager component name on 2.17, bring up the MCH watching
+CPU, enable the console plugin. Migration to ACM's flightctl (re-enroll `act-device`, recreate
+Fleet/Catalog) and retirement of the standalone flightctl is a **later phase**, only after the ACM
+edge-manager is proven — the two coexist during migration, so peak demand needs the bigger node.
+**Consequences:** no change to the running cluster; the integrated-console RHEM is one VM resize +
+`oc apply` away, reproducibly. If the resize isn't wanted before ROSCon, the standalone flightctl
+UI remains the working (capability-complete) view.
+
+### D135 addendum (2026-09-11) — ACM backed out: 2.17 dropped RHEM
+
+ACM 2.17 was installed to test the integrated-console RHEM path, but the MultiClusterHub validating
+webhook **rejected `edge-manager-preview`** ("not a known component") — Edge Manager has graduated
+out of RHACM into the standalone **Red Hat Edge Manager** product, so ACM is the wrong vehicle and
+gets us nothing for RHEM. The maxPods stall (node hit kubelet's 250-pod cap; ACM added ~147 pods on
+top of ~176) was all ACM add-ons we never needed. Backed out cleanly: deleted the MultiClusterHub
+(finalizer-stuck on the `local-cluster` ManagedCluster / klusterlet / MCE chain — force-cleared
+finalizers since we were removing it), removed the ACM operator (CSV + OperatorGroup + Subscription),
+deleted all `open-cluster-management*` / `multicluster-engine` / `local-cluster` namespaces, and
+removed the `acm`/`mce` entries from `console.operator/cluster` `spec.plugins` (back to
+networking+monitoring). Removed `gitops/acm/` and `argocd/acm-app.yaml` from git. The standalone
+flightctl and the enrolled device were untouched throughout. **Next:** the integrated console comes
+from the standalone RHEM's own `flightctl-plugin` ConsolePlugin — productized chart
+charts.openshift.io `flightctl` 1.0.2 — layered on the flightctl/RHEM install we KEEP; no ACM.
+
+## D136 — Integrated-console RHEM deferred; keep the standalone install; loop restarted
+
+**Date:** 2026-09-11
+**Context:** pursuing D135's "next" — layer the productized RHEM chart's `flightctl-plugin`
+ConsolePlugin onto the install we keep. Inspected the 1.0.2 chart template
+(`templates/ui/flightctl-ui-console-plugin.yaml`): the ConsolePlugin is **gated on
+`enableMulticlusterExtensions == "true"`** (or `"auto"` with the MultiClusterEngine CRD present).
+The planned swap set it `"false"` ("we're not on ACM"), under which **no ConsolePlugin renders at
+all** — so the swap would have torn down the proven 1.3.0 install and still yielded only a
+standalone UI. Converging evidence (ACM 2.17 dropped edge-manager per D135; the standalone chart
+gates its console plugin behind the multicluster flag; the plugin displayName is "FCTL Plugin", not
+"Red Hat Edge Manager") indicates a **cleanly-supported, RHEM-branded, in-console experience does
+not exist at the versions we have** — it reads as an ACM 2.13–2.15-era capability the current
+split has pulled apart. Remaining paths (force the flag off-label standalone; reinstall MCE-only to
+satisfy `"auto"`; keep standalone; defer) are all compromises.
+**Decision:** **keep the working standalone RHEM 1.3.0 install as-is** (UI route + enrolled
+`act-device` intact), defer the integrated-console pursuit. No teardown; `argocd/rhem-app.yaml`
+already points at the 1.3.0 standalone, so **no repo change was needed**. Revisit when the RHEM
+productization/console-plugin story settles (or if MCE-only is later judged worth the weight).
+**Also:** restarted the flywheel collection loop on the desktop host — `act-coordinator` from the
+Tekton-signed runtime digest `sha256:02e66d89…`, `MODEL_VERSION=act-v2-ft160` (matches the Fleet;
+`Observed model_version` clean, no D073 mismatch). Preflight green: disk-guard resident, 540 GB
+free, no prior coordinator (D057), sim/pose up, zenoh on 7447. Verified live: recorder activated,
+device policy action server reachable, episodes recording. First loop run on the Tekton digest
+(prior runs were the interim `2ad1fb1c…`).
+**Consequences:** the demo shows the standalone RHEM UI (capability-complete), not the OCP-console
+plugin. flightctl CLI token is expired (401) — device-management view only; re-login is a
+browser-OAuth step (`flightctl login --web`) for the operator, does not affect the loop.
+
+## D137 — sdb1 mounted, flywheel-data relocated off the root disk (D061 root cause fixed)
+
+**Date:** 2026-09-11
+**Context:** the root disk (`/dev/nvme1n1p2`, 1.8 TB) held BOTH the raw episode bags
+(`~/flywheel-data`) and the qcow2 images of the `sno-flywheel`/`act-device` VMs, so a bag flood
+paused MinIO/Kafka/the sim together — the D061 outage mechanism (9/09) and the D132 brush with the
+floor. `disk-guard.sh` only reacts (stops recording at the 100 GB floor), never reclaims. The
+4.5 TB ext4 `sdb1` had sat unmounted as the `flywheel-mount-sdb1-relocate-data` inbox todo.
+**Decision:** mounted `sdb1` (by UUID) at `~/flywheel-data` via
+`/etc/fstab` (`defaults,noatime,nofail`) and relocated all 231 GB of flywheel-data onto it — now
+253 GB used / 4.3 TB free. **New bags land on the 4.5 TB disk, no longer competing with the VM
+qcow2 files** — the structural fix D061 flagged as option 3. All script paths stay `~/flywheel-data`
+(mounted over), so no code change. Kept `~/flywheel-data.old` (231 GB, on root) as rollback until a
+full loop cycle validates the new mount, then `sudo rm -rf` reclaims it (root ~85% → ~72%).
+**Gotcha (root cause of a mid-op scare):** `sdb1` carried a label and was NOT blank —
+GNOME had auto-mounted it under `/media`, so the first explicit `mount /dev/sdb1 /mnt/flywheel-new`
+silently missed and `rsync` wrote 231 GB to a root-disk folder instead of the disk. Caught by the
+recovery script's mountpoint/device asserts (`findmnt … == /dev/sdb1`, SRC≠DST filesystem) before
+any delete; corrected by copying `~/flywheel-data.old` onto the correctly-mounted disk. The drive's
+pre-existing 23 GB `models/` was moved aside to `~/flywheel-data/_preexisting-20260911T183207Z/`,
+not merged. Also hit: running the recovery script under `sudo` made `$HOME=/root`; fixed by running
+as the user. Lesson: verify a mount actually took (mountpoint check) before rsyncing, or a failed
+mount writes to the underlying dir.
+**Consequences:** the D061-class outage can't recur the same way (bags off the VM disk).
+`disk-guard.sh` stays as the floor. The weekend re-baseline runner's `disk-drain.sh`
+`HIGH_WATER_GB=300` was calibrated for the old shared 1.8 TB disk and should be retuned before it is
+armed. Follow-up: optionally neuter the GNOME auto-mount so it can't re-grab sdb1 on boot (fstab is
+authoritative now).
+
+## D138 — Standalone MinIO/Kafka for a contributing engineer while SNO was down, and a fresh clean paired-eval (r2) to replace contaminated comparison data
+
+**Date:** 2026-09-13/14
+**Context:** the SNO VM was shut down over the weekend to free the desktop's RAM/cores for other GPU
+work. A contributing engineer's eval dashboard reads MinIO + Kafka off the SNO node IP `10.0.0.49`
+(NodePorts 30900 / 30903), which die with the VM. Separately, v2's *operational* curated data was
+contaminated — after a cut-over the sim stopped re-randomising cubes, so episodes inherited
+tray-placed cubes and logged inflated "successes" (the D2155-area finding) — making the v1/v2
+comparison unfair. The fair method is the eval harness (homes the arm each episode, pins the scene),
+not the loop's operational rate.
+**Decision A — standalone data plane for that engineer (no cluster):** stood up plain host containers
+`[engineer]-minio` (`quay.io/minio/minio`, digest-pinned to the cluster's) and `[engineer]-kafka`
+(`quay.io/strimzi/kafka:0.45.0-kafka-3.9.0`, KRaft) via `~/[engineer]-stack/up.sh`, mirrored that engineer's two
+buckets + Kafka log dir off the (still-up) cluster, recreated the scoped `[engineer]-readonly` user, and
+**gave the host the freed `10.0.0.49` as a br0 secondary IP** so their endpoints/ports are byte-for-byte
+unchanged (the desktop already routes that range for remote users, so their tailnet
+traffic terminates there). Creds live in mode-600 files under `~/[engineer]-stack/`, never printed.
+Kafka's external listener hard-codes `advertised.listeners=10.0.0.49:30903`, so the standalone maps
+host `10.0.0.49:30903 → container 9094` to match.
+**Decision B — fresh clean paired-eval (r2):** ran teacher (v1, `upstream-act-teacher`) vs
+`act-v2-ft160` (v2) on the **same seeds**, homed arm, pinned `RANDOM_RADIUS=0.03`, **served locally
+on the RTX 5090** (`ROLE=all POLICY_DEVICE=cuda`, device off — no `/run_policy` collision, D132) via
+`tools/host/local/paired-eval-shifted.sh` wrapped by `~/[engineer]-stack/r2/run-r2.sh` (resumable, chunked).
+Started 160, appended to **360 each** in one continuous re-run (resume skips finished chunks).
+**Result (360 paired): teacher 81.9% (295/360), v2 92.5% (333/360); fixed=57 broken=19 net=+38
+sign_p=0.0000 verdict=PASS** (D022 rule). Report at `~/flywheel-data/eval/r2-clean/paired-report.md`.
+**Bridge to the dashboard's contract:** `~/[engineer]-stack/r2/explode.py` converts the eval JSON's
+`episodes[]` into the dashboard's per-episode record schema — clean labels (NOT `eval-*`, which the
+dashboard drops), `task_success`→`curation_verdict` pass/reject, `rollout.{steps,duration_s}` — and
+lands them in **new isolated buckets `episodes-curated-r2` / `episodes-rejected-r2`** (both pass and
+reject per version, so the dashboard's success rate isn't hidden). That engineer points their dashboard at those
+two buckets (2 env vars) + `versions.yaml` (`upstream-act-teacher: 0`, `act-v2-ft160: 160`); old
+buckets untouched. Final clean state: 628 curated + 92 rejected = **720**.
+**Gotchas (all fixed):** (1) the teacher HF-cache snapshot's files are **symlinks into `../../blobs/`**,
+which dangle when only the snapshot dir is bind-mounted — materialized a flat copy at
+`~/[engineer]-stack/r2/teacher-ckpt` via `cp -rL`. (2) Re-run seeds (1150–1159) **flipped outcome** between
+runs, leaving stale duplicate object copies across buckets (723 vs 720); reconciled by re-exploding
+from the authoritative raw chunk files into `records-final` and `mc mirror --overwrite --remove`.
+(3) `pkill -f run-r2.sh` matched its **own** SSH command line → self-kill; and `ssh -n` + a heredoc
+silently no-ops (stdin is `/dev/null`). (4) the `minio/mc` image lacks `grep`/`awk`, and parens in an
+`echo` break its `sh`. **Fallback preserved:** `~/[engineer]-stack/r2/records.bak160` (the verified 160-each
+state) + `r2-clean.bak160`.
+
+### D138 addendum — reclaim ordering (bring SNO + the loop back; tear the standalone down)
+
+The r2 eval data lives **only** in the standalone MinIO, so the reclaim must preserve it. Order
+(⚠️ the IP release must precede the VM start, or node and host fight over `10.0.0.49`):
+1. r2 data is already on disk (`~/[engineer]-stack/r2/records-final`, 720) — no export needed.
+2. Stop `[engineer]-minio` + `[engineer]-kafka` (docker).
+3. **`sudo ip addr del 10.0.0.49/24 dev br0`** (operator), then **`sudo virsh start sno-flywheel`**
+   (+ `act-device` for the loop). Wait ~10–15 min for the single node to stabilise.
+4. Re-create `episodes-curated-r2` / `episodes-rejected-r2` in the **cluster** MinIO and upload
+   `records-final`; extend the cluster `[engineer]-readonly` policy to those buckets — so that engineer's endpoint
+   (`10.0.0.49:30900`) and data are unchanged, now served by the cluster.
+5. Bring the collection loop back (device clock-step after suspend per D132/D063, sim already up,
+   `run-coordinator.sh` on the Tekton digest, disk-guard first).
+
+## D139 — Fury pre-flight re-check: Phase 0 amended, no locked decision changed
+
+**Date:** 2026-09-18
+**Context:** `docs/internal/FURY-PLAN.md` was written from a read-only inventory of the real HP ZGX
+Fury earlier the same day. Before the first privileged step, the box was re-inventoried (read-only,
+21:10 UTC) to catch drift — the machine is shared.
+**Decision:** the thirteen locked decisions stand. Phase 0 is amended in six places:
+1. **The blank data disk is addressed by identity, not by name.** The blank 3.7 TB disk and the
+   staged `models` disk are the same Samsung model; `nvme0n1`/`nvme1n1` are enumeration order and may
+   swap across a reboot. Step 2 resolves the blank disk through `/dev/disk/by-id` (by serial) and
+   requires `wipefs -n` to print nothing before `mkfs`. Same class of mistake as D137
+   (a mount that silently missed) — assert the target before the destructive step.
+2. **`kernel-64k-modules-extra` joins the package step.** RHEL 10 ships `xt_mark` in
+   `kernel-modules-extra`; the image has it only for the 4k `211.49.1` kernel, not for the running
+   64k `211.56.1`. tailscaled (iptables-nft mode) already reports its `ts-forward` MARK rule failing,
+   which would break the `10.20.0.0/24` subnet router (decision 7/8). The matching package is in
+   BaseOS. Fallback if it still fails: `TS_DEBUG_FIREWALL_MODE=nftables`. Tracked as unknown 9.
+3. **dnsmasq answers `sno-flywheel.local` authoritatively and serves `api-int`.** The host's resolver
+   is MagicDNS (`/etc/resolv.conf` is Tailscale's); split DNS sends `sno-flywheel.local` back to this
+   host, so a name dnsmasq does not know would loop host → MagicDNS → host. `local=/sno-flywheel.local/`
+   closes it. `api-int.sno-flywheel.local` is added because the SNO node resolves it during install.
+4. **The BMC address is not recorded in git** — the repo is public. The operator holds it.
+5. **`nvidia-container-toolkit` comes from Red Hat, not from NVIDIA's repo.** `1.20.0-1` (the version
+   `device/provision.sh` pins) is in `rhel-10-for-aarch64-supplementary-rpms`, already enabled on the
+   box, alongside the driver and its precompiled kmods. Step 3 installs it from there and adds no
+   third-party repo. Follow-up for Phase 4: `provision.sh` still drops NVIDIA's `.repo` file
+   unconditionally — make it skip that when the pinned version is already installable or installed.
+6. **Modular libvirt daemons, not `libvirtd`.** RHEL 10.2 still ships the monolithic unit, but the
+   modular sockets are the default and the two must not both be enabled. `mig-config.service` orders
+   `Before=virtqemud.service`.
+**Also learned:** the lab uplink's prefix had been recorded wrongly (corrected). `gdm` is already disabled; no suspend attempt since
+20:21:41 UTC, after the masks. Decision 5's 4k fallback is cheap: precompiled `kmod-nvidia-open` is
+installed for both page sizes of both kernel versions, and `dnf-plugin-nvidia` filters kernel updates
+that lack one. Unknown 3 is retired: `flightctl-agent-1.3.0-1.el10.aarch64` and
+`nvidia-container-toolkit-1.20.0-1.aarch64` both exist in their repos. A 2.7 GB USB mass-storage
+gadget (`sda`, RHEL 10.2 BaseOS ISO) is BMC virtual media — left alone.
+**Gotcha:** an unprivileged `dnf list` over a `bash -s` heredoc prompted to import a repo GPG key
+and consumed the rest of the script as its answers (nothing was imported). Give `dnf`/`curl`
+`</dev/null` inside piped scripts, or use `ssh -n` with a quoted command. The known-hosts entry is
+under the node's name, so by-IP SSH needs `-o HostKeyAlias=<that name>` rather than relaxing host-key checks.
+**Consequences:** Phase 0 step 2 cannot hit the `models` disk by name drift; step 6 has a working
+forwarding path to verify rather than a known-broken one.
+
+### D139 addendum — the host's hostname is left unset in Phase 0
+
+Step 1 originally set the hostname to the machine's tailnet name. Checked before running it: nothing in `device/`,
+`tools/host/` or the Fleet reads the host's name; the tailnet name is pinned in Tailscale's prefs
+(a pinned `Hostname`), independent of the OS; no X session or vendor agent is keyed on it. So it is
+cosmetic — and it has two side effects on a machine that is HP's and shared: NetworkManager would
+start sending the name to the lab's DHCP server (`dhcp-send-hostname` is at its default), and with
+`hosts: files dns myhostname` plus no `/etc/hosts` entry the box would resolve its own name through
+MagicDNS first, stalling `sudo` and friends whenever tailscaled is down — exactly during step 6.
+Deferred to just before Phase 4 (where the name becomes visible in the RHEM UI), with HP's agreement
+and an `/etc/hosts` line. Reversible at any time with `hostnamectl set-hostname ""`.
+
+## D140 — The Phase 0 reboot stalled in the initramfs on the BMC's virtual media, not on anything Phase 0 changed
+
+**Date:** 2026-09-18
+**Context:** the step 4 reboot (22:20 UTC) did not come back: no SSH, no tailnet, KVM showing a black
+screen with a cursor, SOL refusing to connect. A Ctrl+Alt+Del from the KVM at 22:38 rebooted it (so the
+OS was alive), the second boot was force-restarted from the BMC at ~22:46, and the third came up at
+22:52 with no intervention at GRUB.
+**Finding:** on the boot that came up, `systemd-analyze` reads 10.7 s kernel + **3 min 43 s initrd** +
+24.7 s userspace. Inside the initramfs, `dracut-initqueue` logs "Timed out while waiting for udev queue
+to empty" at 166 s and only scans LVM (finding root at once) at 232 s. What udev is stuck on is the
+BMC's virtual-media USB disk (`OpenBMC Virtual Media Device`, the RHEL 10.2 installer ISO left attached
+since the install): the kernel resets it 10 s after it attaches and eight times during the boot, with
+an I/O error. The initramfs for this kernel is dated 18:09, before any Phase 0 work, and the 18:45
+boot had already spent ~2 min 20 s before userspace. So the stall predates Phase 0 and its length
+depends on how the BMC serves that image. BMC POST codes confirm the firmware side was identical to
+the day's good boots (ReadyToBoot to ExitBootServices in 4.4 s, which also rules out having booted
+the installer).
+**What Phase 0 added to boot:** everything it changed runs after the root switch, and that whole phase
+took 24.7 s. `mig-config.service` ran, the four MIG devices came back **with the same UUIDs**, `/data`
+and the container-storage bind mounted. The early suspicion of the MIG unit was wrong.
+**Not proven:** why the first boot sat for 17 minutes. journald on this image is volatile
+(`/var/log/journal` does not exist), so the failed boots left no logs.
+**Decision:** no further reboots until the virtual media is ejected (the BMC and the image belong to the machine's owner:
+ask, then eject under Operations -> Virtual media). Make journald persistent so the next incident
+leaves evidence. SOL is unusable ("Connection closed unexpectedly"); the KVM is the console, and
+because the kernel's console is serial-only the KVM shows nothing during boot unless `console=tty0`
+is added at GRUB.
+**Lesson:** on a remote box, read `systemd-analyze` and `journalctl --list-boots` *before* the first
+planned reboot. A two-minute initrd and a one-boot journal were both visible beforehand.
+
+### D140 addendum — the virtual media stays attached for now (operator's call)
+
+D140 said no reboots until the BMC's virtual media is ejected. The operator overrode that the same
+evening: once ejected it cannot be re-attached from outside the lab. So it stays. Consequences accepted: every boot spends minutes in the initramfs
+(3 min 43 s measured; 17+ min seen once, cause unproven), so reboots are kept to the necessary ones,
+given 5-20 minutes before anyone worries, and watched through the KVM with `console=tty0` added at
+GRUB. If it bites a second time in a way that is verified, the OS-side mitigation is to make the
+kernel ignore that one USB storage device, which needs no BMC change. The image itself is 2.74 GiB -
+neither the stock boot image nor the stock DVD;
+`tools/host/fury/copy-vmedia.sh` exists to take a checked copy to `/data/iso/`, but the operator
+chose not to run it: no copy has been made. Revisit only if a boot problem recurs.
+
+## D141 — Fury Phase 0 closed: what was built, and what differs from the plan as written
+
+**Date:** 2026-09-18
+**Context:** Phase 0 of `docs/internal/FURY-PLAN.md` (host preparation) was run by the operator from
+scripts in `tools/host/fury/`, one step at a time, each checked before the next.
+**State of the host:** boots to `multi-user.target`, sleep targets masked, `gdm` and
+`nvidia-fabricmanager` off; hostname left unset (D139 addendum). `/data` is ext4 on the blank 3.7 TB
+NVMe, mounted by label, with rootful container storage bind-mounted onto it. libvirt (modular
+daemons), `nvidia-container-toolkit` 1.20.0 from RHEL Supplementary, `kernel-64k-modules-extra`.
+MIG `9,19,19,19`: `0:0` = 3g.126gb, `0:1`-`0:3` = 1g.31gb; restored at boot by `mig-config.service`;
+MIG UUIDs are identical across a reboot. `fury-net` (routed, `virbr-fury`, host `10.20.0.1`), libvirt's
+`default` network stopped. dnsmasq serves the cluster zone on `lo`, `virbr-fury` and `tailscale0`.
+Tailscale advertises `10.20.0.0/24`; split DNS sends `sno-flywheel.local` to the host.
+**Differences from the plan as first written, all exercised:**
+1. **The CDI spec belongs to the toolkit.** Red Hat's build enables `nvidia-cdi-refresh`, which writes
+   `/var/run/cdi/nvidia.yaml` at boot, and that directory outranks `/etc/cdi`. `mig-config.service`
+   orders itself before it; no `/etc/cdi` file is written. After a manual reslice:
+   `systemctl restart nvidia-cdi-refresh`. The spec carries index names and MIG-UUID names.
+2. **The host resolves through its own dnsmasq** (`/etc/resolv.conf` -> `127.0.0.1`, NetworkManager
+   `rc-manager=unmanaged`, `tailscale set --accept-dns=false` on the Fury only). Cluster names resolve
+   on the host without the tailnet's control plane, and NetworkManager and Tailscale no longer take
+   turns rewriting the file. Decision 8 is unchanged for guests and laptops.
+3. **Guest -> host traffic is filtered by libvirt's `libvirt-to-host` firewalld policy** (reject, with
+   a short allow list that includes dns). Anything a guest must reach on `10.20.0.1` — the Zenoh
+   router, the camera stream (D124), a DCGM exporter — needs its port added to that policy in the
+   phase that introduces it. Inbound to the routed network and guests outbound are already accepted
+   (`libvirt-routed-in` / `-out`), and outbound leaves through the masquerade on the `public` zone.
+4. **Containers reach a MIG slice while still SELinux-confined** (`container_use_devices` off) — shown
+   for NVML only (`nvidia-smi -L`). Whether a CUDA workload also does is Phase 1.1's question, and
+   decides whether the Fleet's `SecurityLabelDisable=true` can go.
+**Also learned:** `.local` works through Tailscale split DNS on macOS. The operator's Mac pins ~17
+`*.apps.sno-flywheel.local` names to the desktop cluster in `/etc/hosts`, which beats DNS; they must
+be commented out to use the Fury cluster by name — one cluster per name at a time (decision 8). The
+tailnet path to the Fury is relayed (about 100 ms), so bulk data should be pulled by the Fury from
+registries, not pushed through the tailnet. Boot hazard and its handling: D140.
+**Unknowns retired:** 3 (aarch64 rpms) and 9 (subnet routing on the 64k kernel).
+
+## D142 — On the Fury, MIG and a working sim are mutually exclusive; measured, with options (decision 1 needs the operator's call)
+
+**Date:** 2026-09-19
+**Context:** Phase 1 on the real machine. The arm64 runtime image, CUDA on a MIG slice, the 64k-page
+kernel, SELinux confinement, the native sim build and the whole ROS 2 + Zenoh + policy stack all work
+(unknowns 1 and 2 retired). The first seeded eval (D020 config, seeds 1000-1004, `act-v2-ft160`) then
+scored **0/5, mean 0.4 cubes** where the desktop scores 92.5 %.
+**Finding:** Gazebo's cameras (ogre2, OpenGL, with voxel global illumination in the upstream world) need a
+graphics API. NVIDIA's MIG guide: "No graphics APIs are supported (for example, OpenGL, Vulkan and so on).
+The exception to this is RTX Pro 6000 Blackwell GPUs…"; `+gfx` profiles are "new in GB20X" and data-centre
+Blackwell has none; MIG mode is per GPU and "without creating GPU instances… CUDA workloads cannot be
+run". The Fury has one NVIDIA GPU, no add-in card (NVIDIA's DGX Station design puts display on a PCIe
+add-in GPU; none is fitted in this unit), and the BMC's ASPEED chip is 2D only. Reproduced on the
+box with a control: same container, same injected NVIDIA graphics libraries — with MIG on, EGL offers
+only Mesa's software device (cameras **1.66 Hz**, one sim ≈ 7 cores); with MIG off, `GL_VENDOR = NVIDIA`
+and both cameras run at **30 fps**, and the same five seeds score **4/5, mean 2.6 cubes**. The render
+rate, not arm64 / 64k pages / the unpinned upstream sim, caused the collapse. Decision 3's "Gazebo on
+CPU" does not hold: software rendering would need ~18x.
+**Measured capacity with MIG off** (`tools/host/fury/22-sim-scale.sh`, isolated sims, each its own network
+namespace and `GZ_PARTITION`): 1 sim 30 fps at real time, GPU ~40 %, 5.2 cores; **2 sims 30 fps each,
+real time, GPU ~68 %**; 4 sims 19 fps each, GPU ~90 %; 6 → 13.6 fps; 8 → 10.7 fps. Total throughput
+saturates around 150-170 camera frames/s, i.e. **two full-rate sims**; beyond that the sims fall behind
+real time (the single-sample RTF reading flips between ~1.0 and ~0.02-0.05 as physics stalls on rendering —
+measure sim-time advance over a window next time). A CUDA job saturating the GPU next to 4 sims costs a
+further ~22 % (19 → 14.8 fps). CPU is not the limit.
+**Options on this hardware:** (a) **two modes** — MIG off for the robot loop (sim + serving + training share
+the GPU as on the desktop), MIG on for a tenancy showcase; switching needs the GPU idle, about a minute
+plus workload restarts. (b) **no MIG**, soft sharing (MPS / time-slicing): everything at once, no hardware
+isolation, and only two full-rate sims. (c) **render the cameras with CUDA instead of OpenGL** so the sim
+side fits inside MIG slices: maintained CUDA-only ray tracers exist on NVIDIA Warp (MuJoCo-Warp's batch
+renderer, Newton's tiled camera); upstream already ships a MuJoCo model of the whole scene and a MuJoCo
+bringup with the same ros2_control controllers and camera topics, so a separate renderer node (scene +
+joint/cube poses in, two images out) could serve Gazebo physics unchanged. Nobody reports Warp rendering
+under MIG — `tools/host/fury/23-warp-probe.sh` tests that gate. Cost of (c): new pixels, so a new teacher;
+bootstrap by running the current policy in GPU-rendered Gazebo (MIG off) while the new renderer draws the
+same episodes, then fine-tuning on the new images. (d) an RTX PRO add-in GPU — not an option for this
+demo.
+**Status:** decision 1 ("MIG on, everything built against slices from day one") cannot stand as written.
+Proposed: run the flywheel phases (1-5) with MIG off — needed under every option, including (c)'s
+bootstrap; keep the MIG layout one command away; decide the demo structure (two modes vs CUDA-rendered
+sims under MIG) once the Warp probe and, if it passes, a MuJoCo-Warp spike have numbers. Pending the
+operator's decision.
+**Also fixed along the way:** `docker/healthcheck.sh` hung forever when it ran before the model version was
+published (`ros2` ignores SIGTERM under rmw_zenoh, so plain `timeout` never returned) — now `timeout -k`.
+The pinned modelcar digest is amd64-only (mounts fine, podman warns). Native sim build: 6 min.
+
+### D142 addendum — CUDA-only camera rendering works inside a MIG slice on the Fury
+
+`tools/host/fury/23-warp-probe.sh` (NVIDIA Warp 1.17 from PyPI, CUDA 12.9 runtime, kernels JIT-compiled
+for `sm_103` in 0.6 s, ray-casting a stand-in tabletop scene for two 640x480 cameras, frames copied back
+to the host): **6,449 frame pairs/s on the whole GPU, 2,096 on a MIG 1g.31gb slice** — against 30
+needed. No public report of Warp rendering under MIG was found beforehand; this is the gate for option
+(c) and it is open. A toy scene with single-hit shading is not the real arm with textures and shadows,
+so the next measurement is the MuJoCo-Warp batch renderer on upstream's MJCF scene
+(`tools/host/fury/mjwarp-spike/`). Switching MIG off and back on took two seconds each way with the GPU
+idle, and the MIG UUIDs came back unchanged.
+**Shape the operator wants kept in view:** MIG stays on and **one slice is the rendering tenant** for a
+fleet of robots (physics on CPU cores, cameras ray-traced with CUDA), next to the LLM, serving and
+training tenants — which would remove mode switching from the demo entirely. The flywheel with MIG off
+and a GPU-rendered Gazebo remains act one and the bootstrap for the new teacher.
+**Meanwhile, natively:** the robot loop is no longer hand-started containers. `fury-mode flywheel|tenants`
+moves the GPU between the two states (the choice persists across reboots through `MIG_LAYOUT`, `none`
+meaning MIG off); sim and policy are quadlets behind `fury-flywheel.target`, the sim refusing to start in
+MIG mode; the recorder is a unit bound to `disk-guard.service` and gated on 1.5 TB free, replacing the
+`pgrep` check, and the guard stops the unit rather than a container systemd would restart.
+
+## D143 — Demo structure on the Fury: two acts on one GPU, host workloads governed through RHEM (operator's direction)
+
+**Date:** 2026-09-19
+**Context:** D142 showed that MIG tenancy and a GPU-rendered Gazebo cannot coexist on the one GB300, and
+that CUDA-only rendering does run inside a MIG slice. The operator asked where OpenShift belongs in the
+picture, since every GPU workload had ended up as a host container outside it.
+**Direction:**
+- **Act 1 — the governed flywheel, MIG off.** One GPU-rendered robot; sim, policy serving and training share
+  the GPU. Host workloads are podman quadlets **delivered and governed by RHEM** from the OpenShift hub (Git →
+  GitOps → Fleet → device, signed images verified on the device) — hand-installed from
+  `tools/host/fury/flywheel/` only until the host is enrolled. Also the bootstrap for a teacher on the new
+  renderer's pixels.
+- **Act 2 — tenancy, MIG on** (`fury-mode tenants`): Red Hat AI Inference Server serving a coding assistant on
+  the 3g slice; **an OpenShift-managed robot fleet** — physics-only sims as pods on the hub (`oc scale`, one
+  network namespace per robot, which also removes the `/run_policy` collision), cameras ray-traced with CUDA
+  by a **rendering tenant** on a 1g slice, each robot paired with a RHEM-managed device; training on a 1g
+  slice; the host device's own policy serving on the last. The fleet is the stretch goal: it needs the
+  renderer node, a host↔VM image path and the new teacher, and the demo must stand without it.
+- **Cheap, on-message additions:** per-slice metrics and an isolation proof in the OpenShift console; the MIG
+  layout as a Fleet-delivered file so reslicing (and the act 1 → act 2 switch) is a governed Git change; the
+  device refusing unsigned images for every tenant; optionally the coding assistant proposing a governed PR.
+- The switch between acts needs the GPU idle and workloads restarted (minutes, with an LLM reload): scripted,
+  rehearsed, narrated or done between sessions — never improvised.
+**Research behind it (2026-09-19, primary sources):** host quadlets under RHEM are the closest thing to a
+supported configuration on this hardware. RHAIIS 3.5 `vllm-cuda-rhel9` is published for arm64 and Red Hat's
+supported-configurations list GB200/GB300 on AArch64 with CUDA 13 (unknown 7 retired as far as documents go;
+RHEL 10 as the host is not named). RHOAI 3.5 supports aarch64 clusters (dashboard, pipelines, KServe, Kubeflow
+Trainer). MicroShift on RHEL 10.2 is Technology Preview with no documented aarch64 GPU or MIG path and no
+official ACM support — not now. Whole-GPU passthrough into the SNO VM is unsupported by Red Hat (GPU assignment
+"only supported on Intel 64 and AMD64") and by NVIDIA (Grace-Blackwell "limited to bare metal"), and this GPU
+reports PCI ID `10de:31c3`, which is not in the `nvgrace-gpu-vfio-pci` table upstream (`31c2` is) — closed.
+RHEL workers were removed in OpenShift 4.19. Bare-metal SNO would mean a rebuild and the GPU Operator's ARM
+table does not list DGX Station.
+**New risk for Phase 2:** RHEL 10's ARM 64 virtualization rules list only RHEL guests as supported and require
+host and guest page size to match; the host runs the 64k kernel, so the SNO guest may need
+`kernelType: 64k-pages` (OpenShift ≥ 4.15). Tracked as unknown 13 — test before building on the VM.
+**Still open:** decision 10 (no arm64 RHTAS), the MuJoCo-Warp spike on the real scene, and how far the
+current policy is from the new pixels.
+
+### D143 addendum — the real scene, ray-traced with CUDA inside a MIG slice: 152 camera pairs a second
+
+`tools/host/fury/24-mjwarp-spike.sh` on slice `0:3` (MIG on): upstream's MuJoCo scene assembled exactly as
+upstream's launch file does it (arm xacro + the SDF world converted by `sdformat_mjcf`, which worked in the
+sim image — Gazebo's Python bindings are there), 58 geoms, 13 meshes, **322,564 faces**, one shadow-casting
+spot light, two 640x480 cameras; MuJoCo-Warp 3.13 batch renderer on Warp 1.17, arm moving every frame, RGB
+copied back to the host as a publisher would need. **152 frame pairs/s with shadows, 178 without** (render
+4.6 ms / 3.1 ms per pair, read-back ~1.6 ms, kinematics + BVH refit ~0.5 ms); first-run kernel compilation
+about 7 s, cached afterwards. That is five robots' cameras at 30 fps from one 1g.31gb slice rendered one
+world at a time — the renderer is a batch renderer, so rendering N worlds per call should do better; not yet
+measured. Unknown 12's first half is retired.
+**The look:** same geometry and framing as Gazebo (the cameras come from the same model) but a visibly
+different image — brighter cyan arm with black servo bodies, white tray, hard-edged shadow, mid-grey sky,
+no global illumination. Expect the current policy to need a fine-tune on these pixels; material colours and
+the light are plain numbers in the MJCF and can be moved toward Gazebo's palette first. Next in this track:
+a renderer node that follows Gazebo's joint and cube poses and publishes the two images on side topics, so
+act 1 records both image sets for the same episodes (the new teacher's dataset), then the current policy
+zero-shot on the new pixels to size the gap.
+
+### D143 addendum 2 — the fleet act is a showcase, not a second flywheel (operator's framing)
+
+The operator's correction: act 1 (MIG off, GPU-rendered Gazebo) **is** the flywheel and uses the existing
+policy as it is. The MIG-mode fleet only has to show robots running and doing the task under governance; no
+flywheel is built from them, and no "new teacher" project is assumed. D143 overstated this by listing a new
+teacher as a requirement before anything was measured. What is actually open is one measurement: whether the
+**existing** policy performs acceptably on the CUDA-rendered pixels, after moving the renderer's colours and
+light toward Gazebo's look (numbers in the MJCF) — the same five-seed eval used elsewhere. If it does, the
+fleet act needs no training at all. If it does not, the choice at that point is between a single offline
+fine-tune, a smaller fleet act, or openly labelled recorded motion — decided then, by the operator. None of it
+blocks act 1, the hub, or the tenancy showcase.
+
+## D144 — Fury Phase 1 closed: the arm64 flywheel pieces run on the host, as services, on the whole GPU
+
+**Date:** 2026-09-19
+**Exit as met:** nine successful episodes recorded by the arm64 stack on the Fury (the operator accepted nine
+for the plan's ten) — sim, policy and recorder running as systemd quadlets, the recorder bound to the disk
+guard, bags under `/data/flywheel/bags`, cameras at ~25-30 fps in the recordings. The first episode of a fresh
+policy container is always a miss: the model is loaded onto the GPU lazily by the first goal.
+**Deviation from the exit as written:** the policy is served from the **whole GPU with MIG off**, not from
+slice `0:1` — the sim cannot render under MIG (D142). Serving from a slice is proven separately (first
+inference ran on `0:1`, SELinux-confined, on the 64k kernel).
+**Retired in this phase:** unknowns 1 (64k pages: stay on the 64k kernel), 2 (native sim build 6 min; rendering
+needs the GPU), 9, 11, 12 (speed); `SecurityLabelDisable=true` is not needed on this host.
+**Carried forward:** the loop's defaults keep fixed cube positions and the learned rest pose (the desktop's
+cube-reset caveat applies) — set deliberately before these bags feed anything; pin the upstream sim source and
+the pip versions before Phase 5; the image's health check fix lands with the next runtime image build;
+stopping the units reported `failed` because ROS ignores SIGTERM — the quadlets now stop with SIGINT.
+
+## D145 — Fury hub: OpenShift 4.22 (RHOAI 3.5 to follow), a 4k-page RHCOS guest on the 64k-page host
+
+**Date:** 2026-09-19
+**Context:** Phase 2. The plan said "OpenShift >= 4.19 aarch64"; the desktop's hub grew from 4.17 to 4.19 and
+runs RHOAI 2.25. Red Hat's RHEL 10 ARM 64 virtualization notes list only RHEL guests as supported and want host
+and guest page sizes to match; the host runs the 64k kernel.
+**Decision:** install **OpenShift 4.22** (`stable-4.22`, 4.22.13 at install time, Kubernetes 1.35) rather than
+4.20. RHOAI 2.25 — what the repo's four RHOAI resources were written for — stops at OpenShift 4.20, so 4.22
+means **RHOAI 3.4/3.5** (supported on 4.19.9-4.22, aarch64: dashboard, AI Pipelines, KServe GA) and a small
+port in Phase 3: the DataScienceCluster / DSCInitialization, the pipelines application, the ModelRegistry (D081's
+OAuth-proxy shape) and the route names the pipeline code and docs refer to. Chosen because it is what a fresh
+build would use today (OpenShift 4.22 + RHOAI 3.5 + RHAIIS 3.5 is one current story), both even releases are
+extended-support releases, and it avoids two upgrade hops on a single node that cannot roll back. Cost accepted:
+a second new variable (RHOAI major version) alongside the new architecture; RHOAI comes late in Phase 3.
+**Guest page size:** the guest runs RHCOS's default **4k** kernel. RHCOS is outside RHEL's supported-guest list at
+any page size, the installer's live image is 4k regardless, and KVM handles the mismatch. Kept out: the memory
+balloon (unreliable when host pages are larger than 4k). Fallback if it misbehaves: a day-2 `master`
+MachineConfig with `kernelType: 64k-pages`.
+**Pre-test (`tools/host/fury/30-vm-pretest.sh`, no pull secret):** the 4.22 live image as a 32 vCPU / 128 GiB
+guest on `fury-net` — RHEL CoreOS **9.8** (so a fresh 4.22 install lands on the RHEL 9 stream, not the preview
+RHCOS 10 the payload also carries), page size 4096 in the guest and in a container, static address, `api` ->
+`10.20.0.10`, no wildcard at the zone apex, quay.io reachable through the host's masquerade, 3.5 GB/s direct
+writes to the qcow2, public NTP reachable. Unknown 5 retired; unknown 13 retired functionally.
+**Install:** agent-based, `tools/host/fury/32-sno-install.sh` in stages, templates in `tools/host/fury/sno/`
+(secret-free; the pull secret and a generated ssh key are appended under `/root/sno-install`, which also holds
+the logs, because the ISO and the installer state carry the pull secret and the last stage prints the kubeadmin
+password). Guest: 32 vCPU, 128 GiB pinned to NUMA node 0 (nodes 1-8 are the GPU driver's cpu-less nodes),
+600 GB thin qcow2, disk-then-ISO boot order so the installer's reboot lands on disk by itself. Storage in
+Phase 3 stays the local-path provisioner — no second disk.
+
+## D146 — Fury Phase 2 closed: the hub is up (OpenShift 4.22.13, arm64, single node, KVM guest)
+
+**Date:** 2026-09-19
+**Result:** `tools/host/fury/32-sno-install.sh` (fetch, image, vm, wait, finish) installed the hub in one pass —
+about 28 minutes from starting the guest to the console answering. Node `master-0` Ready at `10.20.0.10`,
+Kubernetes 1.35.6, RHEL CoreOS 9.8 on the default 4k-page kernel under the 64k-page host, CRI-O 1.35, every
+cluster operator available and not degraded. From a laptop on the tailnet: the API answers on
+`api.sno-flywheel.local` through split DNS and the subnet route, and the console route returns 200. The agent
+ISO (which carries the pull secret) was ejected and deleted; the guest autostarts; kubeconfig and the installer
+state stay under `/root/sno-install`, root-only. Unknown 5 is retired in full.
+**Snags:** RHEL 10 ships no `/etc/sysconfig/libvirt-guests`, so the last stage's `sed` aborted it after the
+eject/delete/autostart steps — the script now creates the file (`ON_SHUTDOWN=shutdown`, `SHUTDOWN_TIMEOUT=300`,
+because host boots take minutes — D140). A laptop whose `/etc/hosts` still pins the cluster's app names to the
+development stand-in will land on the wrong cluster; the two share a domain, so only one is reachable by name
+at a time.
+**Findings that shape Phase 3 (research, 2026-09-19):** on the 4.22 catalog the RHOAI Subscription's
+`channel: stable` still resolves to 2.25 — it must say `stable-3.5`; the v2 DataScienceCluster renames
+`datasciencepipelines` to `aipipelines` and drops `modelmeshserving`/`codeflare`; the ModelRegistry moves from
+`oauthProxy` to `kubeRBACProxy` with the REST path, Service and Route host unchanged; the dashboard moves to
+`rh-ai.apps.<domain>` behind the Gateway API (Service Mesh 3 via the Ingress Operator — unproven on an arm64
+single node). **Decision 10b is resolved:** Red Hat's product image `registry.redhat.io/rhem/flightctl-ui-rhel9:1.3.0`
+is multi-arch (only the upstream quay UI image is amd64-only). **Decision 10 narrows:** RHTAS still has no arm64
+server images and none are being built, but its clients (`rhtas/cosign-rhel9` and friends) are multi-arch, the
+repo signs with keys so only Rekor + Trillian are exercised, and both a self-build from the `securesign`
+midstream at `rhtas-v1.4.3` and the upstream `rekor` Helm chart are workable — operator's choice pending.
+
+## D147 — Fury Phase 3, first half: the hub's stack is up on arm64; Rekor + Trillian get rebuilt from source
+
+**Date:** 2026-09-19
+**Result:** all eight Argo Applications (`storage`, `operators`, `operators-config`, `minio`, `flywheel`,
+`observability`, `rhem`, `tekton`) are Synced/Healthy on the 4.22.13 arm64 single node, from branch `fury`.
+Operators that reached Succeeded: OpenShift GitOps 1.21.4, Pipelines 1.24.0, Cluster Observability Operator
+1.5.2, Tempo, RHOAI 3.5, RHEM 1.3. From a laptop on the tailnet the RHEM UI, the RHOAI dashboard
+(`rh-ai.apps.<domain>`, Gateway API — it does work on an arm64 single node), the flywheel dashboard, the MinIO
+console and Argo CD all answer; the model-registry REST route answers 401 (auth in front, as intended); the
+MinIO and Kafka NodePorts are open on `10.20.0.10`. The node idles at 7% CPU and 15% memory with all of it
+running. Unknown 4 is retired except for RHTAS.
+**What had to change for arm64 / 4.22:** (1) the bootstrap operators (GitOps, COO, Tempo) are a manifest now,
+`argocd/bootstrap-operators.yaml`, instead of console clicks; (2) RHOAI pinned to `stable-3.5` with the v2
+DataScienceCluster and the `kubeRBACProxy` ModelRegistry (D146's findings, confirmed live); (3) the RHEM chart's
+UI and its setup jobs both default to amd64-only images — `registry.redhat.io/rhem/flightctl-ui-rhel9:1.3.0`
+and `registry.redhat.io/openshift4/ose-cli-rhel9:v4.22` replace them (`quay.io/openshift/origin-cli` is
+amd64-only under every tag; the symptom is `ImagePullBackOff` on the setup jobs and an Argo sync that never
+finishes); (4) the RHTAS Subscription and the `Securesign` CR were removed from GitOps — the operator's bundle
+installs on arm64 but every server image it would start is amd64.
+**Decision (operator's, 2026-09-19): rebuild Rekor + Trillian from Red Hat's midstream source rather than go
+straight to upstream sigstore.** `tools/host/fury/rhtas-arm64/`: native rootless builds on the host from
+`github.com/securesign` at the 1.4.3 release tags (commits pinned), the operator deployed outside OLM with its
+`RELATED_IMAGE_*` defaults pointing at the rebuilt images, standalone `Trillian` + `Rekor` CRs with our own
+signer key (no Fulcio, CT log, TUF or TSA — signing here is key-based). Two of the images sit on
+`registry.redhat.io` RHEL bases and may not be redistributed, so they live in the cluster's own registry,
+switched on for this (RWO claim on the node-local provisioner, `Recreate`, default route; on a single node this
+rolls the API server once — a few minutes of API flapping). The login to `registry.redhat.io` is needed for one
+step only (`build.sh bases`). **Time box: one day.** Past that, or if one image eats more than two hours: the
+upstream `rekor` Helm chart behind the same Service name and Route host, so nothing downstream changes.
+This is a rebuild of the product's source by a different builder — not the product, and not supported; the
+runbook and any demo narration must say so.
+**Inherited, not yet redesigned:** MinIO and the other stateful pieces still use `hostPath` volumes, which needed
+node directories created and labelled by hand (`oc debug node`) — they should move to claims on the node-local
+provisioner that the `storage` app already installs. MinIO carries the development stand-in's credentials for
+parity, which are MinIO's defaults — acceptable on a routed lab network behind a tailnet, to be changed before
+anything else can reach it.
+**Still owed for Phase 3's exit:** Rekor up and its public key pinned (`gitops/tekton/rekor-public-key.yaml`,
+the Fleet's inline `rekor.pub`), a fresh cosign keypair (Fleet's `cosign.pub`), the push/sign/GitHub Secrets,
+one native Tekton build signed into this Rekor, the `rhem/bootstrap` objects, and the rollout batches (unknown 6).
+
+**Addendum (2026-09-19, same day): the rebuild worked first time; the fallback is not needed.** All six images
+built natively with rootless podman in about four and a half minutes together (rekor-server 2 min 7 s, the two
+Trillian servers 58 s and 31 s, the operator 42 s, database and redis a few seconds each). The operator runs
+outside OLM from the rendered manifest (7 CRDs, one ClusterRole, the manager — nothing else), pulls from the
+cluster registry, and brought `Trillian` and `Rekor` to Ready about 90 seconds after the CRs were applied. The
+signer key was generated straight into its Secret and never touched a disk; the tree ID is pinned in the live
+CR. A `cosign` v2.6.5 `sign-blob` from an arm64 pod created log entry 0 and `verify-blob` passed against the
+log's public key, over the same in-cluster Service URL the Tekton Task and the promotion pipeline already use —
+so nothing downstream changed except the key. The amd64-only `cli-server` stays at 0 replicas once scaled down.
+**Pinned now:** the new log key in `gitops/tekton/rekor-public-key.yaml`. **Deliberately not yet:** the Fleet's
+inline `rekor.pub` and `cosign.pub` — the Fleet on this branch still names images signed under the development
+stand-in's trust root, so its two keys and its two digests change together, in one commit, once the first
+native build is signed here. No device can receive the half-changed state: the Fleet is not applied to this
+hub until the `rhem/bootstrap` step.
+
+## D148 — Fury Phase 3: a fresh trust root, and the first image built and signed natively on the hub
+
+**Date:** 2026-09-19
+**Result:** the runtime-image Pipeline ran on the arm64 hub with `platforms=linux/arm64` (nothing on this
+machine pulls amd64; the emulated amd64 leg would now be the slow one): **16 min 47 s** end to end — clone 31 s,
+build and push 16 min 0 s, sign and verify 16 s — against 53 minutes for the arm64 leg alone under emulation on
+the development stand-in. Tag `act-inference-e0716d0`, manifest list
+`sha256:f5d3a91e9e15f47b99875d38b0020545a3a2135908cc886871a6a787f693c991`, platform image
+`sha256:045b3d4ef70c5ea845fd1dfa659a67cb1ff8e0414e316f9ef45997475c2cef88`, this hub's Rekor entries 2 (list)
+and 3 (platform image). The digest-pinned `buildah` and `ubi-minimal` task images are multi-arch and needed no
+change; the `qemu-binfmt-arm64-host` DaemonSet was already in the repo for an amd64 leg, should one be wanted.
+**Trust root:** a fresh cosign key pair (made with cosign v2.6.5, the release the pipeline signs with) and the
+hub's own Rekor (D147). `tools/hub/create-cosign-secrets.sh` creates both signing Secrets from one passphrase
+prompt, checks that the passphrase opens the key first, and hands it to `oc` on stdin. The push and GitHub
+Secrets are the development stand-in's, copied cluster to cluster through a pipe.
+**The modelcar was not rebuilt:** the digest the Fleet already pins got a second signature — this hub's key, this
+hub's Rekor entry 1 — through the cluster's own `cosign-sign` Task. Checked from outside the cluster: that
+digest verifies under both trust roots (the stand-in's devices are unaffected; a `sigstoreSigned` policy is
+satisfied by any one valid signature), and the new runtime image verifies under the new root only.
+**The Fleet changed in one commit:** inline `cosign.pub`, inline `rekor.pub`, the runtime digest, and the
+rollout — batch 1 `role=canary` (`limit: 1`), batch 2 `site=fury`, then flightctl's implicit last batch.
+**Unknown 6 is retired on paper:** flightctl 1.3's fleet documentation says explicit batches "might be none"
+and that the implicit last batch takes every device the explicit ones did not select, and the stand-in ran for
+weeks with a second batch that matched nothing. Proof on this hub comes with the first enrolled device, which
+will meet an empty canary batch.
+**Carried into Phase 4:** the new image has not driven the arm yet. The host's own units and probe scripts
+(`tools/host/fury/flywheel/*.container`, scripts 10/13/21/22/23) still name the previous digest, which is signed
+under the old root only — once enrollment writes the new `policy.json` on the host, podman there will refuse
+it. Order: smoke the new image on the GPU (`13-first-inference.sh` now takes an image argument), move the host
+units to it, remove the hand-installed `act-inference` unit, then enroll. The demo runbook's stand-in-versus-Fury
+table still describes the old batch order; it gets rewritten with the rest of the runbook's Fury pass.
+
+**Addendum (2026-09-19): Phase 3 closed.** The four `rhem/bootstrap` objects were applied by the operator with a
+kubeadmin token: `Repository/hp-roscon-flywheel` Accessible, `ResourceSync/rhem-fleets` and `rhem-catalog`
+Accessible and Synced from `fury`, `Fleet/act-inference` owned by the sync and Valid — so the hub renders the
+Fleet with this hub's keys and digests and the retargeted batches. Exit criterion met: a runtime image and a
+modelcar signed under the hub's own trust root, Rekor indexes 1, 2 and 3 recorded, RHEM UI up.
+
+## D149 — The first natively built runtime image could not start: upstream moved under an unpinned clone
+
+**Date:** 2026-09-19
+**Found by:** the GPU smoke of `act-inference-e0716d0` on the host (`13-first-inference.sh` with the new digest).
+The policy container connected to the sim, wrote its contract, then died:
+`FileNotFoundError: /ws_pai/install/rosetta/share/rosetta/params/rosetta_client.yaml`. The script sat in its
+"waiting for the model version" loop because the version is never published by a dead container.
+**Cause:** both Dockerfiles cloned `ros-physical-ai/demos` at HEAD. On 2026-09-16 upstream bumped to rosetta
+0.2.0 (`4d3564c`, "Bump to rosetta 0.2.0"), which renames the client the entrypoint launches
+(`rosetta_client_launch.py` → `policy_runner_launch.py`, `params/rosetta_client.yaml` →
+`params/policy_runner.yaml`). The last good image (`act-inference-ea513fa`, built 2026-09-09) was built when HEAD
+was `80dc00c`, whose `pai.repos` pins rosetta `fb3860c` — the old names. Nothing about arm64 or this machine.
+**Fix:** both Dockerfiles fetch upstream by commit (`ARG DEMOS_REF`): the runtime image at `80dc00c` (what the
+last good image was built from), the sim image at `4d3564c` (what the running, proven sim image on this host was
+built from; the sim does not run the rosetta client, and this exact pairing scored 4/5 here — D142). `pai.repos`
+pins every other repository by commit, so the whole workspace is now reproducible. The runtime Dockerfile also
+asserts after `colcon build` that the two files the entrypoint launches by name exist, so the next upstream
+rename fails the build instead of a device. Porting the entrypoint, health check and coordinator to rosetta
+0.2.0 is a separate piece of work and is not needed for this demo.
+**What this says about the pipeline:** it built, pushed, signed and verified an image that cannot start, and
+the Fleet was re-pinned to it (D148) before anything had run it. No device was enrolled, so nothing received
+it — but the order was wrong. **Rule from here: an image digest goes into the Fleet only after that digest has
+served on a GPU.** The trust chain proves who built an image, not that it works; a start-up smoke step in the
+Pipeline (run the entrypoint far enough to import and find its files, no GPU needed) would close the gap and is
+worth adding before Phase 5's promotions depend on this path.
+**State:** rebuild `runtime-image-7mdrb` started from `c2560cf`; until its digest has passed the smoke and is
+pinned, `gitops/rhem/fleet-act-inference.yaml` on `fury` names an image that cannot start. The host keeps
+serving from the previous image under the hand-installed unit.
+
+**Addendum (2026-09-19): the rebuilt image serves, and only then was it pinned.** `runtime-image-7mdrb` from
+`c2560cf`: 14 min 15 s, tag `act-inference-c2560cf`, manifest list
+`sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837`, this hub's Rekor 4 and 5, verified from
+outside the cluster. The build-time assertion passed. GPU smoke on the host (MIG off, whole GPU, 5 seeded
+episodes): **4/5, mean 2.6 cubes, no goal rejected** — the same score as the previous good image in the same mode
+(D142); `served_model_version` is null in eval mode for both, so that is not a regression. The Fleet, the host's
+own units and the probe scripts now all name this digest; `docs/DEMO_RUNBOOK.md` still shows the old one and is
+rewritten in the runbook's Fury pass. The smoke itself needed a fix on the way: `13-first-inference.sh` reused
+any container called `act-inference`, including the dead one from the broken image, and then waited five minutes
+on it — it now reuses only a running container of the image under test and stops waiting when the policy dies.
+
+## D150 — Fury Phase 4 design: the host is a device *and* a shared machine, so the Fleet's pull default is label-driven; the hub owns the policy's lifecycle
+
+**Date:** 2026-09-19
+**Context:** on the development stand-in the device was a dedicated VM; here it is the bare-metal host, which is
+also the build box, the hub's hypervisor, the tenant machine of act 2, and shared with partner staff. A review of
+`device/provision.sh`, `device/enroll.sh`, the Fleet and flightctl 1.3's agent source against this host found:
+- **`policy.json` `default: reject` (D131) would be system-wide here.** Root podman could pull only from the two
+  Red Hat registries and the two signed `quay.io/jary` repositories: no `nvcr.io` (smoke tests, DCGM, whatever
+  other people run), no `docker.io/library/ros` for sim rebuilds.
+- **No unit-name clash.** The agent namespaces a Fleet quadlet as `<app>-<crc32 prefix>-<unit>`
+  (`act-inference-128875-act-inference.service`, as the stand-in's records already show). The hand-installed unit
+  still has to go before enrolling, for D132's reason: two `/run_policy` servers on one Zenoh graph.
+- **flightctl 1.3 has `flightctl app stop|start`**: a per-device override that survives Fleet rollouts, with the
+  agent still connected and the application reported `Stopped`, not failed.
+- The plan's Phase 4 text is wrong for this host in three places: `provision.sh` would add NVIDIA's repo and
+  write a static `/etc/cdi` spec that goes stale at the next mode switch (the toolkit is from RHEL Supplementary
+  and `nvidia-cdi-refresh` owns the spec — D139, D141), it would pin the hub in `/etc/hosts` beside dnsmasq, and
+  `enroll.sh` needs passwordless sudo and parks the enrollment key in `/tmp` on a shared login host.
+**Decision (operator's, on recommendation): the Fleet's `policy.json` default is
+`{{ getOrDefault .metadata.labels "pull_default" "reject" }}`.** Every device stays fail-closed unless it is
+approved with `pull_default=insecureAcceptAnything`; only the Fury host is. The two `quay.io/jary` repositories
+remain signature- and Rekor-enforced on it, so the trust demonstration (unsigned, wrong key, not logged → refused)
+holds on the host; the "anything outside the allow-list is refused" case belongs on a fleet VM (Phase 7). A
+mistyped label value is not a policy type, and podman then refuses every pull — it fails closed. The label is set
+by whoever approves the device, the same trust as the approval itself.
+**Decision: the hub owns the policy's lifecycle; `fury-mode` verifies.** To tenants: `flightctl app stop` from a
+laptop, then `fury-mode tenants`. Back: `fury-mode flywheel`, then `flightctl app start`. `fury-mode` refuses to
+switch while the agent's policy unit is up (a loaded, idle policy holds the device nodes without appearing as a
+compute process) and prints the command. No hub credential lands on the shared host, and a promotion merged
+during act 2 does not resurrect the policy. Relabelling `gpu_device` to a `MIG-<uuid>` stays the documented way
+to *move* the policy onto a slice, for when tenants mode has a Zenoh router and a robot for it to drive — today
+it has neither (the router lives in the sim container, and the sim cannot run under MIG).
+**Also changed in the Fleet's unit:** `After=`/`PartOf=so-arm-sim.service` (a sim restart restarts the policy, as
+the hand-installed unit did; inert where no such unit exists), `StopSignal=SIGINT`, `StopTimeout=15`,
+`SuccessExitStatus=130 143` (a ROS 2 tree ignores SIGTERM: every stop was a timeout and a kill, and read as a
+failure), and defaults for the `zenoh_router` / `zenoh_port` labels (a missing one failed the render).
+**Host side:** `tools/host/fury/40-device-provision.sh` (operator, on the host) and `41-device-enroll.md`
+(laptop) replace the two `device/` scripts on this machine; the recorder's unit no longer `Requires=` the
+hand-installed policy; `14-flywheel-services.sh` leaves that unit out once the host is enrolled. No hostname
+change is needed after all: approval sets `alias=fury-host`.
+**To check live on enrollment day:** whether an app-stop override holds across a host reboot; what RHEM shows
+after a by-hand stop; the agent's `Driver=image` pre-pull of the amd64-only modelcar on arm64; whether a newly
+approved device goes through the batch sequence at all (unknown 6's real proof may be the first template change,
+Phase 5); SELinux denials from the confined agent writing `/etc/containers/policy.json` on this host.
+
+## D151 — A self-contained mode becomes a phase of its own; the act 2 model and image are fetched ahead
+
+**Date:** 2026-09-19
+**Trigger:** a 4.2 GiB image pull from quay crawled at 2–11 MiB/s over the lab's uplink during a smoke test, and
+the operator asked whether moving to the internal registry and a local git would make the machine
+disconnected-capable. **Answer: those two are the largest pieces, but not the whole list.** A sweep of what the
+*running* demo reaches found five more: `cosign` and `crane` downloaded from GitHub releases at every pipeline
+run (Tekton Task and `pipeline/act_flywheel_pipeline.py:119,164`), `pip install` at the start of six of the seven
+KFP components (`:46,81,99,210,252,267`), possibly backbone weights at training start (unverified), the laptop's
+Tailscale path, and the one-time fetches for act 2.
+**Decision (operator's): it is wanted, and it is done at the appropriate time, not now** — recorded as Phase 8b
+of `FURY-PLAN.md` with the full inventory, the boundary (running the demo, not rebuilding images or installing
+operators) and an exit test (egress blocked on the host's firewall; a full promotion, both mode switches, act 2).
+After Phases 4 and 5 work connected; the registry step may come forward because it also makes rollouts local.
+Switching registries later is cheap: images copy with their digests, and a signature is per repository name, so
+it is one `cosign sign` and a Fleet edit.
+**Also found:** the runtime image ships as one 4.2 GiB layer (`buildah bud` without `--layers`, and no cache
+between runs), so every rebuild is a full pull everywhere. The serving image's namespace changed — 3.4 and 3.5
+are `registry.redhat.io/rhaii/vllm-cuda-rhel9`; `rhaiis/` stops at 3.3 — corrected in the plan. From this lab
+Hugging Face delivered 34 MB/s where quay managed 2–11: the uplink is not the bottleneck, quay's path is.
+**Fetch-ahead:** `tools/host/fury/60-model-fetch.sh` — the model at a pinned revision into `/data/models`, no
+root, no Python, resumable, every file verified (sha256 for the LFS files, git blob id for the rest); tested on
+the host with three small files including a corrupted one.
+
+## D152 — Fury Phase 4: the host is an RHEM-managed device; the Fleet's policy serves on the whole GPU
+
+**Date:** 2026-09-19
+**How it ran:** the hub half from a laptop with the existing `flightctl` login (enrollment config made with
+`flightctl certificate request --signer=flightctl.io/enrollment --output=embedded`, copied to the host 0600,
+never displayed, local copies removed; approval by CLI), the host half as two operator commands (stop the
+hand-installed policy, `40-device-provision.sh agent-config.yaml`). One pending request, its name matching the one
+the script printed, approved with `fleet=act-inference site=fury gpu=nvidia arch=arm64 policy_device=cuda
+zenoh_router=10.20.0.1 zenoh_port=7447 alias=fury-host pull_default=insecureAcceptAnything`; no `gpu_device`
+(MIG off) and no `role`.
+**Result:** device `Online`, owner `Fleet/act-inference`, `UpToDate` within 20 s of approval; applications
+`Healthy`, `act-inference` `Running 1/1`, no restarts, under a minute after that (both images were already in
+local storage, and both verified under the new trust root — the agent pulls under the `policy.json` it has just
+written). On the host: `act-inference-128875-act-inference.service` and its `…-flightctl-quadlet-app.target`
+active, the hand-installed `act-inference.service` gone; the rendered unit carries the smoke-tested runtime digest,
+the co-signed modelcar, `AddDevice=nvidia.com/gpu=all`, `StopSignal=SIGINT`, and `After=`/`PartOf=so-arm-sim.service`
+**left un-namespaced by the agent**, as intended; `/etc/act-inference/env` has `ZENOH_ROUTER=10.20.0.1:7447` and
+`POLICY_DEVICE=cuda` with no thread caps; `/etc/containers/policy.json` is the Fleet's with default
+`insecureAcceptAnything` (the label at work) and the two `quay.io/jary` repositories plus the Red Hat registries
+enumerated; the distro file is kept as `policy.json.rhel-default`; `cosign.pub` and `rekor.pub` are in
+`/etc/pki/containers`. The policy published `act-v2-ft160`.
+**Checked live (D150's list):** the agent's `Driver=image` volume with the amd64-only modelcar works on arm64;
+a newly approved device received the template at once — so unknown 6's real proof is still the first template
+change (Phase 5). **Noise to tidy:** the agent logs `Failed to collect Disk usage for path: /sysroot` every
+cycle — it assumes an image-mode host; a package-mode host has no `/sysroot`. Harmless; a resource-monitor path in
+the agent config would quiet it. **Still to check:** SELinux denials from the agent's first render
+(`ausearch -m avc`, needs root), the app-stop override across a reboot, RHEM's view of a by-hand stop.
+**Also today:** the act 2 model is on the machine — `RedHatAI/Qwen3-Coder-Next-NVFP4` at revision `27a8f16f`, 26
+files, 45 GB, every file verified, in `/data/models` (`60-model-fetch.sh`); the serving image pull
+(`rhaii/vllm-cuda-rhel9` 3.5.1 by digest) was started alongside.
+**Exit criterion:** met except for its last clause — episodes recorded with this policy as the only one on the
+graph, stamped with the Fleet's model version. That needs the recorder started by the operator.
+
+**Addendum (2026-09-19): Phase 4 closed.** With the agent's container the only policy on the graph, the recorder
+ran for about five minutes: seven episode records stamped `act-v2-ft160`, all `rollout.status: ok`, two of them
+with cubes placed (3 and 2). `ausearch -m avc -ts recent` printed nothing — no SELinux denials from the agent's
+first render on this host. The serving image pull (`rhaii/vllm-cuda-rhel9` 3.5.1) finished as well, so both act 2
+inputs are on the machine. **Worth watching, not a finding yet:** two of seven records placed cubes here against
+six of ten in the morning's run under the hand-installed unit, with the same image scoring 4/5 in the seeded
+smoke an hour earlier. Both runs show the same artefact — a zero-cube record 16–17 s after a successful one (the
+cube-reset caveat, D056/D138) — so the raw ratio overstates the difference, and seven records prove nothing either
+way. The only serving-side change is `ZENOH_ROUTER=10.20.0.1:7447` instead of `127.0.0.1`. Phase 5's collection
+run produces the sample that settles it; if the rate is low there, try the loopback address first.
+
+## D153 — Fury Phase 5, before anything trains: four blockers that are not about the GPU, and a recording bug
+
+**Date:** 2026-09-19
+**How training reaches a GPU (unchanged, and sound here):** the pipeline's first step is a GPU-less pod that
+publishes to Kafka `training-triggers` and waits on `training-results`; a resident process on the host
+(`src/host-runner/host_runner.py`) connects *outbound* to the hub's Kafka and MinIO NodePorts and does assemble,
+fine-tune, paired eval and upload. No ssh, no port the cluster must reach on the host, nothing for the
+`libvirt-to-host` reject policy to block. D022 called the runner a desktop shim "deleted by the Fury port"; with the
+GPU staying on the host (decision 2) it is this machine's architecture. `docs/FURY-SETUP.md`'s "nothing about the
+governed path needs Fury-specific changes" is wrong.
+**What is wrong with the host half here:** `docker` and `--gpus all` hard-coded, `10.0.0.49` defaults, bind mounts
+without `:z`, `~/flywheel-data`, a `nohup` in a login session of a shared account, `~/eval_policy.sh` which was
+never in git, and a loop-park that looks for a container name that was already stale on the stand-in. And **no
+governed run ever exercised the train or eval path**: every recorded run logged "checkpoint exists — skipping".
+**Blockers found and fixed today (all needed under any design):**
+1. *Episodes never left the host.* The sim unit set no `CURATOR_URL`, so the emitter only wrote local JSON — D152's
+   seven records were local files, and the success count on the hub could not move. Added to
+   `tools/host/fury/flywheel/so-arm-sim.container` (`http://10.20.0.10:30802/episode`; the NodePort answers).
+2. *Phantom episodes, and lost real ones.* `episode_emitter.py` armed its 5 s idle timeout with the time of the last
+   command seen *before* the episode started. After a success nothing publishes commands during the reset, so the
+   next episode was ended within a second — a record with 0 cubes, 0.1–0.6 s, 6–32 steps, status `ok` — and the real
+   episode's `end` was then ignored. Measured on the host: 8 of 17 records were phantoms, and 14 kept bags had only 9
+   real records. It made D152's "2 of 7" look like a regression (real episodes: 2 of 3 under RHEM's policy, 5 of 6
+   in the morning; the misses are the known first episode after a policy start), and it would have starved the
+   160 count. Fix: `_start_episode` clears the stamp. Reproduced and verified with ROS stubbed out; needs the sim
+   image rebuilt (six minutes, native). This is *not* the cube-reset caveat of D056/D138, which stays open.
+3. *The trigger pointed at another cluster's pipeline and threw the count away.* `TRAINING_PIPELINE_ID` was the
+   stand-in's id; the consumer zeroed its count even when the run failed to start; and the count lived in memory, so
+   any pod roll during a collection of hours reset it. Now: the pipeline is found by name
+   (`TRAINING_PIPELINE_NAME`), offsets are committed only when a run has started (a restart recounts everything
+   since the last trigger), a failed start keeps the count and retries after five minutes, a malformed record
+   cannot wedge the replay, and with no pipeline configured the count is simply kept. **Left unarmed on this hub**
+   until the host runner exists — a run started now would wait ten hours for it and fail.
+4. *The pipeline had never been uploaded here.* `tools/hub/upload-pipeline.sh` (new pipeline the first time, a new
+   version after that, with a ten-minute token of the account that starts the runs). Uploaded: RHOAI 3.5 took the
+   compiled file as is.
+**Still open before a first run:** the incumbent checkpoint is not in this hub's MinIO
+(`s3://episodes-data/checkpoints/act-v2-ft160/…`; the modelcar's flat `models/act/*` has to be re-tarred under
+`pretrained_model/`); the model-registry client is pinned for RHOAI 2.25's API and has only seen a 401 from 3.5; the
+gate may legitimately refuse a candidate (the incumbent scores 86–92 %), so "one promotion produced" is not assured;
+the stand-in's only training figure ("~25 min for 160 episodes") has no log behind it and implies about 40 steps/s —
+check it before comparing anything.
+**Proposed, pending the operator's decision — the host half as native units:** keep the Kafka/MinIO contract and
+the pipeline untouched; replace the nohup script with a root quadlet `flywheel-runner` from the pinned, signed
+runtime image (it already carries lerobot, torch, the assembler, boto3 and the Kafka client), assemble and train
+in-process on `nvidia.com/gpu=all`, data under `/data/flywheel`; run the paired eval in its **own rig** — a second
+sim with its own Zenoh router in a private network namespace and its own `GZ_PARTITION` (the shape
+`22-sim-scale.sh` already ran; two sims held 30 fps here, D142) — so the governed policy is never stopped and D132's
+collision cannot happen. Rejected: the runner re-pointed as is (cannot stop root units or write `/data`, needs a
+human with sudo at every eval, and is a script in a shell on a machine where everything else is a unit); a MinIO
+object as trigger (no gain, loses the results channel); an RHEM-delivered job per run (flightctl applications are
+services, every run would bump the Fleet's template version and walk the rollout batches in the very file the
+promotion edits). **Verify first:** a five-seed eval in the isolated rig beside the running loop against today's
+4/5, with no goal rejected in production meanwhile; if the scores diverge, fall back to an attended window with
+`flightctl app stop`.
+
+**Addendum (2026-09-19, evening): collection is live end to end on the Fury.** After the sim image was rebuilt with
+the emitter fix (image 19:44 UTC, sim restarted 19:48) and the unit got its `CURATOR_URL`: twelve episodes closed in
+about nine minutes, the shortest 1,211 steps — **no phantom records**, including after seven successes in a row,
+which is exactly where they used to appear. Eight of the twelve were full successes (the first was the usual miss
+after a policy restart; three placed two of three cubes). Every success was received by the hub's curator, scored
+`PASS`, and counted by the manifest consumer: `pending=8/160`. With the address set the emitter posts to the hub and
+no longer writes `/data/flywheel/episodes/raw` (that directory only fills when a POST fails). At this rate — about
+46 s an episode, roughly 55 successes an hour — the threshold is some three hours away; the trigger stays unarmed
+until the host runner exists (`TRAINING_PIPELINE_NAME`). Separate bug met on the way: `14-flywheel-services.sh`
+stopped the systemd-run sim while "removing hand-started leftovers", then died on the already-removed container
+before `daemon-reload`; it now reloads first and leaves alone any container that carries a `PODMAN_SYSTEMD_UNIT`
+label. Still open: the sim does not exit on SIGINT within its stop timeout and gets killed.
+
+## D154 — Fury Phase 6, first half: the coding model serves on this machine, with tool calling, at about 140 tokens/s
+
+**Date:** 2026-09-19
+**What ran:** `tools/host/fury/61-rhaiis-smoke.sh` (`up`, `ask`, `bench`, `probe`, `status`, `down`): a hand-started
+container, loopback only, the model read-only and offline from `/data/models/RedHatAI/Qwen3-Coder-Next-NVFP4`
+(revision `27a8f16f`, fetched and verified by `60-model-fetch.sh`), SELinux confined, CDI device
+`nvidia.com/gpu=all` with `--gpu-memory-utilization 0.5` — **beside the running flywheel** (sim, RHEM-managed policy
+and the recorder kept collecting throughout), MIG off. This run used the vLLM project's own image at v0.24.0
+(`image=upstream`, pinned by digest in the script) — the plan's Phase 6 fallback; which image serves is one switch,
+so the Red Hat AI Inference image takes its place without any other change. Settings that differ from vLLM's
+defaults: `--linear-backend cutlass`, `--gdn-prefill-backend triton`, `--no-enable-flashinfer-autotune`, context
+131072, `--enable-auto-tool-choice --tool-call-parser qwen3_coder`.
+**Result:** cold start to ready **5 min 46 s** (weights 44.3 GiB in 2 min 41 s, torch.compile 49 s, profiling and
+warm-up about 2 min, CUDA graphs 8 s); KV cache 78.7 GiB = 3.39 M tokens, 25.9 full-length requests. A correct code
+answer; a well-formed tool call (`finish_reason: tool_calls`). Five sequential 256-token requests, single stream:
+**time to first token 0.16 s mean (0.13–0.22), decode 142.5 tokens/s mean (136–158), end to end 131.5 tokens/s.**
+**What was learned on the way:** (1) with vLLM's default kernel selection on this GPU the first start sat silent for
+over 40 minutes with one core busy — a Python-side kernel compiler for the FP4 paths plus FlashInfer's start-up
+autotuning, whose results vLLM 0.24.0 does not persist (`kernel_warmup.py`: `_FLASHINFER_USE_PERSISTENT_CACHE =
+False`), so every start would pay it. The two flags above avoid both, and the numbers above are without them. Worth
+an unattended run later to see what the default path costs cold and what it gains in tokens/s. (2) A server image
+keeps compiled kernels either under `/tmp` or in the container's home directory; the script now points every image
+at one named volume and copies a container's caches into it before removing it. (3) A one-minute, model-free
+`probe` (one tiny call into each family of compiled GPU code in an image) answers "can this image run on this GPU
+at all" before a 45 GB model load does.
+**Not yet done for Phase 6:** the same on the 3g MIG slice in tenants mode (the act 2 shape, and the number to quote),
+a warm restart to measure what the kept caches save, the governed form (a quadlet delivered through RHEM, D143),
+exposure beyond loopback, and the isolation test (training on another slice while it serves). Unknown 7 stays
+"retired on paper" for the product image and is retired in practice for serving this model on this GPU.
+
+## D155 — The isolated eval rig is verified beside the running loop; the host half of training is ready to install
+
+**Date:** 2026-09-19
+**Test (D153's "verify first"):** `51-eval-rig.sh run verify-rig modelcar 5 1000` while production collected and an
+LLM server sat idle on the same GPU. The rig's sim rendered on the GPU at a full 30 fps (301 and 304 frames in 10 s);
+cube poses crossed from the sim to the runtime image over gazebo transport (3 of 3) — the first time `GZ_PARTITION`
+has been exercised across containers; the rig's graph had exactly one `/run_policy` server; no goal was rejected in
+the rig or in production; production scored 6 of 9 in those six minutes, no worse than before. The pod was removed.
+**Score: 3/5, mean 2.4 cubes, against the seeded smoke's 4/5, mean 2.6 (D149 addendum) — and seed by seed four of
+the five agree exactly:** seed 1000 places one cube in both (the first episode of a cold policy), 1001 / 1003 / 1004
+place three with step counts within 8 %, only seed 1002 differs (2 against 3). One cube on one seed is inside the
+policy's run-to-run variation, and a paired evaluation puts both policies through the same rig. The design holds:
+the governed policy is never stopped for an evaluation, and D132's collision cannot occur.
+**Built and tested off the machine, now on it and not yet run:** the runner in container mode
+(`RUNNER_MODE=inprocess`, `EVAL_MODE=request`; 76 tests written blind from the spec by a separate agent pass),
+`flywheel-runner.container` as part of `fury-flywheel.target`, `flywheel-eval.path` / `.service`,
+`50-runner-install.sh` (asks for the two MinIO keys on the terminal; they never reach a log),
+`52-seed-incumbent.sh` (re-packs the pinned modelcar's `models/act` as the incumbent tarball in the hub's MinIO and
+creates `episodes-data`, which otherwise only appears with the assembler's first push). `fury-mode` refuses to
+switch while a training or an eval is running.
+**State of the collection:** 111 of 160 successes on the hub two hours after it started, about 50 an hour; the
+trigger stays unarmed until the runner is installed, the incumbent is seeded and the registry step has been checked
+against RHOAI 3.5 (FURY-PLAN, Phase 5).
+
+## D156 — Act 2's coding assistant is a host service that `fury-mode` owns; RHEM is shown on the fleet tenant
+
+**Date:** 2026-09-19
+**Decision (operator's):** the assistant runs as the plan's Phase 6 says — a quadlet on the host — started by
+`fury-mode tenants` on slice `0:0` and stopped for every mode switch. It is not delivered through RHEM.
+**Why:** RHEM earns its place where versions roll out: signed promotion, canary batches, health gates. The robot
+policy uses all of that; the assistant is a static tenant and would use none of it. Nothing else on the machine
+except the promoted policy is RHEM-managed either (sim, recorder, runner and eval rig are host units from git), a
+device belongs to exactly one Fleet and flightctl has no conditional applications (so every other device would
+carry a placeholder), and the live mode switch is simpler with a unit the host starts itself. RHEM's management of
+many devices is demonstrated on its own tenant in act 2 — the CUDA-rendered scaled fleet on one of the slices —
+without coupling it to the assistant. An RHEM-delivered variant was drafted before this was decided and is kept on
+branch `fury-assistant`, unmerged, in case the "one control plane, two workloads" beat is wanted later; merging it
+into `fury` would be a rollout to the enrolled host.
+**Built (not yet run):** `tools/host/fury/flywheel/llm-assistant.container` (+ `llm-cache.volume`): the image and
+flags measured in D154 on `nvidia.com/gpu=0:0`, `--gpu-memory-utilization 0.90`, model read-only and offline, one
+named volume for every compile cache, loopback only with no API key (a laptop uses an ssh tunnel; opening it to a
+network is `--host` plus a firewalld rule for that network, an operator's decision), health by a Python one-liner
+with a 20-minute start period, and `ExecCondition=` on the slice's CDI name — a non-zero condition skips the start
+and leaves the unit inactive, neither failed nor restarted, so a boot or a stray start in flywheel mode does
+nothing (a failed `ExecStartPre=` under `Restart=always` would loop for ever). `fury-mode` stops the unit in
+`drain()` and starts it, non-blocking, once the four slices exist; `63-assistant-install.sh` installs the unit and
+the new `fury-mode` and seeds the cache volume from the smoke test's. First run: the next time the flywheel can be
+paused for an hour.
+
+
+## D157 — The evaluation dashboard is this project's code, runs on the hub, and reads the pipeline's own evaluation records
+
+**Date:** 2026-09-20 (UTC). **Status:** done on the Fury hub; first act 1 view still to come (FURY-PLAN Phase 5c, ledger L15).
+
+**Decision (operator).** The dashboard that compares model versions was built for this project in a repository of
+its own and has been handed back to it: the code is ours to change, it runs in the cluster, and nothing is named
+after a person. It was imported unchanged (`hp-roscon-eval-dashboard` at `ee07e1f`) into `src/eval-dashboard/`,
+its tests into `tests/eval_dashboard/`, and then changed here.
+
+**Why it had to change, not just move** (from reading and running its code against our records): it could not read
+the pipeline's evaluation records at all (no per-episode id or model version, the `eval-` label dropped on purpose,
+flat `steps` / `duration_s`) and never read `eval_report.json` — so the screen showed two unpaired, whole-percent
+rates while the gate, the PR and the registry carry the paired result; its Kafka path fetched from whichever bucket
+a manifest named, not from the buckets it was configured with, so an instance pointed at separate comparison
+buckets still took in live passes under the same label (separate buckets isolate writers, not that reader — the
+D138 arrangement had this hole); episodes whose cube count could not be read counted as policy failures, which the
+curator deliberately does not do; a development address was its default link.
+
+**What it does now.** `SOURCE_MODE=eval` reads one promotion run — `eval/<run_id>/eval_report.json` and the two
+per-policy records, from MinIO or from a directory — newest run or a pinned `EVAL_RUN_ID`, and *replaces* what it
+holds when the run changes; a **Paired result** panel shows fixed / broken / net / p / verdict from the report
+verbatim (the pipeline's result is authoritative and is never recomputed for display) with the fixed and broken
+seeds; the Kafka path keeps to the configured buckets and counts what it skips; sensor-fault and unfinished
+episodes are left out of the rate and shown as "not scored"; rates to one decimal; a version missing from the
+versions file takes its size from the last `-ft<N>` in its name; UBI 9 Python base, non-root, read-only. Built
+blind: tests written from the spec by one agent (275 cases), implementation by another that never saw them —
+313 passed on the first run, no arbitration.
+
+**On the hub.** Image built by the existing signed Tekton pipeline (`tools/hub/build-eval-dashboard.sh`; arm64, about
+a minute, Rekor 6), pinned by digest in `gitops/flywheel/eval-dashboard.yaml`: `eval-dashboard` (paired evaluation)
+and `eval-dashboard-live` (curated + rejected buckets and the manifest topic), each with a Service and an edge
+Route, their own ServiceAccount under restricted-v2, linked to each other and from the flywheel dashboard's header.
+First real data: the comparison instance shows tonight's rehearsal run (3 paired seeds, FAIL) read through the
+read-only user; the live instance shows 271 live episodes for the serving model.
+
+**The read-only MinIO user** is `eval-readonly` (Secret / ConfigMap / Job `minio-eval-readonly-*`; the Secret
+hand-created in `minio` and in `flywheel`), and may also read `episodes-data/eval/*`. **Found on the way:** the
+setup Job had never worked on this hub — under an arbitrary uid `mc` could not save its alias
+(`mkdir /.mc: permission denied`), every later command failed, and without `set -e` the Job still ended "done" and
+Complete; the user did not exist. Fixed (`MC_CONFIG_DIR`, `set -eu`, a checked attach) and made an Argo `PostSync`
+hook, so a policy change is applied on the next sync and the immutable pod template is never patched. Lesson, again
+(D149): a step that reports success is not evidence; the evidence here was a listing of the users.
+
+**Still open.** For the show the comparison instance is pinned to the act 1 run (`EVAL_RUN_ID`) — otherwise the
+newest run wins, whatever it is; the page has not yet been looked at by a human in a browser; the image lives as a
+tag of the runtime image's repository (told apart by the `eval-dashboard-` prefix) until Phase 8b moves images to
+the cluster's registry; other branches and the development cluster still carry the old resource names.
+
+## D158 — The first promotion on the Fury hub: teacher -> act-v2-ft160, merged and serving in 1 min 38 s; modelcar tags made permanent
+
+**Date:** 2026-09-20 (UTC). **Status:** done (FURY-PLAN ledger L1-L3); the reset for rehearsing it (L4) is still to build.
+
+**What ran.** The Fleet and the trigger lineage were first put at the teacher (`6f69dd2`): its existing modelcar
+(`d5e5897f…`) got this hub's signature through the cluster's own `cosign-sign` Task (`tools/hub/cosign-image.sh`,
+Rekor 8) and, before the pin (D149), `tools/host/fury/54-teacher-modelcar-check.sh` showed the device pulling it
+under its own signature policy, its weights byte for byte the staged checkpoint (`8388c067…`), and those weights
+serving on the GPU (3 seeded episodes, goals accepted). RHEM rolled the teacher out in about a minute. Then one
+governed run, `promote-act-v2-ft160` (`9fb233e8`): the runner reused the candidate's existing checkpoint and both
+existing evaluation records for seeds 1000-1359 (its log says so: "skipping assemble/train", "reusing existing
+record"), computed the paired report - **295/360 = 81.9 % -> 333/360 = 92.5 %, fixed 57, broken 19, net +38,
+p < 0.0001, PASS** - and the pipeline packaged a multi-arch modelcar (`d741db2b…`, which also ends the amd64-only
+data image), signed it, registered it and opened PR #7. Merged 11:30:21; the policy container restarted 11:31:41 and
+published `act-v2-ft160` at **11:31:59 - 1 min 38 s from merge to serving**, the new image pulled fresh under the
+device's policy; RHEM reported Healthy at 11:32:25. The evaluation page is pinned to the run (`918a1d3`).
+Training and evaluation themselves were exercised on this machine by the unattended run of the night before
+(`01c25f4e`: 189 episodes, 62,244 steps, 100 paired seeds, gate FAIL on wrong-scene data, as it should).
+
+**What broke, and the rule that came out of it.** The pipeline tagged the index with the bare candidate name. The
+candidate's name already carried an image (`bdb513ca…`, still pinned by the development cluster's Fleet), so the
+push moved the tag - and the registry, within the same minute, stopped serving that image by digest (404) **and
+deleted its signature tag**. Restoring took the registry's tag history and an owner's login, twice (image, then
+signature). Fix (`77769e2`, with tests): every image of a run is tagged `<candidate>-<run id, 8 chars>[-<arch>]`
+for good, and the bare candidate tag is only moved to the newest index afterwards. **Rule:** a digest that anything
+pins must own a tag that no later run will move; a moving tag is a convenience, never the only reference.
+
+**Smaller things from the same morning.** `53-stage-promotion.sh` took a lone `force` for its directory and, under
+sudo, lost the refusal message with the terminal - both fixed; 28 other host scripts share the second pattern
+(inbox). zsh expands `$VAR:a...` as a path modifier - braces, or a script file, for anything with a colon after a
+variable. `oc run --rm` trips the local guard's recursive-delete pattern - create, read the log, delete by name.
+
+## D159 — The sim's camera streams reach the browser through the hub's router, over https
+
+**Date:** 2026-09-20. **Status:** built; needs one privileged step on the host (`tools/host/fury/15-camera-port.sh open`).
+**Supersedes, on this hub, the viewer-side half of D124.**
+
+**Problem.** The flywheel dashboard made the viewer's browser fetch the two MJPEG streams straight from the camera
+bridge next to the sim (`http://<CAMERA_HOST>:8081`, D124). That design came from a dashboard that was itself served
+over plain http on a NodePort. On this hub the dashboard is opened through its https Route, and a browser does not
+load an http stream into an https page: the panels stayed at "Waiting for sim…" with the bridge up and answering
+(checked from the host and from a laptop). The `sim-cameras` Route that already existed pointed at the in-cluster
+sim Deployment, which has zero replicas here - 503.
+
+**Decision.** The streams go through the router like everything else: Service `sim-cameras-host` without a selector,
+an EndpointSlice naming the host's bridge (`10.20.0.1:8081`), the existing https Route `sim-cameras` in front, and
+the dashboard takes the streams' base URL from `CAMERA_URL` (falling back to `http://CAMERA_HOST:8081`, so the
+development arrangement is unchanged). One origin scheme for the whole demo, nothing to reach on the host from a
+viewer's laptop, and it keeps working when the only path to the machine is the apps domain (Phase 8b). Cost: the
+hub has to be allowed to open connections to the host on that one port - guests are refused by default
+(`libvirt-to-host`, 06-network.sh). `15-camera-port.sh` adds `8081/tcp` to that policy, runtime and permanent,
+without a reload (a reload drops libvirt's runtime zone binding under the running hub VM - the same care as the
+metrics port).
+
+**Stop-gap that worked meanwhile:** the dashboard's plain-http NodePort (`:30801`), where the http streams are not
+mixed content.
+
+**Addendum, same day - working, and one trap.** With the port open both streams come through the Route (200,
+`multipart/x-mixed-replace`, about 1.2 MB in 5 s each). The trap: the EndpointSlice was first committed next to the
+Service under `gitops/flywheel/`, the app went Synced, and the Route kept answering 503 - Argo CD excludes
+`EndpointSlice` (and `Endpoints`) from what it manages, silently. It now lives in
+`tools/hub/manual/sim-cameras-endpointslice.yaml`, applied by hand once per hub (`argocd/README.md`). "Synced" says
+that what Argo manages matches git; it says nothing about what Argo was never going to create.
+
+## D160 — Phase 6 on the slice: the assistant serves from MIG slice `0:0` at about 245 tokens/s, up in under three minutes
+
+**Date:** 2026-09-20. **Status:** measured (FURY-PLAN ledger L9 done); reaching it from the booth and the isolation
+beat are still open.
+
+`63-assistant-install.sh` installed the unit and seeded its cache volume from the smoke test's compiled kernels
+(1.6 GB); `tools/hub/fury-switch.sh tenants` stopped the RHEM-managed policy through flightctl, drained the loop,
+turned MIG on (`9,19,19,19`) and `fury-mode` started `llm-assistant.service` on `nvidia.com/gpu=0:0` (3g.126gb).
+From the switch to `Application startup complete`: **under three minutes** (weights 65 s, engine init 64 s; no
+autotune, caches warm) - against 5 min 46 s for the first cold start in D154. KV cache available on the slice:
+66.6 GiB.
+
+Measured on the slice with `61-rhaiis-smoke.sh` (the unit's own endpoint, loopback): a short coding answer and the
+model card's tool-call example (well-formed, `finish_reason: tool_calls`); then five single-stream requests of 256
+tokens: **time to first token 0.132 s, decode 245.7 tokens/s, end to end 218.7 tokens/s**, identical across the
+five. D154's 142.5 tokens/s was taken with MIG off while the flywheel's sim and policy shared the GPU; the slice
+has its compute to itself, which is the point of act 2. **The number to quote for the slice is 245 tokens/s
+single stream.**
+
+## D161 — The assistant is reached from inside the cluster only: a Service in front of a host-side listener, no Route
+
+**Date:** 2026-09-20. **Status:** built; the host step (`64-assistant-expose.sh open`) is the operator's.
+
+D156 left the assistant on loopback and called opening it "an operator's decision". Decided with the operator: it
+goes through the hub, the way the camera streams do (D159) - but one step tighter, because this is an API without a
+key and not a read-only stream. **Host:** the API stays on `127.0.0.1:8000`; systemd listens on the hub-side address
+`10.20.0.1:8001` and forwards (`llm-assistant-proxy.socket` / `.service`, `systemd-socket-proxyd`), and
+`64-assistant-expose.sh` lists that port in `libvirt-to-host`. The mode switch does not manage it: with the
+assistant down the forward is refused. **Hub:** Service `assistant.flywheel.svc:8000`, no selector, its endpoint
+applied by hand (`tools/hub/manual/assistant-endpointslice.yaml`; Argo CD does not manage EndpointSlices, D159) -
+and **no Route**. Browsers reach the model only through something in the cluster that serves them over https: the
+dashboard's backend for the chat panel, a developer workspace for the editor. That also removes the private-CA
+question for in-cluster clients (plain http on the cluster network to the host bridge). Known and accepted: peers
+on the operator's tailnet reach `10.20.0.1:8001` directly, as they do every port on that address. If the API is ever
+given a Route or a wider network, it gets a key first (`--api-key`, held server-side).
+
+**Addendum, same day - the forwarder did not survive SELinux, and the panel is dropped.** The socket unit failed at
+once: `Failed to create listening socket (10.20.0.1:8001): Permission denied` - systemd is not allowed that bind
+for socket activation here, and the port's label cannot be read without root. No relabelling by guesswork: the
+assistant's container now listens on `10.20.0.1:8000` itself, the pattern the camera bridge and the metrics
+exporter already prove on this host (`2b805c3`); `64-assistant-expose.sh` only lists the port and removes the failed
+forwarder. Cost: the API is no longer loopback-only by construction - what keeps the uplink out is the address it
+binds and the firewall, as for the other two. Operator, same day: **no chat panel** - the tenant is shown doing
+coding in a developer workspace, which is enough; the Service's only clients are workspaces.
+
+## D162 — Act 2's coding tenant is shown doing coding: a Dev Spaces workspace whose agent uses the model on the slice
+
+**Date:** 2026-09-20. **Status:** working end to end, walked through by the operator; polish items below.
+
+**Decision (operator).** The large-model tenant is not shown as a chat box. It is shown doing the work it is for: a
+coding agent in a developer workspace closes a failing test in this repository, with the model served from MIG slice
+`0:0` of the same machine. The Red Hat way to show that is **OpenShift Dev Spaces** - the workspace is the product,
+the assistant is brought along and pointed at a privately served OpenAI-compatible endpoint, which is also what Dev
+Spaces 3.30 documents (its "AI provider" feature, Technology Preview, uses a terminal coding agent as the worked
+example). No chat panel is built.
+
+**What was checked before building.** A spike from a laptop first: the same agent against the slice (vLLM 0.24,
+`qwen3_coder` tool parser, streaming, 131k context) finished a real multi-file task in a scratch clone in 166 s -
+40+ tool calls, none malformed, recovered by itself from a regression it introduced, 349 tests green when re-run
+independently. That retired the one risk that could not be engineered around (tool-call parsing between this
+server and this client).
+
+**What runs.** Dev Spaces 3.30.1 on the arm64 hub through GitOps (`argocd/devspaces-app.yaml`,
+`gitops/devspaces/checluster.yaml`): both operators installed in under a minute, every operator image has an arm64
+build, the gateway needed no patch; workspaces never idle, the extension registry is the embedded one, nothing is
+fetched from outside. The workspace image (`src/dev-workspace`, built and signed by the hub's pipeline through
+`tools/hub/build-dev-workspace.sh`) is UBI 9 Python with the agent and its search tool baked in by pinned,
+checksum-verified release, its offline switches on, its state under `/tmp` for an arbitrary uid, the evaluation
+dashboard's test dependencies installed, and a permission list: edit files, run pytest and a few read-only
+commands, nothing else, no web. The model is `http://assistant.flywheel.svc:8000/v1` (D161). `devfile.yaml` pins
+the image and carries `run-tests`, `start-agent`, `reset-demo`. The scenario is branch **`demo/coding-task`**:
+`fury` plus one failing test file (seven tests for "longest failure streak" - how long a policy was stuck failing
+before it recovered), `DEMO-TASK.md` (the task as the agent reads it) and `DEMO-RUNBOOK.md` (the presenter's
+notes). The prompt on stage is one line: *Read DEMO-TASK.md and do what it says.* The operator ran it in the
+workspace: all tests passing.
+
+**Still to do.** Time the task on the hub and note terminal quirks in the runbook; pre-pull the image and the
+editor for a cold node; an in-cluster git remote for the no-internet mode (Phase 8b) - a workspace start clones
+from GitHub today; the link from the demo's landing page; the agent binary and its search tool are third-party
+dependencies whose terms are the operator's to vet.
+
+## D163 — The fleet tenant: micro-VM devices under RHEM, robots' worlds as pods, one slice rendering every camera
+
+**Date:** 2026-09-20. **Status:** decided with the operator; nothing built yet. Builds on D142's addendum and D143
+(MIG on, one slice is the rendering tenant, physics on CPU, a showcase and not a second flywheel).
+
+**What the tenant is for (operator, restated):** show a fleet that is **scaled, running, and managed by RHEM in
+correct ways**, with CUDA visibly at work. It is not a flywheel, and how well the existing policy does the task on
+the ray-traced pixels does not matter. The five-seed zero-shot measurement D143's second addendum left open is
+therefore no longer a gate, and look tuning and a separate evaluation rig are dropped
+(`docs/internal/CUDA-RENDERER-PLAN.md` keeps its findings; its sections on tuning and the rig are not the plan).
+
+**Shape.**
+- **Devices are micro-VMs**, because a RHEM device is an operating system with an agent on it, and a pod is not:
+  clones of one prepared RHEL base image on copy-on-write overlays (1-2 vCPU, about 2 GiB, boot in about half a
+  minute), each the robot's *computer* - flightctl agent, the policy as a Fleet-delivered workload, labels, staged
+  rollout (canary, then batches), signature verification on every device. One command scales the fleet up or down.
+  The policy image is in the base image's store or comes from the hub's registry, never 4 GB per device from
+  outside.
+- **The robots' worlds are pods on the hub:** physics-only sims (no camera sensors), one per robot, scaled with
+  `oc scale`, each in its own network namespace (no `/run_policy` collision, D132). The world is not the device.
+- **One MIG slice is the rendering tenant:** MuJoCo-Warp ray-traces every robot's two cameras in a batch; frames go
+  to the robots' computers and to a "fleet wall" page that shows every robot's view.
+- Expected scale: 16-24 robots on this machine beside the hub (CPU bound). flightctl's device simulator stays a
+  possibility for a bigger number in the fleet view, clearly labelled, **not** pursued until the real fleet's
+  ceiling is known.
+
+**Addendum, same day - the base image is RHEL image mode (bootc).** No aarch64 KVM guest image was at hand, and
+the operator preferred the alternative on its merits: the devices' base is a bootc image (the RHEL 10 bootc
+base + the flightctl agent + podman, the policy image pre-loaded), turned into a qcow2 on this host with
+bootc-image-builder, and the micro-VMs are copy-on-write clones of that. It is the canonical RHEM device
+flow, it needs nothing downloaded by hand, it takes care of first-boot identity, and it leaves room for an
+OS image rollout as a later beat. First a short spike that the builder and the base behave on this aarch64
+host with its 64k-page kernel. OpenShift Virtualization was looked at for the VMs and set aside with
+evidence: the operator is offered for arm64, but the hub is itself a VM and its node has no `/dev/kvm` -
+guests there would run under software emulation.
+
+**Addendum, same day - image mode works on this host** (`tools/host/fury/79-bootc-spike.sh`). The pull secret is
+entitled to `rhel10/rhel-bootc:10.2` and `rhel10/bootc-image-builder:10.2` (both pulled in 41 s, arm64); RHEL
+repositories are visible inside a container on this host, so an image build needs **no activation key**;
+bootc-image-builder ran on the 64k-page aarch64 host with SELinux enforcing - derived image plus qcow2 in **75 s**,
+894 MiB on disk; the guest, in the micro-VM shape (UEFI, 2 vCPU, 3 GiB, no balloon), **answers on ssh 17 s after
+`virt-install` starts** (systemd reports 5.4 s), runs a 4k-page kernel, SELinux enforcing, 208 MB used when idle,
+and `bootc status` shows the booted image. The golden-image design with a throwaway guest, an activation key and
+a sealing step is dropped for a Containerfile and one builder run.
+
+**Addendum, same day - what one slice renders, measured** (`tools/host/fury/25-mjwarp-batch.sh`, slice `0:3`, the real
+scene, two 640x480 cameras per robot, shadows on, every world with its own arm motion and cube placement, RGB
+copied back): **about 228 camera pairs a second, whatever the batch size** - 195 with one world per call, 221 with
+4, 226 with 8, 227 with 16, 228 with 32. The renderer is compute bound at about 4.3 ms per world; batching buys
+15 %, not a multiple. That is **7 robots at 30 fps from one 1g.31gb slice**, 15 at 15 fps, and the slice's memory
+is almost untouched (477 MiB of 31 GiB at 32 worlds; read-back 75 MB per batch in 4.6 ms). So the fleet's size is
+set by render rate, resolution and how many slices render, not by memory: the policy looks at 480x480 and
+decides about once every 1.7 s, so 480x480 at 15 fps serves about 20 robots from one slice, and a second slice
+doubles whatever is chosen. The earlier geometry check (rootless, CPU device): the renderer draws the same state
+as Gazebo to 0.09 px on cube centroids and 0.99 IoU on the arm, with the two corrections of the design plan
+(field of view, wrist-roll offset) both confirmed necessary.
+
+**Addendum, same day - the rendering tenant runs on slice `0:3`** (`73-fleet-renderer-install.sh`; unit
+`fleet-renderer.service`, owned by `fury-mode` like the other tenants). CUDA works for the image's non-root user
+with every capability dropped, SELinux-confined, on a UBI 10 base (UBI 9's glibc is too old for the ray tracer's
+library - found by the build's own self-test). Twenty robots sent by the test sender, 480x480, two cameras each,
+shadows on: **83 ms a batch, 12 frames a second per robot** - 480 ray-traced camera frames a second from one
+1g.31gb slice, a little above the 640x480 benchmark, so the cost is not mostly pixels; the 15 fps target overruns
+at twenty robots and holds at sixteen. Host memory peak 1.0 GiB, the wall's JPEG 57 ms. The operator looked at the
+wall: every arm moving. What it showed was the test sender's synthetic motion (a cube sliding, nothing picked
+up) - the worlds, physics with replayed recorded motion, are the next piece.
+
+**Addendum, same day - stages A and B are live: twelve managed robots, twelve worlds, one wall.**
+*Worlds (B).* A world costs **1.4-1.6 vCPUs and 540 MiB on the hub** - half again what the same world cost on the
+host's own cores. Twelve put the 32-vCPU node at 64% and the render batch at 54 ms of its 66; sixteen ran (76%,
+14.5 frames a second) but left the hub VM with every vCPU busy during a restart, and twenty did not schedule: the
+node's cpu *requests* were 97% booked with a quarter of its cpu idle. The request is now 500m (the platform wins
+when cpu is short, and a workspace or a pipeline run still schedules), the scale script caps at sixteen, and **the
+fleet's size is twelve**. The arms replay **thirty recorded episodes of the policy's own actions** (extracted from
+the training dataset into a hand-made ConfigMap), in the collection scene: only the green cube is re-placed, by
+3 cm. Open loop, that lifts the two cubes that never move into the tray and the green one when it lies right - what
+the operator recognised as the policy's usual two of three. The built-in motion is the fallback, in the policy's
+order. The wall lays a fleet that divides evenly out as a full grid (4 x 3).
+*Robots (A).* The golden image holds the OS, the agent, podman, cloud-init and a firewall - **no application
+image**: the runtime image has whiteouts, which a container build cannot carry into an embedded store, so every
+robot pulls its two images itself and verifies them itself, which is also the better story. OS image 34 s, disk
+65 s, 940 MiB; 40 GiB thin root. The builder is handed the host's own image store, as the spike did: podman
+refuses a store that shows up at another path inside the builder's container, and the builder is privileged either
+way. Three first-boot faults, each of which would have hit every clone, found by reading the clone's disk from the
+host (`82-fleet-vm-peek.sh` - there is no other way into these guests, by design): cloud-init 24.4 rejects
+netplan's `to: default` route and with it the whole pre-network stage (the clone boots with no address); the agent
+ordered after cloud-init's *final* stage closes a cycle through `multi-user.target`, which systemd breaks by never
+starting the agent (it now waits for the network stage, where its config is written); RHEL's cloud-init makes the
+fqdn the hostname, and the approval check accepts `fleet-vm-NN` only. After those: twelve clones enrolled by
+themselves, were approved by the checked script (dry run first; the canary alone, then batches), joined
+`Fleet/robots` (live in `gitops/rhem/fleet-robots.yaml`), and **all twelve were Online, UpToDate and Healthy about
+25 minutes after the first one booted** - the canary's own pull-verify-start took under ten. Host with twelve VMs,
+twelve worlds and three tenants: load about 50 of 72 cores, 267 GB of memory free.
+*How it is shown (operator, same day).* The demo stays in tenants mode with everything running; act 1 is shown
+from a recording, not by switching modes on stage. The fleet's beats therefore assume a
+running fleet and reset only what they touch: robots stopped and started with `81-fleet-scale.sh <N>` (back in
+about a minute - no approval, no pull), a rollout walking the Fleet's batches.
+
+**Staging, each stage showable on its own:** (A) the micro-VM factory, enrolment and approval tooling, the robots'
+Fleet - RHEM at scale, no sim yet; (B) world pods + the rendering tenant + the wall, the arms driven by recorded
+motion; (C) the policy on each device closes the loop with its world.
+
+## D164 — Tenants mode's four slices: coding assistant, robot zero, training, fleet rendering
+
+**Date:** 2026-09-20. **Status:** decided with the operator; `0:0` runs, the other three are to build.
+
+| Slice | Size | Tenant |
+|---|---|---|
+| `0:0` | 3g.126gb | the coding assistant, shown through a Dev Spaces workspace (D160-D162) |
+| `0:1` | 1g.31gb | **robot zero**: the enrolled GPU host's own policy, delivered by RHEM and pinned to this slice |
+| `0:2` | 1g.31gb | training: real ACT fine-tunes while everything else serves |
+| `0:3` | 1g.31gb | the fleet's rendering tenant (D163; about 228 camera pairs a second) |
+
+**Why robot zero and not a second renderer.** The fleet is bounded by host CPU (16-24 micro-VMs), and one rendering
+slice already covers about twenty robots at 480x480 and 15 fps, so a second one would only smooth the wall - more
+of the same. Robot zero adds what no other candidate does: **RHEM delivering a signed GPU workload and placing it on
+a specific MIG slice** - governance of the partitioning itself, through the Fleet's `gpu_device` label, which was
+built for this (D148) and never exercised - and **continuity between the acts**: the device and the signed model
+the audience watched being promoted in act 1 keep serving in act 2 instead of going dark when MIG turns on. Robot
+zero is the fleet's first robot: its world is a physics-only sim like the others, its cameras come from the
+rendering tenant, it is on the wall; only its policy runs on a slice instead of a CPU. Considered and set aside: a
+second training job (runner-up, cheap), a second served model (needs a purpose on stage), perception over the
+fleet's camera streams (worth revisiting with time), a robot foundation model (days of risk). If robot zero slips,
+`0:1` becomes a second renderer or a second training job at almost no cost.
+
+**What it takes, after the renderer exists:** the host device gets `gpu_device=<MIG uuid of 0:1>` (MIG UUIDs are
+stable across mode switches here); `fury-switch.sh tenants` starts the policy app instead of leaving it stopped;
+`fury-mode` stops refusing a policy on a slice; the host's sim unit gains the physics-only variant for tenants mode.
+
+**Addendum (2026-09-20, late) - robot zero runs: all four slices hold their tenants.** The policy stays what it was:
+the Fleet's signed `act-inference`, placed on slice `0:1` by the device's `gpu_device` label (the slice's MIG UUID),
+with no change to the Fleet. The label path, built for D148 and never exercised, worked the first time: label set
+with the app stopped, RHEM rendered `AddDevice=nvidia.com/gpu=MIG-...` into the quadlet, the agent applied it, the
+app started - `Running / Healthy`, and the process table shows one tenant per GPU instance (assistant, robot zero's
+policy at 618 MiB, the training tenant, the renderer). The host adds three units without a GPU, owned by `fury-mode`
+like the other tenants (`74-robot-zero-install.sh`): the physics-only world from the fleet worlds' signed image,
+reporting to the renderer as `r00` and carrying the Zenoh router; a bridge that publishes the renderer's two
+pictures on the policy's image topics, 15 a second, the 480x480 picture centred in a 640x480 frame and padded,
+never stretched (same vertical field of view as the training camera); and the flywheel's coordinator with
+recording off. **Robot zero records nothing**: recording off stops the bags, and what keeps the curator clean is
+that a physics-only world starts no episode emitter; no unit mounts `/data` or holds a credential, all three run
+with a read-only root and no capabilities, and the installer refuses units that would change any of that. An
+independent review found the one way around it: robot zero's router puts a policy and camera topics on the host
+under MIG for the first time, so a stray start of the flywheel's own recorder would have recorded ray-traced
+pixels into the flywheel's bags. The recorder and the flywheel's sim now start only with MIG off, and the installer
+refuses a checkout in which they do not. In a switch (`tools/hub/fury-switch.sh`, `tools/hub/robot-zero.sh`) the
+policy is stopped first and started last and its placement changes only while it is stopped, so it never runs on
+the whole GPU under MIG; the label change carries nothing the hub manages, keeps the hub's version lock and is
+checked afterwards. Known cost: with the hub unreachable, flywheel mode has no policy until the label can be
+cleared. **First episodes on rendered pixels, closed loop, no tuning: the first full episode placed all three cubes
+in 59 s, the second too, the third did not** - a count, not yet a rate; D166's open question waits for a few
+dozen. The flywheel page's camera panel now shows robot zero's two cameras.
+
+## D165 — Isolation, measured: the assistant's numbers do not move while the slice next to it trains
+
+**Date:** 2026-09-20 (tenants mode, MIG `9,19,19,19`). The training tenant (D164; `72-training-tenant-install.sh`)
+fine-tuning ACT on slice `0:2`, the coding assistant serving from slice `0:0`, the same five-request bench as D160
+run **while the tenant trains**: time to first token **0.135 s**, decode **246.6 tokens/s**, end to end 218.9 -
+against 0.132 s / 245.7 / 218.7 on the idle GPU. No measurable difference: that is the isolation beat, and the GPU
+tenants dashboard shows both slices busy at once.
+
+**The training numbers from the same run** (1g.31gb slice, batch 8, 8 data-loader workers): about **10 steps/s** -
+**0.091 s a step computing, 0.010 s waiting for data**. Two things follow. The data-loader fix works: the first full
+fine-tune on this machine waited 0.18 s a step for data with the library's four workers (D158's night run, 4 h 21
+min for 62,244 steps); with eight it waits a twentieth of that and the step is compute bound. And one seventh of
+the GPU computes this model's step only about 1.4 times slower than the whole GPU did with the sim and the policy
+beside it (0.064 s): the same 62,244 steps would take about 1 h 35 min on a 1g slice. The tenant's round is set to
+9,000 steps, a quarter of an hour. The lerobot flags the tenant adds (`--policy.optimizer_lr`, `--seed`) are
+accepted by the image's version.
+
+## D166 — One running system, two stories: the demo stays in tenants mode and the flywheel is told from there
+
+**Date:** 2026-09-20. **Status:** decided with the operator. Supersedes the "two acts, two GPU modes" staging for
+the demo path; `fury-mode flywheel` stays for off-stage work.
+
+**Why.** Switching modes on stage reconfigures MIG and stops and starts every tenant, the fleet and the worlds over
+a network: minutes of dead air, and trust in everything coming back. Only one thing in the flywheel ever needed the
+whole GPU - the simulator rendering its own cameras, which a MIG slice cannot do - and the rendering tenant (D163)
+now does that with CUDA. So the system is left running in tenants mode, each piece shown is reset by itself, and
+as little as possible is shown from a recording.
+
+| Beat | From tenants mode | Live? |
+|---|---|---|
+| Collect: the policy at work, its cameras | **robot zero** (D164): the RHEM-delivered signed policy on slice `0:1`, cameras from the rendering tenant, on the wall as `r00`; the flywheel page's camera panel points at those streams | live |
+| Train | the training tenant on `0:2`: real ACT fine-tunes (D165: a slice is no slower here, training is loader bound) | live |
+| Evaluate, gate | the pinned governed run on the evaluation page - hours of machine time in any mode, never a live beat | recorded results in a live page |
+| Promote | merge the PR; RHEM rolls the signed model to the host on its slice **and** through the robots' Fleet in batches - the fleet's rollout beat and act 1's promotion are one beat | live |
+
+**What this does not claim.** The episodes seen live run on rendered pixels, not the pixels the model was trained
+on, and they never enter the flywheel's storage, its trigger count or the live evaluation page (a hard requirement
+on robot zero). On stage the statement is "this is the system that produced that promotion, still running" - not
+"what you are watching trained the model".
+
+**Open, decided by a measurement.** Robot zero's success rate on rendered pixels is unknown (geometry matches to
+0.09 px, the look does not). It comes for free once robot zero runs. Poor: the collect beat leans on recorded
+motion, as the fleet's worlds do, and on the page's clips. Good: moving the whole flywheel onto rendered pixels -
+collect, train and evaluate in tenants mode, a closed loop with no mode switch at all - becomes worth its cost (a
+re-collection, an overnight run, the governed trainer and the evaluation rig taught to use a slice and the
+renderer). Not before the number is in.
+
+**Follows from this.** The promotion must be repeatable (`tools/hub/reset-promotion.sh`, so far only run dry). A
+recording is a fallback for the network-dependent promotion, not a required part. Two runbooks replace the act
+structure: *setup* (a fresh RHEL install to tenants running) and *show* (what to present, what to say, how to
+reset each piece). FURY-PLAN's phase text still speaks of two acts and is reworded when those runbooks are written.
+
+## D167 — Tenant numbers beside GPU numbers: each slice is shown with what its tenant is doing
+
+**Date:** 2026-09-20. **Status:** built, installed, verified end to end (`8dc87a3`).
+
+The GPU tenants dashboard showed four slices being busy; "the training slice is actually learning" was visible only
+in a terminal. Now each tenant has a headline beside its GPU panels, and the dashboard names each slice by its
+tenant. A small exporter on the host (`75-tenant-metrics-install.sh`, `10.20.0.1:9401`; unprivileged, read-only
+root, no capabilities, no GPU, not owned by `fury-mode`) publishes the training tenant's loss, step, steps per
+second, update and data-wait seconds and round - read from the tenant's own round log and ledger, mounted read-only,
+never the journal - and the rendering tenant's frames per second and robots live from its status page. The step
+comes from the progress bar, because the trainer abbreviates `step:` above 999. The hub scrapes it like the GPU
+exporter (a static target, no Service), and scrapes the assistant's own vLLM metrics on its existing port through
+a keep-list of four series - configuration only. The loss curve is a sawtooth, one line per round, titled
+"Training tenant - loss (round N)": these rounds are real fine-tunes, nothing from them is promoted, and nothing on
+the page calls them the governed run. The slice names are a static map of GPU instance ids (1, 11, 12, 13), which
+follow from the fixed MIG layout; because a changed layout would shift ids and put a wrong name on a slide rather
+than blank a panel, the installer's `slices` verb prints instance id, MIG device, profile, the tenant on it and the
+dashboard's name for it, row by row - a pre-demo check. `tools/hub/training-watch.sh` follows the training output
+in a terminal for a projector (step and bar, loss, steps per second, data wait; control sequences stripped;
+`--raw` for the untouched lines). First readings through the hub: round 28 ending at loss 0.061, 8-9 steps a
+second with three other tenants working, renderer 15 of 15 frames a second with 13 robots live. An independent
+review found nothing that had to be fixed before it ran; its four smaller findings (a slow client holding the only
+thread, the mount exposing the path where a model-hub token would live, raw journal bytes reaching a projected
+terminal, the id map) were fixed first.
+
+**D166, addendum (2026-09-20, night) - the live lane: robot zero's episodes are judged, not kept.** In tenants
+mode the flywheel page showed live cameras next to "Loop stopped", an empty log and a frozen counter. It now tells
+the story live, all day, without weakening the requirement above (`b0a6514`).
+*Host.* Robot zero has a fourth unit, `robot-zero-emitter`: the signed sim image's own episode emitter, a listener
+beside the episode loop that moves and resets nothing. It posts each episode's summary - a small JSON,
+`"dataset_path": null`, there being no bag - to one address: `curator-show`, a second Deployment of the curator's
+own code on the hub. *Why the verdict is honest.* The gates judge physics (completeness, cubes on the tray,
+smoothness), not pixels, and none looks at a bag, so the shared code needed no exception. *Why the separation is
+structural, not a flag on the real lane.* `curator-show` has its own small volume, not the node's episode
+directory; no sync agent, mirror or consumer mounts it; it runs under its own service account without the
+namespace's host-mount grant, in a security profile that cannot mount a host path; it has no object-storage or
+Kafka variable, no credential, no token, and a NetworkPolicy that lets nothing out of the pod. On the host the
+installer holds the emitter's unit to exactly that one address - refusing the flywheel curator's port, a second
+address, that line in any other unit, a fallback directory off the container's tmpfs, any proxy variable (the
+emitter also switches proxies off), continued lines and quoted values - and checks the rule again on the unit
+quadlet generated. D164's sentence that robot zero stays clean because no emitter exists is superseded: one
+exists, and it can reach only a curator that keeps nothing. *What the open port let in, found by review and fixed
+on both lanes.* Episode fields reached the page's markup unescaped - and that page has an unauthenticated control
+that scales the real lane - so every field is now validated by the receiver (a body must be a JSON object of the
+emitter's shapes, 64 KB at most on the live lane, or it gets a 400 naming the field) and escaped by the page; the
+receiver is threaded with a ten-second timeout; a record that cannot be judged leaves the queue once; the live
+lane prunes everything and the page reads only the newest small files however full a volume is; on the live lane
+the page refuses its clear and scaling controls. Both curators move together on one code revision (the flywheel's
+own was rolled once onto it). The Service keeps the client's address and the policy admits the GPU host alone;
+tailnet members, forwarded by the host, are not told apart from it (accepted: the admin network). *What the page
+says.* "Serving - live lane"; beside the counter "live lane: judged, not kept" and the time the count began; the
+bar is passes modulo 160, and at 160 it holds for five minutes and says "this is where a governed training run
+would start. On the live lane nothing was kept and nothing was started; the count begins again." The pinned
+evaluation page and the clips stay the record. *What "not kept" means exactly.* The newest 300 verdict records
+and a totals file sit on a throwaway volume so the page has a log; no bags; nothing reaches object storage, Kafka,
+the trigger or a dataset. A hand-written total - the rehearsal-only shortcut for the 160 moment - shows itself by
+its start time and is put back before an audience. **First minutes on the machine:** the emitter heard the episode
+loop from a container of its own and took the policy's label (`act-v2-ft160`); the first episode after the restart
+failed and was rejected (0 of 3 cubes), the next two placed all three and passed at score 1.000 - the same
+outcomes the episode loop logged; the page read 2 passed, 1 rejected, 2 / 160; the flywheel's own curator received
+nothing.
+
+## D168 — Edge Manager from Red Hat's product chart: the screen says the product's name, and every image is the product's
+
+**Date:** 2026-09-20. **Status:** done (`0457cfb`); 13 devices stayed enrolled and healthy through it.
+
+The device-management page read "Flight Control", with the project's logo and documentation links. That was never
+a decision: the chart sets the UI's branding flag from the chart's own NAME (`IS_RHEM` is true only for a chart
+called `redhat-rhem`), and D024 had installed the project's chart from `quay.io/flightctl/charts`. Only the UI
+image had been swapped for Red Hat's (D146/D147), and only because the project's UI image has no arm64 build;
+D135/D136 had looked at console integration and set it aside. Nothing had looked at the name on the screen.
+
+**Decision.** Install from Red Hat's chart, `redhat-rhem` 1.3.0 on `charts.openshift.io` - same templates, same
+version, same release name and values, so the same 105 objects are updated in place. The standalone Route UI stays:
+it is one of the product's two documented presentations; the other lives in the ACM console, needs ACM (D135: did
+not fit this hub), and the console plugin's menu entries all attach to ACM's perspective, so without ACM it has
+nothing to show. **Not claimed:** both charts declare x86_64 only, so an arm64 hub is outside what either declares;
+the images exist for arm64 and run - whether that is supported is a question for the product team.
+
+**How it went.** Before: no rollout in flight, 13 devices healthy, a SQL dump of the database written beside its
+data directory (576 KB). A local render of both charts with our values: same objects and names, no selector
+changes; every image from `registry.redhat.io`; two labels changed on everything (each pod restarts once); the
+key-value store is redis-7 instead of valkey-8 (in memory, nothing kept); the database only changes image
+(PostgreSQL 16 both); the generated secrets are held at their live values by D031's `ignoreDifferences`. One thing
+the render does not show: the database-migration Job is an ordinary object and a Job's pod template cannot be
+changed in place, so the sync refused that one object - deleting the completed Job let Argo CD create it from the
+new chart, where it ran and completed (same version: nothing to migrate). The chart's certificate and
+encryption-key jobs ran again and left every secret unchanged. After: app Synced and Healthy, 13 devices Online,
+UpToDate and Healthy, both Fleets valid, the page titled "Red Hat Edge Manager". Going back is the same change in
+reverse (the project chart's registry Secret is still there), with the dump as the last resort.
+
+## D169 — The promotion beat across both Fleets, run and timed: reset, re-open, merge
+
+**Date:** 2026-09-21 (UTC). **Status:** done once end to end; this is the rehearsal and the show path (D166).
+
+**Reset** (`tools/hub/reset-promotion.sh`, one push: the revert of PR #7's merge plus the commit that brings the
+robots' Fleet along - the merge predates the two-Fleet PR step). Host serving the teacher on its slice about 50 s
+after the push. Then the first template change ever to walk the twelve robots: waves of 1, 2, 3, 5 and 1 (canary,
+25 %, 50 %, the rest split by `maxUnavailable: 5`), each under a minute **including each robot's first pull of the
+teacher model** (about 230 MB) - which also settles that the amd64-era teacher image mounts on the arm64 robots.
+All 13 devices UpToDate and Healthy about 5 minutes after the push.
+**Re-open** (`tools/hub/reopen-promotion.sh --open`): PR #8, "Promote act-v2-ft160 (82% -> 92%) - re-opened for a
+showing", opening with "Re-proposes PR #7 (pipeline run 9fb233e8, 2026-09-20): same signed image and
+transparency-log entry, same gate record. The pipeline did not run again; nothing was re-measured." and quoting
+PR #7 unchanged; one commit, every Fleet file pinned alike. No pipeline run, no image, signature, registry version
+or evaluation record written - the Model Registry entry for `act-v2-ft160` stays the one the governed run made
+(operator: one pristine entry; no further full run for this candidate). The laptop's login may push a branch but not
+open a pull request on this repository, so the script opens the PR **with the token the pipeline opens its own
+with**, read from the hub's Secret into the one call - never a file, never printed - and before anything is pushed
+(operator's instruction; tested).
+**Merge** (operator, merge commit, 00:03:55 UTC):
+
+| after the merge | what |
+|---|---|
+| 45 s | both Fleets carry the new template (the ResourceSync's poll) |
+| 1 min 32 s | the host serves `act-v2-ft160` on slice `0:1`, Healthy (D158's first promotion, MIG off: 1 min 38 s) |
+| 3 min 23 s | twelve of twelve robots UpToDate - waves of about 16 s each, nothing pulled: every device holds both models |
+| 3 min 39 s | all 13 devices Healthy |
+
+Robot zero's episode loop saw the new label and the flywheel page's badge followed; the live lane logged the
+restart's failed episodes as rejects, truthfully. So the beat fits a stage: merge, narrate for a minute and a half
+while the host comes back on its slice, and the fleet is done before the fleet has been introduced. It needs every
+enrolled robot running (a shut-off robot stalls its batch for 30 minutes), a reachable GitHub for the merge, and
+the hub; it does not need the registry once both models are on every device. **Between showings:** reset (about 5
+minutes), re-open (seconds; the PR can sit open until the beat), merge.
+
+**D166, addendum (2026-09-21) - the live lane gets its own episodes page.** The Live episodes page is the governed
+collection's record and rightly shows nothing of robot zero, so a third instance of the evaluation page's image,
+`eval-dashboard-show` (`2bfe0a5`), reads the show curator's `curated/` and `rejected/` directories - read-only
+sub-path mounts, so unjudged records and the totals file are not in the pod at all - under its own service account
+with no grant, credential, token or way out of the pod. It says what it is ("Live episodes - live lane ... judged,
+not kept: the newest few hundred verdicts, no recordings") and links to the collection's page; the flywheel page
+links "Live episodes" to it on the live lane only, and the paired page now calls the other one "Live episodes
+(collection)". Two findings on the way: the show curator keeps the newest 300 records of *each* verdict, so both
+directories read whole tend to 50 % whatever the policy does - the page reads the newest 300 files of the two
+together, which are exactly the last 300 episodes judged (a test ties the window to the curator's setting); and the
+evaluation page wrote `rollout.steps` into a table row unescaped (masked by the curator's validation, fixed for all
+three instances). One rebuilt, signed image (Rekor 24), pinned by one digest in all three, which a test holds
+equal. On the machine: admitted under the restricted profile; the paired page still pinned to `9fb233e8` with 720
+episodes, the collection's page still on its own 18; the new page, an hour into the lane and across the promotion
+cycle, shows `act-v2-ft160` with 28 of 37 episodes placing all three cubes on rendered cameras and the teacher 6 of
+9 - small counts, but they are what D166's open question asked for, and they keep growing by themselves.

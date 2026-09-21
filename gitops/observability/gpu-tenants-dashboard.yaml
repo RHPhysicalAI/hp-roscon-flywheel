@@ -1,0 +1,1409 @@
+# This project was developed with assistance from AI tools.
+#
+# PersesDashboard "GPU tenants": what each slice of the one GPU is doing, and what each tenant is doing with its
+# slice. Three scrapes of the GPU host feed it, all through monitoring-stack.yaml -> prometheus-datasource.yaml:
+#   fury-gpu        the DCGM exporter                     (fury-gpu-scrape.yaml)        the GPU's view of every slice
+#   fury-tenants    the tenant metrics exporter           (fury-tenants-scrape.yaml)    training and rendering numbers
+#   fury-assistant  the coding assistant's vLLM /metrics  (fury-assistant-scrape.yaml)  tokens and requests
+#
+# One dashboard for both ways the GPU is used, because the DCGM exporter follows the mode by itself:
+#   MIG on   one set of series per GPU instance, labelled GPU_I_ID (the driver's instance id, not the
+#            0:0..0:3 of the CDI names) and GPU_I_PROFILE (3g.125gb, 1g.31gb)
+#   MIG off  one set of series for the whole GPU, and neither label
+#
+# Slices are named by tenant. The key is GPU_I_ID, mapped here and nowhere else:
+#   1 = assistant (0:0)   11 = robot zero (0:1)   12 = training (0:2)   13 = rendering (0:3)
+# The ids are the driver's, fixed by profile and placement, and the layout is made by one command in one order
+# (tools/host/fury/mig-config.sh: -cgi 9,19,19,19), so they come out the same every time MIG is turned on - as the
+# MIG UUIDs do, which D164 relies on. Read on the host, no root needed (columns GI ID and MIG Dev):
+#   nvidia-smi | sed -n '/MIG devices/,/Processes/p'
+# DCGM carries neither the CDI index nor the MIG UUID as a label, so there is nothing steadier to map by. With
+# another layout (MIG_LAYOUT) the ids change: an id this file does not know falls back to "<profile> / instance
+# <id>" in the shared panels, the four tenant groups' GPU panels go empty, and the four ids below and in the
+# tenant groups' queries are what to edit. The "Slice detail" group never depends on the mapping.
+#
+# How the panels cope with both modes, each point read from the Perses source at the version that runs here
+# (v0.53.0; plugins Prometheus 0.57.0, TimeSeriesChart 0.12.0, StatChart 0.12.0) rather than tried and hoped for:
+# - The shared panels name their series by a `slice` label made in the query: label_join writes
+#   "<profile> / instance <id>", then label_replace overwrites it with "whole GPU" where GPU_I_ID is empty and
+#   with the tenant's name where it is one of the four known ids. An absent label is an empty one in PromQL, so
+#   the same query serves both modes. label_replace anchors its regex ("1" is not "11"), and no replacement
+#   uses $1: Perses reads a $ in a query as one of its own variables.
+# - The "Slice detail" group has repeatVariable: gi. With "All" selected and NO customAllValue the
+#   variable resolves to the list of its options and the group is drawn once per option, the variable
+#   bound to that one value inside it. Setting customAllValue would turn "All" into a plain string and
+#   the repeat would silently stop: leave it out.
+# - With MIG off the variable has no options. The group is then drawn once, unrepeated, and $gi - an
+#   empty multi-value variable - expands to "()". GPU_I_ID=~"()" matches exactly the series without
+#   that label, which is the whole GPU: the same effect as "". The bare form is used everywhere, with
+#   no format modifier; the title of that one unrepeated group shows the same "()".
+# - Label values are looked up over the dashboard's time range, so after a mode switch the old rows stay
+#   for one `duration` and then go. That is why it is 15m, and why the first group uses no variable:
+#   it always shows whatever reports now.
+# - The loss panel's title carries the round: $round is a single-value variable filled by an INSTANT query
+#   (PrometheusPromQLVariable asks for now, not for the range), so it has one option, the round that is running.
+#   Options are asked for again at every refresh, a selected value that is no longer an option is replaced by the
+#   first one, and panel titles have variables substituted (shared v0.53.1: variable-model.ts, Variable.tsx,
+#   PanelHeader.tsx). With the exporter away the variable is empty and the title shows a bare "$round".
+# - A stat shows the last point of a range query, so a stopped tenant's last loss stays up until it leaves the
+#   time range. The rate stats add `or on() vector(0)`: a tenant that is not running reads 0, at once.
+#
+# Wording: the training tenant's rounds are real fine-tunes, and nothing from them is evaluated, signed or promoted.
+# No panel here calls them the flywheel's training run; "training tenant" is the term.
+#
+# Units: DCGM_FI_PROF_* are ratios 0..1 (percent-decimal); DCGM_FI_DEV_FB_* are MiB, turned into bytes
+# in the query. Field names are those of exporter 4.5.2-4.8.1, the pinned image - later versions of the
+# NVIDIA documentation use newer names for temperature and power. vLLM's names are those of 0.24.0, read from
+# the assistant's /metrics on the host.
+#
+# Per-instance utilisation only exists as a profiling field (DCGM_FI_PROF_GR_ENGINE_ACTIVE): NVML does
+# not attribute utilisation to MIG devices (NVIDIA MIG user guide), and DCGM_FI_DEV_GPU_UTIL is NVML's
+# number. Power and temperature belong to the board, not to a slice; max by (gpu) folds them to one line
+# whether DCGM reports them once or once per instance.
+apiVersion: perses.dev/v1alpha2
+kind: PersesDashboard
+metadata:
+  name: gpu-tenants
+  namespace: observability
+spec:
+  config:
+    display:
+      name: "GPU tenants"
+    duration: 15m
+    refreshInterval: 10s
+    variables:
+      - kind: ListVariable
+        spec:
+          name: gi
+          display:
+            name: "MIG instance"
+          allowAllValue: true
+          allowMultiple: true
+          defaultValue: "$__all"
+          sort: numerical-asc
+          plugin:
+            kind: PrometheusLabelValuesVariable
+            spec:
+              datasource:
+                kind: PrometheusDatasource
+                name: prometheus-edge
+              labelName: GPU_I_ID
+              matchers:
+                - 'DCGM_FI_DEV_FB_USED{job="fury-gpu"}'
+      # the round the training tenant is in, for the loss panel's title. An instant query: one option, the
+      # newest round directory on the host, whether or not the tenant is running
+      - kind: ListVariable
+        spec:
+          name: round
+          display:
+            name: "Training round"
+          allowAllValue: false
+          allowMultiple: false
+          sort: numerical-desc
+          plugin:
+            kind: PrometheusPromQLVariable
+            spec:
+              datasource:
+                kind: PrometheusDatasource
+                name: prometheus-edge
+              expr: 'tenant_training_round_info{job="fury-tenants"}'
+              labelName: round
+    layouts:
+      - kind: Grid
+        spec:
+          display:
+            title: "All slices"
+          items:
+            - content:
+                # the full JSON-pointer path including "spec" (D028)
+                $ref: "#/spec/panels/busyAll"
+              height: 8
+              width: 12
+              x: 0
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/memoryAll"
+              height: 8
+              width: 12
+              x: 12
+              "y": 0
+      - kind: Grid
+        spec:
+          display:
+            title: "Training tenant - slice 0:2"
+          items:
+            - content:
+                $ref: "#/spec/panels/trainLossStat"
+              height: 4
+              width: 4
+              x: 0
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/trainRateStat"
+              height: 4
+              width: 4
+              x: 4
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/trainRoundStat"
+              height: 4
+              width: 4
+              x: 8
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/trainProgressStat"
+              height: 4
+              width: 4
+              x: 12
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/trainFinishedStat"
+              height: 4
+              width: 4
+              x: 16
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/trainLastLossStat"
+              height: 4
+              width: 4
+              x: 20
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/trainLoss"
+              height: 8
+              width: 12
+              x: 0
+              "y": 4
+            - content:
+                $ref: "#/spec/panels/trainRate"
+              height: 8
+              width: 6
+              x: 12
+              "y": 4
+            - content:
+                $ref: "#/spec/panels/trainTimes"
+              height: 8
+              width: 6
+              x: 18
+              "y": 4
+            - content:
+                $ref: "#/spec/panels/busyTraining"
+              height: 6
+              width: 12
+              x: 0
+              "y": 12
+            - content:
+                $ref: "#/spec/panels/memoryTraining"
+              height: 6
+              width: 12
+              x: 12
+              "y": 12
+      - kind: Grid
+        spec:
+          display:
+            title: "Coding assistant - slice 0:0"
+          items:
+            - content:
+                $ref: "#/spec/panels/assistantTokensStat"
+              height: 7
+              width: 4
+              x: 0
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/assistantTokens"
+              height: 7
+              width: 7
+              x: 4
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/assistantRequests"
+              height: 7
+              width: 7
+              x: 11
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/busyAssistant"
+              height: 7
+              width: 6
+              x: 18
+              "y": 0
+      - kind: Grid
+        spec:
+          display:
+            title: "Robot zero - slice 0:1"
+          items:
+            - content:
+                $ref: "#/spec/panels/zeroBusyStat"
+              height: 7
+              width: 4
+              x: 0
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/busyZero"
+              height: 7
+              width: 10
+              x: 4
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/memoryZero"
+              height: 7
+              width: 10
+              x: 14
+              "y": 0
+      - kind: Grid
+        spec:
+          display:
+            title: "Rendering tenant - slice 0:3"
+          items:
+            - content:
+                $ref: "#/spec/panels/renderFpsStat"
+              height: 7
+              width: 4
+              x: 0
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/renderFps"
+              height: 7
+              width: 7
+              x: 4
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/renderRobots"
+              height: 7
+              width: 7
+              x: 11
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/busyRendering"
+              height: 7
+              width: 6
+              x: 18
+              "y": 0
+      - kind: Grid
+        spec:
+          display:
+            title: "Slice detail $gi"
+            # closed by default: in tenants mode the tenant groups above show the same slices by name. With
+            # MIG off it is where the whole GPU's detail is, and it depends on no id mapping
+            collapse:
+              open: false
+          repeatVariable: gi
+          items:
+            - content:
+                $ref: "#/spec/panels/busySlice"
+              height: 7
+              width: 12
+              x: 0
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/memorySlice"
+              height: 7
+              width: 12
+              x: 12
+              "y": 0
+      - kind: Grid
+        spec:
+          display:
+            title: "The board"
+          items:
+            - content:
+                $ref: "#/spec/panels/power"
+              height: 7
+              width: 12
+              x: 0
+              "y": 0
+            - content:
+                $ref: "#/spec/panels/temperature"
+              height: 7
+              width: 12
+              x: 12
+              "y": 0
+    panels:
+      busyAll:
+        kind: Panel
+        spec:
+          display:
+            name: "Compute busy"
+            description: >
+              Share of time the compute engine of each slice had work on it
+              (DCGM_FI_PROF_GR_ENGINE_ACTIVE). With MIG on: one line per tenant, each measured against its
+              own slice, so a busy 1g slice reads 100% like a busy 3g one. With MIG off: one line for the
+              whole GPU.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                max: 1
+                format:
+                  unit: percent-decimal
+                  decimalPlaces: 0
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: >-
+                      label_replace(label_replace(label_replace(label_replace(label_replace(
+                      label_join(DCGM_FI_PROF_GR_ENGINE_ACTIVE{job="fury-gpu"},
+                      "slice", " / instance ", "GPU_I_PROFILE", "GPU_I_ID"),
+                      "slice", "whole GPU", "GPU_I_ID", ""),
+                      "slice", "assistant (3g)", "GPU_I_ID", "1"),
+                      "slice", "robot zero (1g)", "GPU_I_ID", "11"),
+                      "slice", "training (1g)", "GPU_I_ID", "12"),
+                      "slice", "rendering (1g)", "GPU_I_ID", "13")
+                    seriesNameFormat: "{{slice}}"
+      memoryAll:
+        kind: Panel
+        spec:
+          display:
+            name: "Memory used"
+            description: >
+              Framebuffer memory in use per slice (DCGM_FI_DEV_FB_USED). A slice cannot take more than its
+              profile gives it: 126 GB for the 3g slice, 31 GB for each 1g slice.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                format:
+                  unit: bytes
+                  shortValues: true
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: >-
+                      label_replace(label_replace(label_replace(label_replace(label_replace(
+                      label_join(DCGM_FI_DEV_FB_USED{job="fury-gpu"} * 1048576,
+                      "slice", " / instance ", "GPU_I_PROFILE", "GPU_I_ID"),
+                      "slice", "whole GPU", "GPU_I_ID", ""),
+                      "slice", "assistant (3g)", "GPU_I_ID", "1"),
+                      "slice", "robot zero (1g)", "GPU_I_ID", "11"),
+                      "slice", "training (1g)", "GPU_I_ID", "12"),
+                      "slice", "rendering (1g)", "GPU_I_ID", "13")
+                    seriesNameFormat: "{{slice}}"
+      trainLossStat:
+        kind: Panel
+        spec:
+          display:
+            name: "Loss"
+            description: >
+              The training tenant's loss right now: lerobot's mean over its last 100 steps, from the
+              round's own log. It falls within a round and jumps back up when the next round starts from
+              its checkpoint. A stopped tenant's last value stays until it leaves the time range; steps
+              per second is what reads 0 at once.
+          plugin:
+            kind: StatChart
+            spec:
+              calculation: last-number
+              format:
+                unit: decimal
+                decimalPlaces: 3
+              sparkline: {}
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'max(tenant_training_loss{job="fury-tenants"})'
+      trainRateStat:
+        kind: Panel
+        spec:
+          display:
+            name: "Steps per second"
+            description: >
+              Optimiser steps a second on this 1g slice: 1 / (seconds computing + seconds waiting for
+              data), both from lerobot's log line. 0 while the tenant is not running.
+          plugin:
+            kind: StatChart
+            spec:
+              calculation: last-number
+              format:
+                unit: decimal
+                decimalPlaces: 1
+              sparkline: {}
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'max(tenant_training_steps_per_second{job="fury-tenants"}) or on() vector(0)'
+      trainRoundStat:
+        kind: Panel
+        spec:
+          display:
+            name: "Round"
+            description: >
+              The round the training tenant is in. One round is one short fine-tune: a line of its fixed
+              list of starting checkpoint, learning rate and seed.
+          plugin:
+            kind: StatChart
+            spec:
+              calculation: last-number
+              format:
+                unit: decimal
+                decimalPlaces: 0
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'max(tenant_training_round{job="fury-tenants"})'
+      trainProgressStat:
+        kind: Panel
+        spec:
+          display:
+            name: "Progress in the round"
+            description: >
+              Steps done of the round's steps, from the progress bar in the round's log.
+          plugin:
+            kind: StatChart
+            spec:
+              calculation: last-number
+              format:
+                unit: percent-decimal
+                decimalPlaces: 0
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'max(tenant_training_step{job="fury-tenants"}) / max(tenant_training_round_steps{job="fury-tenants"})'
+      trainFinishedStat:
+        kind: Panel
+        spec:
+          display:
+            name: "Rounds finished"
+            description: >
+              Rounds in the tenant's ledger that ended well. Nothing from them is evaluated, signed or
+              promoted: the training tenant shows a slice at work, it is not the flywheel's governed
+              training.
+          plugin:
+            kind: StatChart
+            spec:
+              calculation: last-number
+              format:
+                unit: decimal
+                decimalPlaces: 0
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'max(tenant_training_rounds_finished{job="fury-tenants"})'
+      trainLastLossStat:
+        kind: Panel
+        spec:
+          display:
+            name: "Last finished round - final loss"
+            description: >
+              The last loss of the last round that ended well, from the tenant's ledger.
+          plugin:
+            kind: StatChart
+            spec:
+              calculation: last-number
+              format:
+                unit: decimal
+                decimalPlaces: 3
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'max(tenant_training_last_round_final_loss{job="fury-tenants"})'
+      trainLoss:
+        kind: Panel
+        spec:
+          display:
+            name: "Training tenant - loss (round $round)"
+            description: >
+              Loss of the training tenant's fine-tune, one line per round: a sawtooth, because every round
+              starts again from a checkpoint with its own learning rate and seed. Real ACT fine-tunes on
+              slice 0:2 - and outside the governed flywheel: nothing from them is promoted.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, min]
+              yAxis:
+                format:
+                  unit: decimal
+                  decimalPlaces: 3
+              visual:
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'tenant_training_loss{job="fury-tenants"}'
+                    seriesNameFormat: "round {{round}} - from {{start}}, lr {{lr}}, seed {{seed}}"
+      trainRate:
+        kind: Panel
+        spec:
+          display:
+            name: "Steps per second"
+            description: >
+              Optimiser steps a second, from the seconds a step computes and waits (the panel to the
+              right). A gap is the pause between two rounds, or a stopped tenant.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                format:
+                  unit: decimal
+                  decimalPlaces: 1
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'tenant_training_steps_per_second{job="fury-tenants"}'
+                    seriesNameFormat: "steps per second"
+      trainTimes:
+        kind: Panel
+        spec:
+          display:
+            name: "A step's time: computing, waiting for data"
+            description: >
+              Stacked, so the top edge is the time one step takes. Computing is the slice's share; waiting
+              for data is the host's CPUs decoding video for the loader. A slice that computes while it
+              barely waits is a slice kept busy.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                format:
+                  unit: seconds
+              visual:
+                areaOpacity: 0.4
+                stack: all
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'tenant_training_update_seconds{job="fury-tenants"}'
+                    seriesNameFormat: "computing"
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'tenant_training_data_wait_seconds{job="fury-tenants"}'
+                    seriesNameFormat: "waiting for data"
+      busyTraining:
+        kind: Panel
+        spec:
+          display:
+            name: "Compute busy"
+            description: >
+              The training tenant's slice only (GPU instance 12). Engine active is any work at all; tensor
+              cores active is the part of it that is matrix arithmetic - high while a round trains.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                max: 1
+                format:
+                  unit: percent-decimal
+                  decimalPlaces: 0
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'DCGM_FI_PROF_GR_ENGINE_ACTIVE{job="fury-gpu", GPU_I_ID="12"}'
+                    seriesNameFormat: "engine active"
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'DCGM_FI_PROF_PIPE_TENSOR_ACTIVE{job="fury-gpu", GPU_I_ID="12"}'
+                    seriesNameFormat: "tensor cores active"
+      memoryTraining:
+        kind: Panel
+        spec:
+          display:
+            name: "Memory"
+            description: >
+              The training tenant's slice only (GPU instance 12): memory in use against what the slice
+              has. A slice cannot take more than its profile gives it, whatever its neighbours do.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                format:
+                  unit: bytes
+                  shortValues: true
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'DCGM_FI_DEV_FB_USED{job="fury-gpu", GPU_I_ID="12"} * 1048576'
+                    seriesNameFormat: "used"
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: >-
+                      (DCGM_FI_DEV_FB_USED{job="fury-gpu", GPU_I_ID="12"}
+                      + DCGM_FI_DEV_FB_FREE{job="fury-gpu", GPU_I_ID="12"}
+                      + (DCGM_FI_DEV_FB_RESERVED{job="fury-gpu", GPU_I_ID="12"}
+                      or 0 * DCGM_FI_DEV_FB_USED{job="fury-gpu", GPU_I_ID="12"})) * 1048576
+                    seriesNameFormat: "capacity"
+      assistantTokensStat:
+        kind: Panel
+        spec:
+          display:
+            name: "Generated tokens per second"
+            description: >
+              Tokens the coding assistant generated, per second over the last half minute, all requests
+              together (vllm:generation_tokens_total). 0 while nobody asks.
+          plugin:
+            kind: StatChart
+            spec:
+              calculation: last-number
+              format:
+                unit: decimal
+                decimalPlaces: 0
+              sparkline: {}
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'sum(rate(vllm:generation_tokens_total{job="fury-assistant"}[30s])) or on() vector(0)'
+      assistantTokens:
+        kind: Panel
+        spec:
+          display:
+            name: "Generated tokens per second"
+            description: >
+              Rate of vllm:generation_tokens_total over half a minute. An average over that window: a
+              short answer shows lower than the decode speed it was produced at.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                format:
+                  unit: decimal
+                  decimalPlaces: 0
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'sum(rate(vllm:generation_tokens_total{job="fury-assistant"}[30s]))'
+                    seriesNameFormat: "generated tokens per second"
+      assistantRequests:
+        kind: Panel
+        spec:
+          display:
+            name: "Requests"
+            description: >
+              Requests the assistant is generating for, and requests waiting for a place
+              (vllm:num_requests_running, vllm:num_requests_waiting).
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                format:
+                  unit: decimal
+                  decimalPlaces: 0
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'sum(vllm:num_requests_running{job="fury-assistant"})'
+                    seriesNameFormat: "running"
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'sum(vllm:num_requests_waiting{job="fury-assistant"})'
+                    seriesNameFormat: "waiting"
+      busyAssistant:
+        kind: Panel
+        spec:
+          display:
+            name: "Compute busy"
+            description: >
+              The coding assistant's slice only (GPU instance 1). Engine active is any work at all; tensor
+              cores active is the part of it that is matrix arithmetic - high while it answers, near
+              nothing between requests.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                max: 1
+                format:
+                  unit: percent-decimal
+                  decimalPlaces: 0
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'DCGM_FI_PROF_GR_ENGINE_ACTIVE{job="fury-gpu", GPU_I_ID="1"}'
+                    seriesNameFormat: "engine active"
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'DCGM_FI_PROF_PIPE_TENSOR_ACTIVE{job="fury-gpu", GPU_I_ID="1"}'
+                    seriesNameFormat: "tensor cores active"
+      zeroBusyStat:
+        kind: Panel
+        spec:
+          display:
+            name: "Slice busy"
+            description: >
+              Share of time robot zero's slice had work on it: the fleet's signed policy, placed on this
+              slice by the device's label, inferring for the first robot on the wall.
+          plugin:
+            kind: StatChart
+            spec:
+              calculation: last-number
+              format:
+                unit: percent-decimal
+                decimalPlaces: 0
+              sparkline: {}
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'max(DCGM_FI_PROF_GR_ENGINE_ACTIVE{job="fury-gpu", GPU_I_ID="11"}) or on() vector(0)'
+      busyZero:
+        kind: Panel
+        spec:
+          display:
+            name: "Compute busy"
+            description: >
+              The robot zero's slice only (GPU instance 11). Engine active is any work at all; tensor
+              cores active is the part of it that is matrix arithmetic - one short burst per inference.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                max: 1
+                format:
+                  unit: percent-decimal
+                  decimalPlaces: 0
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'DCGM_FI_PROF_GR_ENGINE_ACTIVE{job="fury-gpu", GPU_I_ID="11"}'
+                    seriesNameFormat: "engine active"
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'DCGM_FI_PROF_PIPE_TENSOR_ACTIVE{job="fury-gpu", GPU_I_ID="11"}'
+                    seriesNameFormat: "tensor cores active"
+      memoryZero:
+        kind: Panel
+        spec:
+          display:
+            name: "Memory"
+            description: >
+              The robot zero's slice only (GPU instance 11): memory in use against what the slice has. A
+              slice cannot take more than its profile gives it, whatever its neighbours do.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                format:
+                  unit: bytes
+                  shortValues: true
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'DCGM_FI_DEV_FB_USED{job="fury-gpu", GPU_I_ID="11"} * 1048576'
+                    seriesNameFormat: "used"
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: >-
+                      (DCGM_FI_DEV_FB_USED{job="fury-gpu", GPU_I_ID="11"}
+                      + DCGM_FI_DEV_FB_FREE{job="fury-gpu", GPU_I_ID="11"}
+                      + (DCGM_FI_DEV_FB_RESERVED{job="fury-gpu", GPU_I_ID="11"}
+                      or 0 * DCGM_FI_DEV_FB_USED{job="fury-gpu", GPU_I_ID="11"})) * 1048576
+                    seriesNameFormat: "capacity"
+      renderFpsStat:
+        kind: Panel
+        spec:
+          display:
+            name: "Frames per second"
+            description: >
+              Frames a second the rendering tenant draws, both cameras of every live robot in each one
+              (render_fps of its /status). 0 while it is not running.
+          plugin:
+            kind: StatChart
+            spec:
+              calculation: last-number
+              format:
+                unit: decimal
+                decimalPlaces: 1
+              sparkline: {}
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'max(tenant_renderer_render_fps{job="fury-tenants"}) or on() vector(0)'
+      renderFps:
+        kind: Panel
+        spec:
+          display:
+            name: "Frames per second"
+            description: >
+              What the renderer draws against what it is set to draw. It holds its target for as many
+              robots as one slice can ray-trace in a frame's time.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                format:
+                  unit: decimal
+                  decimalPlaces: 1
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+              querySettings:
+                - queryIndex: 1
+                  lineStyle: dashed
+                  areaOpacity: 0
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'tenant_renderer_render_fps{job="fury-tenants"}'
+                    seriesNameFormat: "drawn"
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'tenant_renderer_fps_target{job="fury-tenants"}'
+                    seriesNameFormat: "target"
+      renderRobots:
+        kind: Panel
+        spec:
+          display:
+            name: "Robots"
+            description: >
+              Robots whose state is arriving and being rendered, and robots whose state stopped arriving
+              (robots_live, robots_stale).
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                format:
+                  unit: decimal
+                  decimalPlaces: 0
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'tenant_renderer_robots_live{job="fury-tenants"}'
+                    seriesNameFormat: "live"
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'tenant_renderer_robots_stale{job="fury-tenants"}'
+                    seriesNameFormat: "stale"
+      busyRendering:
+        kind: Panel
+        spec:
+          display:
+            name: "Compute busy"
+            description: >
+              The rendering tenant's slice only (GPU instance 13). Engine active is any work at all;
+              tensor cores active is the part of it that is matrix arithmetic - low for a renderer: ray
+              tracing is not matrix arithmetic.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                max: 1
+                format:
+                  unit: percent-decimal
+                  decimalPlaces: 0
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'DCGM_FI_PROF_GR_ENGINE_ACTIVE{job="fury-gpu", GPU_I_ID="13"}'
+                    seriesNameFormat: "engine active"
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'DCGM_FI_PROF_PIPE_TENSOR_ACTIVE{job="fury-gpu", GPU_I_ID="13"}'
+                    seriesNameFormat: "tensor cores active"
+      busySlice:
+        kind: Panel
+        spec:
+          display:
+            name: "Compute busy"
+            description: >
+              This slice only. Engine active is any work at all; tensor cores active
+              (DCGM_FI_PROF_PIPE_TENSOR_ACTIVE) is the part of it that is matrix arithmetic - high for
+              training and LLM serving, low for a renderer.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                max: 1
+                format:
+                  unit: percent-decimal
+                  decimalPlaces: 0
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: >-
+                      label_replace(label_replace(label_replace(label_replace(label_replace(
+                      label_join(DCGM_FI_PROF_GR_ENGINE_ACTIVE{job="fury-gpu",
+                      GPU_I_ID=~"$gi"},
+                      "slice", " / instance ", "GPU_I_PROFILE", "GPU_I_ID"),
+                      "slice", "whole GPU", "GPU_I_ID", ""),
+                      "slice", "assistant (3g)", "GPU_I_ID", "1"),
+                      "slice", "robot zero (1g)", "GPU_I_ID", "11"),
+                      "slice", "training (1g)", "GPU_I_ID", "12"),
+                      "slice", "rendering (1g)", "GPU_I_ID", "13")
+                    seriesNameFormat: "engine active - {{slice}}"
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: >-
+                      label_replace(label_replace(label_replace(label_replace(label_replace(
+                      label_join(DCGM_FI_PROF_PIPE_TENSOR_ACTIVE{job="fury-gpu",
+                      GPU_I_ID=~"$gi"},
+                      "slice", " / instance ", "GPU_I_PROFILE", "GPU_I_ID"),
+                      "slice", "whole GPU", "GPU_I_ID", ""),
+                      "slice", "assistant (3g)", "GPU_I_ID", "1"),
+                      "slice", "robot zero (1g)", "GPU_I_ID", "11"),
+                      "slice", "training (1g)", "GPU_I_ID", "12"),
+                      "slice", "rendering (1g)", "GPU_I_ID", "13")
+                    seriesNameFormat: "tensor cores active - {{slice}}"
+      memorySlice:
+        kind: Panel
+        spec:
+          display:
+            name: "Memory"
+            description: >
+              This slice only: memory in use against what the slice has (used + free + reserved). The
+              capacity line depends on DCGM_FI_DEV_FB_USED and DCGM_FI_DEV_FB_FREE and is missing if DCGM
+              does not report free memory for an instance; DCGM_FI_DEV_FB_RESERVED is added where it is
+              reported. The used line depends on neither of the other two.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                format:
+                  unit: bytes
+                  shortValues: true
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: >-
+                      label_replace(label_replace(label_replace(label_replace(label_replace(
+                      label_join(DCGM_FI_DEV_FB_USED{job="fury-gpu",
+                      GPU_I_ID=~"$gi"} * 1048576,
+                      "slice", " / instance ", "GPU_I_PROFILE", "GPU_I_ID"),
+                      "slice", "whole GPU", "GPU_I_ID", ""),
+                      "slice", "assistant (3g)", "GPU_I_ID", "1"),
+                      "slice", "robot zero (1g)", "GPU_I_ID", "11"),
+                      "slice", "training (1g)", "GPU_I_ID", "12"),
+                      "slice", "rendering (1g)", "GPU_I_ID", "13")
+                    seriesNameFormat: "used - {{slice}}"
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: >-
+                      label_replace(label_replace(label_replace(label_replace(label_replace(
+                      label_join((DCGM_FI_DEV_FB_USED{job="fury-gpu", GPU_I_ID=~"$gi"}
+                      + DCGM_FI_DEV_FB_FREE{job="fury-gpu", GPU_I_ID=~"$gi"}
+                      + (DCGM_FI_DEV_FB_RESERVED{job="fury-gpu", GPU_I_ID=~"$gi"}
+                      or 0 * DCGM_FI_DEV_FB_USED{job="fury-gpu", GPU_I_ID=~"$gi"})) * 1048576,
+                      "slice", " / instance ", "GPU_I_PROFILE", "GPU_I_ID"),
+                      "slice", "whole GPU", "GPU_I_ID", ""),
+                      "slice", "assistant (3g)", "GPU_I_ID", "1"),
+                      "slice", "robot zero (1g)", "GPU_I_ID", "11"),
+                      "slice", "training (1g)", "GPU_I_ID", "12"),
+                      "slice", "rendering (1g)", "GPU_I_ID", "13")
+                    seriesNameFormat: "capacity - {{slice}}"
+      power:
+        kind: Panel
+        spec:
+          display:
+            name: "Power draw"
+            description: >
+              Watts for the whole board (DCGM_FI_DEV_POWER_USAGE). Power is not divided between
+              slices: four busy tenants show here as one rising line.
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                min: 0
+                label: "W"
+                format:
+                  unit: decimal
+                  decimalPlaces: 0
+              visual:
+                areaOpacity: 0.15
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'max by (gpu) (DCGM_FI_DEV_POWER_USAGE{job="fury-gpu"})'
+                    seriesNameFormat: "gpu {{gpu}}"
+      temperature:
+        kind: Panel
+        spec:
+          display:
+            name: "Temperature"
+            description: >
+              GPU die and memory temperature for the whole board (DCGM_FI_DEV_GPU_TEMP,
+              DCGM_FI_DEV_MEMORY_TEMP).
+          plugin:
+            kind: TimeSeriesChart
+            spec:
+              legend:
+                position: bottom
+                mode: table
+                values: [last, max]
+              yAxis:
+                format:
+                  unit: celsius
+                  decimalPlaces: 0
+              visual:
+                connectNulls: false
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'max by (gpu) (DCGM_FI_DEV_GPU_TEMP{job="fury-gpu"})'
+                    seriesNameFormat: "gpu {{gpu}} die"
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    datasource:
+                      kind: PrometheusDatasource
+                      name: prometheus-edge
+                    query: 'max by (gpu) (DCGM_FI_DEV_MEMORY_TEMP{job="fury-gpu"})'
+                    seriesNameFormat: "gpu {{gpu}} memory"
+  instanceSelector:
+    matchLabels:
+      app.kubernetes.io/name: edge-perses

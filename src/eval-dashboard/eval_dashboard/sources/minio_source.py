@@ -1,0 +1,91 @@
+# This project was developed with assistance from AI tools.
+"""Reads full episode records from MinIO.
+
+Read-only: only ListObjectsV2 and GetObject are ever called. MinIO is the
+authoritative record store in this design -- Kafka only carries a
+change-notification (episode_id + s3_uri); when one arrives, the caller
+resolves it back to a full record with `get_by_uri`. `list_bucket` powers
+the full-replay path (startup, and the periodic episodes-rejected poll,
+since rejects never get a Kafka notification of their own).
+
+Storage is ephemeral per the brief, so an empty bucket is a normal, handled
+case -- `list_bucket` just yields nothing.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+from concurrent.futures import ThreadPoolExecutor
+from typing import Iterable, Iterator
+from urllib.parse import urlparse
+
+import boto3
+from botocore.config import Config
+
+from eval_dashboard import schema
+
+log = logging.getLogger("eval_dashboard.minio")
+
+
+def uri_in_buckets(s3_uri: str, buckets: Iterable[str]) -> bool:
+    """True when `s3_uri` is a well-formed s3://bucket/key naming one of `buckets`."""
+    if not isinstance(s3_uri, str) or not s3_uri:
+        return False
+    try:
+        parsed = urlparse(s3_uri)
+    except ValueError:
+        return False
+    if parsed.scheme != "s3" or not parsed.netloc or not parsed.path.strip("/"):
+        return False
+    return parsed.netloc in {b for b in buckets if b}
+
+
+# Each GetObject is one independent, read-only round trip -- fetching them
+# one at a time makes startup take (episode count * round-trip time), which
+# over a high-latency link (~300ms) turns a few thousand episodes into minutes. They
+# have no ordering dependency (Store dedupes by episode_id regardless of
+# arrival order), so fetch concurrently instead. Pool size must match worker
+# count -- boto3 defaults to 10, which caps real parallelism below the thread
+# count and shows up as urllib3 "Connection pool is full" warnings.
+def fetch_workers() -> int:
+    return max(1, int(os.environ.get("MINIO_FETCH_WORKERS", "32")))
+
+
+class MinioSource:
+    def __init__(self, endpoint: str, access_key: str, secret_key: str):
+        workers = fetch_workers()
+        self._workers = workers
+        self._client = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            config=Config(max_pool_connections=workers),
+        )
+
+    def list_bucket(self, bucket: str) -> Iterator[dict]:
+        paginator = self._client.get_paginator("list_objects_v2")
+        keys = [obj["Key"] for page in paginator.paginate(Bucket=bucket) for obj in page.get("Contents", [])]
+        if not keys:
+            return
+        log.info("fetching %d object(s) from %s (%d concurrent)", len(keys), bucket, self._workers)
+        with ThreadPoolExecutor(max_workers=self._workers) as pool:
+            for normalized in pool.map(lambda k: self._get(bucket, k), keys):
+                if normalized:
+                    yield normalized
+
+    def get_by_uri(self, s3_uri: str) -> dict | None:
+        parsed = urlparse(s3_uri)
+        return self._get(parsed.netloc, parsed.path.lstrip("/"))
+
+    def _get(self, bucket: str, key: str) -> dict | None:
+        try:
+            body = self._client.get_object(Bucket=bucket, Key=key)["Body"].read()
+        except Exception:
+            return None
+        try:
+            raw = json.loads(body)
+        except json.JSONDecodeError:
+            return None
+        return schema.normalize(raw)

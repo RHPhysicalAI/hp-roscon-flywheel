@@ -1,0 +1,26 @@
+# This project was developed with assistance from AI tools.
+#
+# One request a turn, started by flywheel-eval.path and by nothing else: no [Install], not part of
+# fury-flywheel.target, so switching the GPU's mode neither starts nor stops an evaluation. A request that
+# arrives while a turn is running waits in the directory; the path unit looks again the moment this service
+# ends, finds it, and starts the next turn. In MIG mode the rig cannot render: the request is still taken and
+# answered with a .done that says so, rather than left to sit.
+[Unit]
+Description=Eval rig: serve one paired-evaluation request (51-eval-rig.md)
+# ordering only - at boot production's sim gets the GPU first. The rig neither needs nor touches it.
+After=so-arm-sim.service
+# A turn that took a request lasts at least 5 s (min_turn in the script), so a queue of refused requests stays
+# far below this. A turn that takes nothing while the glob still matches ends at once, and that spin trips it.
+StartLimitIntervalSec=30
+StartLimitBurst=10
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/flywheel-eval-rig serve-one
+# the script keeps its own budget from the request's n (n x 120 s + 15 min), up to 17 h for 500 episodes,
+# and may first queue behind an eval started by hand
+TimeoutStartSec=infinity
+# On stop only the script is signalled: it writes the .done, then removes the pod (three containers, 10 s
+# each at worst). Its tee must outlive it, hence mixed and not the default of signalling the whole group.
+KillMode=mixed
+TimeoutStopSec=120

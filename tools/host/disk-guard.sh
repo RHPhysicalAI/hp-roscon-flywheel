@@ -21,7 +21,12 @@ LOG=${LOG:-$HOME/disk-guard.log}
 log(){ echo "$(date -u +%FT%TZ) [disk-guard] $*" >> "$LOG"; }
 free_gb(){ df -BG --output=avail "$BAGS_DIR" 2>/dev/null | tail -1 | tr -dc 0-9; }
 bag_count(){ ls -d "$BAGS_DIR"/*/ 2>/dev/null | wc -l; }
-running(){ "$ENGINE" ps -q -f "name=^${CONTAINER}$" 2>/dev/null | grep -q .; }
+# Under systemd the recorder is a unit with Restart=, and stopping its container would just restart it:
+# STOP_CMD / RUNNING_CMD let the unit be stopped and tested instead (tools/host/fury/flywheel/disk-guard.service).
+STOP_CMD=${STOP_CMD:-}
+RUNNING_CMD=${RUNNING_CMD:-}
+running(){ if [ -n "$RUNNING_CMD" ]; then $RUNNING_CMD; else "$ENGINE" ps -q -f "name=^${CONTAINER}$" 2>/dev/null | grep -q .; fi; }
+park(){ if [ -n "$STOP_CMD" ]; then $STOP_CMD; else "$ENGINE" stop "$CONTAINER"; fi; }
 
 log "armed: MIN_FREE_GB=$MIN_FREE_GB CAP=$CAP bags POLL_S=${POLL_S}s container=$CONTAINER bags_dir=$BAGS_DIR pid=$$"
 low=0
@@ -32,7 +37,7 @@ while :; do
   fi
   if [ "$free" -lt "$MIN_FREE_GB" ] || [ "$n" -ge "$CAP" ]; then
     if running; then
-      "$ENGINE" stop "$CONTAINER" >/dev/null 2>&1; rc=$?
+      park >/dev/null 2>&1; rc=$?
       log "PARKED $CONTAINER: free=${free}G bags=$n (MIN_FREE_GB=$MIN_FREE_GB CAP=$CAP) stop rc=$rc. Archive or prune bags until free>=${MIN_FREE_GB}G and bags<$CAP, then rerun run-coordinator.sh."
     elif [ "$low" -eq 0 ]; then
       log "LOW: free=${free}G bags=$n (MIN_FREE_GB=$MIN_FREE_GB CAP=$CAP); $CONTAINER not running, loop start is blocked"

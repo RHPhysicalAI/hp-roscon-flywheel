@@ -1,0 +1,34 @@
+# Paths that stay on the working branch and never reach `main`.
+# One path or `dir/**` pattern per line; `*` stays inside one path segment, `**` crosses segments.
+# Read by tools/lint/docs_lint.py: the link rule skips these documents, and --main checks that they are
+# absent from the tree and that no remaining document links to them or names them.
+docs/internal/DECISIONS.md
+docs/internal/FURY-PLAN.md
+docs/internal/PROJECT-BRIEF.md
+docs/internal/BUILD-PLAN.md
+docs/internal/THOR-TESTING-REUSE.md
+docs/internal/BOOTSTRAP-LOOP.md
+docs/internal/CUDA-RENDERER-PLAN.md
+docs/internal/FURY-RECORDING.md
+docs/internal/phase3-ladder.html
+docs/DEMO_RUNBOOK.md
+docs/demo-kit/**
+docs/eval-records/**
+# one machine's staging steps for a promotion's inputs: part of the working record, not of the reading copy
+tools/host/fury/52-seed-incumbent.sh
+tools/host/fury/53-stage-promotion.sh
+tools/host/fury/54-teacher-modelcar-check.sh
+# experiments that led to the rendering tenant, and the development stand-in's tooling: working record only
+tools/host/fury/21-render-trial.sh
+tools/host/fury/22-sim-scale.sh
+tools/host/fury/23-warp-probe.sh
+tools/host/fury/24-mjwarp-spike.sh
+tools/host/fury/25-mjwarp-batch.sh
+tools/host/fury/mjwarp-spike/**
+tools/host/after_assemble.sh
+tools/host/assemble_all.sh
+tools/host/run-coordinator.sh
+tools/host/prune_bags.py
+device/vm/**
+device/enroll.sh
+device/provision.sh

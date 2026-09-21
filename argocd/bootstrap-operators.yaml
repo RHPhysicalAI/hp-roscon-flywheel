@@ -1,0 +1,57 @@
+# This project was developed with assistance from AI tools.
+#
+# The operators that have to exist before the Applications here can sync: OpenShift GitOps itself, the two
+# that `observability-app.yaml` needs CRDs from, and Dev Spaces for `devspaces-app.yaml`. Applied once by hand,
+# before row 1 of the bootstrap table in README.md:  oc apply -f argocd/bootstrap-operators.yaml
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-gitops-operator
+  namespace: openshift-operators
+spec:
+  channel: latest
+  name: openshift-gitops-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: cluster-observability-operator
+  namespace: openshift-operators
+spec:
+  channel: stable
+  name: cluster-observability-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: tempo-product
+  namespace: openshift-operators
+spec:
+  channel: stable
+  name: tempo-product
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+---
+# OpenShift Dev Spaces (3.30.1 on this catalog; all-namespaces install mode only, hence openshift-operators). OLM
+# resolves its dependency, the DevWorkspace operator, from the same catalog and creates that Subscription itself.
+# No image overrides on arm64: upstream Che needs RELATED_IMAGE_gateway_authentication_sidecar /
+# RELATED_IMAGE_gateway_authorization_sidecar patched because its default oauth-proxy image is amd64-only; every
+# image this bundle pins, the gateway's four included, is published for arm64.
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: devspaces
+  namespace: openshift-operators
+spec:
+  channel: stable
+  name: devspaces
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic

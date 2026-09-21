@@ -1,0 +1,49 @@
+// This project was developed with assistance from AI tools.
+// The agent may edit files and run the tests; every other shell command is refused. The last matching rule wins.
+{
+  "$schema": "https://opencode.ai/config.json",
+  "autoupdate": false,
+  "share": "disabled",
+  "model": "fury/qwen3-coder-next",
+  "enabled_providers": ["fury"],
+  "provider": {
+    "fury": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Fury slice",
+      "options": {
+        "baseURL": "{env:ASSISTANT_BASE_URL}",
+        "apiKey": "none"
+      },
+      "models": {
+        "qwen3-coder-next": {
+          "name": "Qwen3 Coder Next",
+          "limit": {
+            "context": 131072,
+            "output": 16384
+          }
+        }
+      }
+    }
+  },
+  "permission": {
+    "edit": "allow",
+    "webfetch": "deny",
+    "websearch": "deny",
+    "bash": {
+      "*": "deny",
+      "ls*": "allow",
+      "cat *": "allow",
+      "head *": "allow",
+      "tail *": "allow",
+      "wc *": "allow",
+      "grep *": "allow",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "pytest*": "allow",
+      "python -m pytest*": "allow",
+      "python3 -m pytest*": "allow",
+      "/opt/app-root/bin/python -m pytest*": "allow"
+    }
+  }
+}

@@ -1,0 +1,188 @@
+# This project was developed with assistance from AI tools.
+#
+# The robots' worlds (D163 stage B): one physics-only Gazebo sim per robot, as a pod. No cameras, no GPU, no
+# policy: the arm moves from recorded (or built-in synthetic) motion, and the world sends its joint positions and
+# cube poses to the fleet's rendering tenant over UDP (docs/internal/FLEET-RENDER-CONTRACT.md). Nothing connects
+# in to a world.
+#
+# Robot ids: pod ordinal N is robot r<N+1> - world-0 is r01, world-6 is r07, the same number as the robot's
+# computer fleet-vm-NN. r00 is robot zero, whose world runs on the GPU host, never here.
+#
+# Isolation: every pod is its own network namespace, so every world has its own Zenoh router, its own ROS graph
+# and its own Gazebo transport - twenty worlds publish /joint_states and none sees another's (the collision D132
+# describes cannot happen). rmw_zenoh discovers through a router, so each pod runs one (the entrypoint starts it);
+# GZ_PARTITION is set to the pod's name as a second fence, and the NetworkPolicy below closes the router's port to
+# everything outside the pod. Stage C sets ZENOH_ROUTER (one variable, below): the pod's router then also
+# connects OUT to the robot's computer at 10.20.0.(20+NN):7447, and the world keeps running when that is away.
+#
+# Scale with tools/hub/fleet-worlds-scale.sh <N>, not by editing replicas: the Argo CD app ignores that field.
+# Sizing, measured on the GPU host's cores (the hub is a VM on the same machine) with this image's contents, the
+# motion player running, under these limits and this securityContext: 0.9-1.0 cores and 725 MiB at steady state
+# (real-time factor 0.97-0.99, /joint_states 49 a second; 0.8 cores with the arm at rest, up to 1.2 when it
+# presses on something), 950 MiB peak, and more than the 2-core limit wanted for the 20-30 s of start-up. The
+# physics thread alone is 0.7 of a core, so a world cannot be made much cheaper than its request. A world that
+# gets less cpu runs slower than real time but keeps moving and reporting.
+# On the hub itself a world costs more than on the host's cores - measured 2026-09-20 with 8 and with 12 worlds:
+# 1.5-1.6 vCPUs and 540 MiB each, every world still sending its 30 states a second. 12 worlds put the 32-vCPU
+# node at 64% with the platform, and the renderer's batch at 54 ms of its 66 ms; 16 worlds put it at 76% and the
+# batch at 67-68 ms (14.5 frames a second), with every vCPU of the hub busy during a restart. The fleet's size is
+# twelve, the same as the robots; 16 is the cap the scale script enforces.
+#
+# Recorded motion: a ConfigMap fleet-trajectories made by hand from tools/fleet/extract_trajectories.py
+# (tools/hub/fleet-worlds-scale.sh trajectories <file>) - thirty episodes of the policy's own recorded actions,
+# replayed open loop: the two cubes that never move get picked, the green one when it happens to lie right.
+# Without the ConfigMap the motion player's built-in motion runs, which reaches but rarely grasps.
+apiVersion: v1
+kind: Service
+metadata:
+  name: world
+  namespace: fleet
+  labels:
+    app: world
+spec:
+  # Headless, for the StatefulSet's pod identity only. The NetworkPolicy lets nothing reach the port.
+  clusterIP: None
+  selector:
+    app: world
+  ports:
+    - name: zenoh
+      port: 7447
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: world-no-ingress
+  namespace: fleet
+spec:
+  podSelector:
+    matchLabels:
+      app: world
+  policyTypes:
+    - Ingress
+  ingress: []
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: world
+  namespace: fleet
+  labels:
+    app: world
+spec:
+  serviceName: world
+  replicas: 2
+  # All at once in both directions; the scale script steps up in small batches so the hub is not swamped.
+  podManagementPolicy: Parallel
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: world
+  template:
+    metadata:
+      labels:
+        app: world
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      # The sim does not stop on SIGTERM or SIGINT (known issue), and the entrypoint is PID 1 without a handler:
+      # a world always ends by SIGKILL when this runs out. It holds no state worth a graceful stop.
+      terminationGracePeriodSeconds: 5
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: world
+          # Do not commit this file with the placeholder in it: tools/hub/build-fleet-world.sh prints the digest.
+          image: quay.io/jary/soarm-flywheel@sha256:179cbedc5a65759030c2a7cb58b64e952eb50aba7ca421fd7fe57176e2029fe4
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              n=${POD_NAME##*-}
+              [[ $n =~ ^[0-9]+$ ]] && (( 10#$n < 99 )) || { echo "no robot id in pod name '$POD_NAME'" >&2; exit 1; }
+              ROBOT_ID=$(printf 'r%02d' $(( 10#$n + 1 )))
+              export ROBOT_ID GZ_PARTITION=$POD_NAME
+              # Stage C, and nothing else changes: the robot's own router, fleet-vm-NN at 10.20.0.(20+NN)
+              # export ZENOH_ROUTER=10.20.0.$(( 10#$n + 21 )):7447
+              exec /entrypoint.sh
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: SIM_CAMERAS
+              value: "off"
+            - name: MOTION_PLAYER
+              value: "on"
+            - name: RENDER_STATE_ADDR
+              value: "10.20.0.1:9701"
+            - name: STATE_HZ
+              value: "30"
+            - name: TRAJECTORIES
+              value: /trajectories/trajectories.npz
+            # Only the green cube moves between episodes; the other two stay where the policy has always seen
+            # them (the collection scene). Read by the image's sim_reset.py.
+            - name: RANDOMIZE_ONLY
+              value: cube_medium
+            - name: RANDOM_RADIUS
+              value: "0.03"
+            # The image's user is root with HOME=/root; under restricted-v2 the uid is arbitrary and only the
+            # two emptyDirs are writable: Gazebo's ~/.gz and the ROS logs go to the first, the entrypoint's
+            # files and the generated world to /tmp.
+            - name: HOME
+              value: /home/world
+            - name: ROS_LOG_DIR
+              value: /home/world/.ros/log
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            # The request is below what a world uses (about 1.4 vCPUs) on purpose: the node's requests were 97% booked
+            # at 16 worlds with a quarter of its cpu idle, and a low request means the platform wins when cpu is short.
+            requests:
+              cpu: 500m
+              memory: 768Mi
+            limits:
+              cpu: "2"
+              memory: 1536Mi
+          # "Joint states are flowing": the state forwarder touches this file once a second while /joint_states
+          # messages arrive. A file's age costs nothing to check; a ros2 cli call would cost a second of cpu.
+          # Start-up may take 5 minutes (it is half a minute alone, longer when many start at once); after
+          # that a world whose joint states stop for a minute is restarted.
+          startupProbe:
+            exec:
+              command: ["/bin/sh", "-c", "test $(( $(date +%s) - $(stat -c %Y /tmp/fleet-world/alive 2>/dev/null || echo 0) )) -lt 5"]
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "test $(( $(date +%s) - $(stat -c %Y /tmp/fleet-world/alive 2>/dev/null || echo 0) )) -lt 5"]
+            periodSeconds: 10
+            failureThreshold: 2
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "test $(( $(date +%s) - $(stat -c %Y /tmp/fleet-world/alive 2>/dev/null || echo 0) )) -lt 5"]
+            periodSeconds: 20
+            failureThreshold: 3
+          volumeMounts:
+            - name: home
+              mountPath: /home/world
+            - name: tmp
+              mountPath: /tmp
+            - name: trajectories
+              mountPath: /trajectories
+              readOnly: true
+      volumes:
+        - name: home
+          emptyDir:
+            sizeLimit: 512Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+        - name: trajectories
+          configMap:
+            name: fleet-trajectories
+            optional: true

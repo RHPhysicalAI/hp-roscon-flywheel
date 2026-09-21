@@ -1,0 +1,84 @@
+# This project was developed with assistance from AI tools.
+#
+# The host half of a governed training run: waits on the hub's Kafka for a trigger, then assembles the
+# dataset, fine-tunes on the GPU and hands the paired eval to flywheel-eval (its own rig, a file contract
+# under /data/flywheel/eval/requests), uploads to MinIO and answers on Kafka. It only dials out - to Kafka
+# 10.20.0.10:30903 and MinIO 10.20.0.10:30900 - and listens on nothing.
+#
+# Part of the robot-loop target: training needs the whole GPU, so the runner lives exactly as long as the
+# machine is in flywheel mode - fury-mode starts and stops it with the sim, and a boot in tenants mode does
+# not leave it failing its MIG check every half minute. Quadlet units are generated, so `systemctl enable`
+# refuses them; the [Install] section below is applied at daemon-reload instead. fury-mode refuses to
+# switch while a training or an eval is in progress.
+#
+# The runner script is mounted over the image rather than baked in: a runner fix is 50-runner-install.sh
+# and a restart, not a 4 GiB image rebuild.
+#
+# The upstream teacher checkpoint is not on this machine, so TEACHER_PATH is left unset and a trigger with
+# incumbent_checkpoint=hf cannot work here until the teacher is seeded under /data/flywheel and TEACHER_PATH
+# points at it (as the container sees it, /flywheel/...). Triggers that name an s3:// incumbent are fine.
+[Unit]
+Description=Flywheel host runner (assemble, fine-tune, request the eval, publish)
+Wants=network-online.target
+After=network-online.target mig-config.service nvidia-cdi-refresh.service
+PartOf=fury-flywheel.target
+
+[Container]
+ContainerName=flywheel-runner
+Image=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837
+Pull=never
+Network=host
+AddDevice=nvidia.com/gpu=all
+# data-loader workers hand batches over through /dev/shm; two camera streams per sample
+ShmSize=16g
+Volume=/data/flywheel:/flywheel:z
+Volume=/usr/local/lib/flywheel/host_runner.py:/usr/local/lib/flywheel/host_runner.py:ro,z
+# the two MinIO keys, root 0600, written by 50-runner-install.sh and never in git
+EnvironmentFile=/etc/flywheel-runner/env
+Environment=RUNNER_MODE=inprocess
+Environment=EVAL_MODE=request
+Environment=FLYWHEEL_DATA=/flywheel
+# where the host keeps /flywheel: the eval service runs on the host and is handed host paths
+Environment=HOST_DATA_ROOT=/data/flywheel
+Environment=MINIO_ENDPOINT=http://10.20.0.10:30900
+Environment=KAFKA_BOOTSTRAP=10.20.0.10:30903
+Environment=ARTIFACT_BUCKET=episodes-data
+# each data-loader worker decodes video on a CPU core and the host has 72. At the library's default of 4
+# the first full fine-tune waited 0.18 s a step for data against 0.064 s computing: the GPU about three
+# quarters idle, 4 h 21 min for 62k steps.
+Environment=TRAIN_NUM_WORKERS=24
+# read by the runner, used only in docker mode
+Environment=ACT_IMAGE=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837
+# the container's own filesystem goes with every restart: keep what torch and the HF hub download
+Environment=HF_HOME=/flywheel/cache/huggingface
+Environment=TORCH_HOME=/flywheel/cache/torch
+# The image's entrypoint is the policy/coordinator launcher; this runs the runner under the same ROS
+# environment instead. $$ is systemd's escape for a literal $: the variable is the image's, expanded by
+# the bash inside the container.
+Entrypoint=/bin/bash
+Exec=-c 'source /opt/ros/$${ROS_DISTRO}/setup.bash && source /ws_pai/install/setup.bash && exec python3 -u /usr/local/lib/flywheel/host_runner.py'
+# the image's health check asks for a latched model version, which this container never publishes
+HealthCmd=none
+# SIGINT, not SIGTERM: python is pid 1 in here and only SIGINT has a handler. It unwinds through the
+# stage it is waiting on and exits 130; the stage's own children go with the container. A stop in the
+# middle of a run loses that run and nothing else: the pipeline times out waiting for the result, a
+# checkpoint only appears under checkpoints/last once it is complete, and a trigger that names a
+# candidate whose training had finished skips straight to the eval. A training cut short leaves
+# /data/flywheel/train/<candidate> behind, which lerobot-train will not overwrite - remove it before
+# that candidate name is used again.
+StopSignal=SIGINT
+StopTimeout=30
+
+[Service]
+SuccessExitStatus=130 143
+# training needs the whole GPU: refuse to start in MIG mode rather than fail hours into a run
+ExecStartPre=/bin/sh -c '[ "$(nvidia-smi -i 0 --query-gpu=mig.mode.current --format=csv,noheader)" = Disabled ]'
+Restart=always
+# slow enough to stay under systemd's start limit while the hub or MIG-off is awaited
+RestartSec=30
+# the first start relabels /data/flywheel (:z)
+TimeoutStartSec=300
+TimeoutStopSec=60
+
+[Install]
+WantedBy=fury-flywheel.target

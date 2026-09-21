@@ -20,7 +20,7 @@ metadata:
   name: rhods-operator
   namespace: redhat-ods-operator
 spec:
-  channel: stable
+  channel: stable-3.5   # on the 4.22 catalog `stable` still resolves to 2.25
   name: rhods-operator
   source: redhat-operators
   sourceNamespace: openshift-marketplace

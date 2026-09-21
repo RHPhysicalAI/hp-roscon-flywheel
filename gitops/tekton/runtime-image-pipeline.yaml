@@ -22,7 +22,7 @@ spec:
       default: https://github.com/RHPhysicalAI/hp-roscon-flywheel.git
     - name: git-revision
       type: string
-      default: desktop-gpu-split
+      default: fury
     - name: image-repo
       type: string
       default: quay.io/jary/soarm-flywheel

@@ -1,0 +1,6 @@
+# This project was developed with assistance from AI tools.
+[Unit]
+Description=Flywheel robot loop: sim and policy on the whole GPU (MIG off)
+
+[Install]
+WantedBy=multi-user.target

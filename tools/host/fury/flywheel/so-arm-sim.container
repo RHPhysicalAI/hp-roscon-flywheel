@@ -1,0 +1,41 @@
+# This project was developed with assistance from AI tools.
+#
+# The sim's cameras render with OpenGL, which this GPU only offers with MIG off - so do not start
+# in MIG mode rather than fall back to the cpu at 1.7 frames a second. Tenants mode has its own,
+# physics-only variant of this unit: robot-zero-sim.container (D164).
+[Unit]
+Description=SO-ARM sim (Gazebo, cameras rendered on the GPU)
+After=mig-config.service nvidia-cdi-refresh.service
+PartOf=fury-flywheel.target
+
+[Container]
+ContainerName=so-arm-sim
+Image=localhost/soarm-sim:arm64
+Pull=never
+Network=host
+AddDevice=nvidia.com/gpu=all
+Environment=NVIDIA_DRIVER_CAPABILITIES=all
+# the episode emitter runs in here: without this it only writes local JSON, nothing reaches the hub's
+# curator, and the success count that triggers training never moves
+Environment=CURATOR_URL=http://10.20.0.10:30802/episode
+Volume=/data/flywheel/episodes:/data/episodes:z
+StopSignal=SIGINT
+StopTimeout=15
+
+[Service]
+# a ROS 2 tree exits 130 on the SIGINT above; that is a clean stop, not a failure
+SuccessExitStatus=130 143
+# A condition, not ExecStartPre=: a failed pre-start under Restart=always is retried for ever, and every one of those
+# restarts is handed on to the RHEM-managed policy, which is PartOf= this unit - in tenants mode that is robot zero's
+# policy on its slice. A condition that fails skips the start: inactive, not failed, not retried.
+# What that costs: a skipped start is a SUCCESSFUL start job, so a unit that Requires= this one is no longer held
+# back by it under MIG, as a failed pre-start held it. The only such unit is the pre-enrolment, hand-installed
+# act-inference.container (whole gpu, no condition of its own). 40-device-provision.sh removes it at enrolment and
+# 14-flywheel-services.sh leaves it out on an enrolled host; 74-robot-zero.md has the operator confirm it is gone.
+ExecCondition=/bin/sh -c '[ "$(nvidia-smi -i 0 --query-gpu=mig.mode.current --format=csv,noheader)" = Disabled ] || { echo "MIG is on (tenants mode): the sim needs graphics, not starting"; exit 1; }'
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=fury-flywheel.target

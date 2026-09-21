@@ -11,7 +11,8 @@
 #   docker run --rm -v /var/lib/episodes:/data/episodes soarm-flywheel:latest
 
 ARG DISTRO=kilted
-FROM ros:${DISTRO}
+# fully qualified: podman/buildah refuse to guess a registry for a short name without a TTY
+FROM docker.io/library/ros:${DISTRO}
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-c"]
@@ -33,7 +34,12 @@ RUN apt-get update \
 RUN mkdir -p /ws_pai/src
 WORKDIR /ws_pai
 
-RUN git clone --depth 1 https://github.com/ros-physical-ai/demos src/demos
+# Pinned by commit (the one the running sim image was built from); pai.repos at this commit pins
+# every other repository by commit as well. An unpinned clone broke the runtime image once.
+ARG DEMOS_REF=4d3564cd6bb5f1ee4bcdd39b73a333471b77cb4a
+RUN git init -q src/demos \
+  && git -C src/demos fetch -q --depth 1 https://github.com/ros-physical-ai/demos "${DEMOS_REF}" \
+  && git -C src/demos checkout -q FETCH_HEAD
 
 # ---- External dependencies ----
 RUN vcs import src < src/demos/pai.repos --recursive
@@ -60,6 +66,8 @@ COPY src/episode-emitter/episode_emitter.py /ws_pai/episode_emitter.py
 COPY src/episode-emitter/task_eval.py /ws_pai/task_eval.py
 COPY src/camera-bridge/camera_bridge.py /ws_pai/camera_bridge.py
 COPY src/sim-reset/sim_reset.py /ws_pai/sim_reset.py
+# The fleet tenant's physics-only world (SIM_CAMERAS=off in the entrypoint, D163); unused otherwise
+COPY src/fleet-world/ /ws_pai/fleet_world/
 
 # ---- Cleanup ----
 RUN find /ws_pai -type d -name ".git" -exec rm -rf {} + 2>/dev/null || true

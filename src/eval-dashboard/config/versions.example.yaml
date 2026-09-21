@@ -1,0 +1,4 @@
+# model_version -> curated training-set size.
+# Drives the learning curve and Baseline / Fine-tuned card labels.
+upstream-act-teacher: 0
+act-v2-ft160: 160

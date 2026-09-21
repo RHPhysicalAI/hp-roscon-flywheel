@@ -1,0 +1,8 @@
+# This project was developed with assistance from AI tools.
+#
+# The fleet tenant's namespace on the hub (D163): the robots' worlds. The robots' computers are RHEM devices, not
+# pods, and are not here.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fleet

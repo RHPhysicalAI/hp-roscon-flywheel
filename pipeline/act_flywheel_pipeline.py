@@ -4,9 +4,9 @@
   trigger+wait -> gate -> package -> sign -> register_model -> open_promotion_pr -> record_pr_url
                                                                     (human merge = last gate)
 
-The promotion PR edits the RHEM Fleet (modelcar digest + MODEL_VERSION) and the trigger's lineage
-(manifest-consumer COLLECTOR/INCUMBENT/INCUMBENT_CHECKPOINT) in ONE commit; ResourceSync renders the
-Fleet after the human merge and RHEM rolls it out to the device (D025).
+The promotion PR edits every RHEM Fleet file (modelcar digest + MODEL_VERSION: the host's Fleet and the
+robots' Fleet, D166) and the trigger's lineage (manifest-consumer COLLECTOR/INCUMBENT/INCUMBENT_CHECKPOINT)
+in ONE commit; ResourceSync renders the Fleets after the human merge and RHEM rolls them out (D025).
 
 Written for the in-cluster-GPU target. `mode="desktop"` is the [desktop shim]: train + eval are
 delegated to the host runner over Kafka (training-triggers / training-results) and the pipeline
@@ -99,9 +99,13 @@ def eval_gate(eval_report_uri: str, s3_endpoint: str) -> str:
 @dsl.component(base_image=PY_IMG, packages_to_install=["boto3==1.35.36"])
 def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, platform: List[str],
                      s3_endpoint: str, crane_version: str, modelcar_base: str,
-                     crane_sha256_amd64: str, crane_sha256_arm64: str) -> str:
+                     crane_sha256_amd64: str, crane_sha256_arm64: str, run_id: str = "") -> str:
     """crane append per platform: flat ACT checkpoint dir -> /models/act on ubi-micro, then one OCI index
-    at the candidate tag (the model layer is shared; only the ubi-micro base differs). Returns index@digest.
+    (the model layer is shared; only the ubi-micro base differs). Returns index@digest.
+    Every image of a run is tagged <candidate>-<run id, 8 chars>[-<arch>] and keeps that tag for good; the bare
+    <candidate> tag is only moved to the newest index afterwards. A registry stops serving a manifest by digest,
+    and drops its signature, the moment its last tag moves away - which is what promoting the same candidate
+    name a second time did to the image a Fleet still pinned.
     The crane release tarball is SHA-256-checked against the pinned digest before it runs (same
     discipline as gitops/tekton/cosign-sign-task.yaml); a mismatch aborts the run."""
     import os, platform as _plat, subprocess, tarfile, io, boto3, urllib.request, hashlib
@@ -130,19 +134,26 @@ def package_modelcar(checkpoint_uri: str, candidate: str, registry_repo: str, pl
     _j.dump({"auths": cfg.get("auths", {})}, open("/tmp/docker/config.json", "w"))  # drop credsStore/credHelpers
     os.environ["DOCKER_CONFIG"] = "/tmp/docker"
     per_arch = []
+    unique = f"{candidate}-{run_id[:8]}" if run_id else candidate
     for p in platform:
-        tag = f"{registry_repo}:{candidate}-{p.split('/', 1)[1].replace('/', '-')}"
+        tag = f"{registry_repo}:{unique}-{p.split('/', 1)[1].replace('/', '-')}"
         r = subprocess.run(["/tmp/crane", "append", "--platform", p, "-b", modelcar_base,
                             "-f", "/tmp/layer.tar", "-t", tag], capture_output=True, text=True)
         if r.returncode != 0:
             print(f"crane append {p} failed:", r.stderr[-1500:]); raise SystemExit(1)
         per_arch.append(r.stdout.strip().splitlines()[-1]); print("pushed", per_arch[-1])
-    cmd = ["/tmp/crane", "index", "append", "-t", f"{registry_repo}:{candidate}"]
+    cmd = ["/tmp/crane", "index", "append", "-t", f"{registry_repo}:{unique}"]
     for m in per_arch: cmd += ["-m", m]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         print("crane index append failed:", r.stderr[-1500:]); raise SystemExit(1)
-    ref = r.stdout.strip().splitlines()[-1]; print("pushed", ref); return ref
+    ref = r.stdout.strip().splitlines()[-1]; print("pushed", ref)
+    if unique != candidate:
+        r = subprocess.run(["/tmp/crane", "tag", ref, candidate], capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"crane tag {candidate} failed:", r.stderr[-1500:]); raise SystemExit(1)
+        print(f"tag {candidate} -> {ref}")
+    return ref
 
 
 @dsl.component(base_image=PY_IMG)
@@ -267,10 +278,9 @@ def record_pr_url(model_name: str, candidate: str, pr_url: str, model_registry_u
 @dsl.component(base_image=PY_IMG, packages_to_install=["PyGithub==2.4.0", "PyYAML>=6,<7"])  # PyYAML: catalog seam only
 def open_promotion_pr(image_ref: str, candidate: str, checkpoint_uri: str, report_json: str, github_repo: str,
                       gitops_branch: str, fleet_file: str, consumer_file: str, fleet_ui_url: str, run_id: str,
-                      catalog_item_file: str = "gitops/rhem-catalog/catalogitem-soarm-act.yaml") -> str:
-    """ONE commit (thor-testing 5e3e87a: a partial flip is an outage) editing the RHEM Fleet - modelcar
-    digest + MODEL_VERSION - and the trigger's lineage in manifest-consumer, then a PR whose body carries
-    the eval report, the Fleet URL and the rollback (D025). Human merge is the last gate."""
+                      catalog_item_file: str = "gitops/rhem-catalog/catalogitem-soarm-act.yaml",
+                      also_fleet_files: str = "gitops/rhem/fleet-robots.yaml") -> str:
+    """ONE commit (a partial flip is an outage) editing every Fleet file and the trigger's lineage, then the PR a human merges (D025, D166)."""
     import json, re
     from datetime import datetime, timezone
     from github import Github, GithubException, InputGitTreeElement
@@ -279,22 +289,37 @@ def open_promotion_pr(image_ref: str, candidate: str, checkpoint_uri: str, repor
     base_ref = repo.get_git_ref(f"heads/{gitops_branch}"); base = repo.get_git_commit(base_ref.object.sha)
     def get(p): return repo.get_contents(p, ref=gitops_branch).decoded_content.decode()
     digest = image_ref.split("@", 1)[1]
-    # Fleet: the two-regex edit. Both must match exactly once or the promotion is not attempted.
-    fleet = get(fleet_file)
-    old_mv = re.search(r"^\s+MODEL_VERSION:\s*(\S+)", fleet, re.M).group(1)
-    fleet, n_img = re.subn(r"(soarm-act-modelcar)@sha256:[0-9a-f]{64}", r"\1@" + digest, fleet, count=1)
-    fleet, n_mv = re.subn(r"^(\s+MODEL_VERSION:\s*)\S+", lambda m: m.group(1) + candidate, fleet, count=1, flags=re.M)
+    # Fleets: the same two-regex edit in every file. A placeholder cannot carry a digest (it reads device labels
+    # only), so each Fleet file pins the model itself; one merge has to move them together or not at all.
+    img_re, mv_re = r"(soarm-act-modelcar)@(sha256:[0-9a-f]{64})", r"^(\s+MODEL_VERSION:\s*)(\S+)"
+    fleet_files = list(dict.fromkeys([fleet_file] + [f.strip() for f in also_fleet_files.split(",") if f.strip()]))
+    fleets, names, held = {}, {}, {}
+    for f in fleet_files:
+        text = get(f)
+        imgs, mvs = re.findall(img_re, text), re.findall(mv_re, text, re.M)
+        if (len(imgs), len(mvs)) != (1, 1):
+            print(f"{f}: the promotion edit must match exactly once each, found image={len(imgs)} model_version={len(mvs)} - nothing was changed"); raise SystemExit(1)
+        held[f] = (imgs[0][1], mvs[0][1])
+        name = re.search(r"^metadata:\s*\n\s+name:\s*(\S+)", text, re.M); names[f] = name.group(1) if name else f
+        text = re.sub(img_re, r"\1@" + digest, text)
+        fleets[f] = re.sub(mv_re, lambda m: m.group(1) + candidate, text, flags=re.M)
+    if len(set(held.values())) != 1:
+        print("the Fleet files do not pin the same model, so one promotion cannot move them together: "
+              + "; ".join(f"{f} has {d[:19]}... {mv}" for f, (d, mv) in held.items())
+              + f" - make them agree on {gitops_branch} ({fleet_file} is the reference), then start the run again. Nothing was changed"); raise SystemExit(1)
+    old_mv = held[fleet_file][1]
     # Trigger: the next round counts and fine-tunes from the new lineage (same commit, D025).
     consumer = get(consumer_file)
     n_c = 0
     for key, val in (("INCUMBENT", candidate), ("COLLECTOR", candidate), ("INCUMBENT_CHECKPOINT", checkpoint_uri)):
         consumer, n = re.subn(r"(\{name: " + key + r", value: \")[^\"]*(\")", lambda m: m.group(1) + val + m.group(2), consumer, count=1)
         n_c += n
-    if (n_img, n_mv, n_c) != (1, 1, 3):
-        print(f"promotion edit did not match exactly: image={n_img} model_version={n_mv} consumer={n_c}"); raise SystemExit(1)
+    if n_c != 3:
+        print(f"promotion edit did not match exactly: consumer={n_c}"); raise SystemExit(1)
     rep = json.loads(report_json)
-    elems = [InputGitTreeElement(fleet_file, "100644", "blob", content=fleet),
-             InputGitTreeElement(consumer_file, "100644", "blob", content=consumer)]
+    elems = [InputGitTreeElement(f, "100644", "blob", content=text) for f, text in fleets.items()]
+    elems.append(InputGitTreeElement(consumer_file, "100644", "blob", content=consumer))
+    fleet_names = " + ".join(names[f] for f in fleet_files)
 
     # ---- Catalog seam (D027) BEGIN -- removable. Delete this fenced block, the `catalog_item_file` param, the
     # PyYAML pin and the `body += catalog_note` line when RHEM's registry->catalog bridge lands. Nothing else
@@ -339,7 +364,7 @@ def open_promotion_pr(image_ref: str, candidate: str, checkpoint_uri: str, repor
         print(f"catalog seam: {catalog_item_file} not on {gitops_branch}, skipped (not load-bearing)")
     # ---- Catalog seam END
     tree = repo.create_git_tree(elems, base.tree)
-    msg = (f"Promote {candidate}: Fleet act-inference <- {digest[:19]}..., MODEL_VERSION {old_mv} -> {candidate}; manifest-consumer lineage -> {candidate}\n\n"
+    msg = (f"Promote {candidate}: Fleet {fleet_names} <- {digest[:19]}..., MODEL_VERSION {old_mv} -> {candidate}; manifest-consumer lineage -> {candidate}\n\n"
            f"Eval gate: {rep['incumbent']} {rep['incumbent_success_rate']:.2f} -> {candidate} {rep['candidate_success_rate']:.2f}, fixed {rep['fixed']} broken {rep['broken']} net {rep['net']:+d} p={rep['sign_test_p']}")
     commit = repo.create_git_commit(msg, tree, [base])
     # Branch unique per run: a merged PR's head branch outlives it on GitHub, so a fixed name 422s on the rerun.
@@ -349,18 +374,21 @@ def open_promotion_pr(image_ref: str, candidate: str, checkpoint_uri: str, repor
     except GithubException as e:
         if e.status != 422: raise
         repo.get_git_ref(f"heads/{head}").edit(commit.sha, force=True); print("ref existed, moved:", head)
+    fleets_md = " and ".join(f"Fleet `{names[f]}` (`{f}`)" for f in fleet_files)
+    ui_base, _, ui_name = fleet_ui_url.rpartition("/")  # one UI page per Fleet, when the given URL ends in the first one's name
+    fleet_urls = " , ".join(f"{ui_base}/{names[f]}" for f in fleet_files) if ui_name == names[fleet_file] else fleet_ui_url
     body = (f"## Promotion: `{candidate}` replaces `{rep['incumbent']}`\n\n"
             f"| | success | mean cubes |\n|---|---|---|\n| incumbent `{rep['incumbent']}` | {rep['incumbent_success_rate']:.0%} | {rep['incumbent_mean_cubes']:.2f} |\n"
             f"| candidate `{candidate}` | {rep['candidate_success_rate']:.0%} | {rep['candidate_mean_cubes']:.2f} |\n\n"
             f"Paired on {rep['n_paired']} identical seeded scenes: **{rep['fixed']} fixed / {rep['broken']} broken, net {rep['net']:+d}, sign-test p = {rep['sign_test_p']}** - gate rule: {rep['rule']} -> **{rep['verdict']}**.\n\n"
             f"Signed modelcar: `{image_ref}`\n\n"
-            f"Merging edits Fleet `act-inference` in one commit (`{fleet_file}`: modelcar digest + `MODEL_VERSION` `{old_mv}` -> `{candidate}`) "
+            f"Merging edits {fleets_md} in one commit (modelcar digest + `MODEL_VERSION` `{old_mv}` -> `{candidate}`) "
             f"and points the trigger at the new lineage (`{consumer_file}`: COLLECTOR/INCUMBENT/INCUMBENT_CHECKPOINT). "
-            f"ResourceSync renders the Fleet; RHEM rolls it out batch by batch; each device pulls the modelcar under its policy.json "
+            f"ResourceSync renders each Fleet; RHEM rolls each out batch by batch; each device pulls the modelcar under its policy.json "
             f"(cosign key + Rekor SET) and restarts the container, which publishes the new `model_version`.\n\n"
-            f"Fleet: {fleet_ui_url}\n\n"
-            f"Rollback: `git revert <sha>` - revert the merge commit of this PR and merge the revert. The previous modelcar is still in device storage "
-            f"(image volume `reclaimPolicy: Retain`), so rolling back does not re-pull.")
+            f"Fleet: {fleet_urls}\n\n"
+            f"Rollback: `git revert <sha>` - revert the merge commit of this PR and merge the revert. A device keeps the previous modelcar in its storage "
+            f"(image volume `reclaimPolicy: Retain`), so there is no re-pull on a device that has served it before.")
     body += catalog_note  # Catalog seam (D027): delete with the fenced block above
     title = f"Promote {candidate} ({rep['incumbent_success_rate']:.0%} -> {rep['candidate_success_rate']:.0%})"
     existing = list(repo.get_pulls(state="open", base=gitops_branch, head=f"{repo.owner.login}:{head}"))
@@ -380,8 +408,9 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
                           crane_sha256_arm64: str = "d2235f7779cd39c6e40f43701d2512c997409f629fb53e621ede0d57d3f995e2",
                           cosign_sha256_amd64: str = "c3b4f5410e608af03a5eb0aaac84a4313d8da131248e08ff1759ac70c79d1644",
                           cosign_sha256_arm64: str = "426193b4c5da4d4d643e822f48fe0cc8a476ca1782a272704831f5a0cef716d7",
-                          github_repo: str = "RHPhysicalAI/hp-roscon-flywheel", gitops_branch: str = "desktop-gpu-split",
-                          fleet_file: str = "gitops/rhem/fleet-act-inference.yaml", consumer_file: str = "gitops/flywheel/manifest-consumer.yaml",
+                          github_repo: str = "RHPhysicalAI/hp-roscon-flywheel", gitops_branch: str = "fury",
+                          fleet_file: str = "gitops/rhem/fleet-act-inference.yaml", also_fleet_files: str = "gitops/rhem/fleet-robots.yaml",
+                          consumer_file: str = "gitops/flywheel/manifest-consumer.yaml",
                           fleet_ui_url: str = "https://ui.flightctl.apps.sno-flywheel.local/devicemanagement/fleets/act-inference",
                           modelcar_base: str = UBI_MICRO, timeout_min: int = 600,
                           model_registry_url: str = "https://flywheel.rhoai-model-registries.svc:8443",
@@ -396,7 +425,8 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
     k8s.use_secret_as_env(g, secret_name="hub-credentials", secret_key_to_env={"s3-access-key": "AWS_ACCESS_KEY_ID", "s3-secret-key": "AWS_SECRET_ACCESS_KEY"})
     pk = package_modelcar(checkpoint_uri=t.outputs["checkpoint"], candidate=candidate, registry_repo=registry_repo,
                           platform=platform, s3_endpoint=s3_endpoint, crane_version=crane_version, modelcar_base=modelcar_base,
-                          crane_sha256_amd64=crane_sha256_amd64, crane_sha256_arm64=crane_sha256_arm64).after(g)
+                          crane_sha256_amd64=crane_sha256_amd64, crane_sha256_arm64=crane_sha256_arm64,
+                          run_id=run_id).after(g)
     pk.set_caching_options(False)
     k8s.use_secret_as_env(pk, secret_name="hub-credentials", secret_key_to_env={"s3-access-key": "AWS_ACCESS_KEY_ID", "s3-secret-key": "AWS_SECRET_ACCESS_KEY"})
     k8s.use_secret_as_volume(pk, secret_name="quay-push", mount_path="/etc/quay")
@@ -412,7 +442,8 @@ def act_flywheel_pipeline(candidate: str, incumbent: str = "upstream-act-teacher
     reg.set_caching_options(False)
     pr = open_promotion_pr(image_ref=sg.outputs["image_ref"], candidate=candidate, checkpoint_uri=t.outputs["checkpoint"], report_json=g.output,
                            github_repo=github_repo, gitops_branch=gitops_branch, fleet_file=fleet_file, consumer_file=consumer_file,
-                           fleet_ui_url=fleet_ui_url, run_id=run_id, catalog_item_file=catalog_item_file).after(reg)
+                           fleet_ui_url=fleet_ui_url, run_id=run_id, catalog_item_file=catalog_item_file,
+                           also_fleet_files=also_fleet_files).after(reg)
     pr.set_caching_options(False)
     k8s.use_secret_as_volume(pr, secret_name="github-token", mount_path="/etc/github")
     rp = record_pr_url(model_name=MODEL_NAME, candidate=candidate, pr_url=pr.output, model_registry_url=model_registry_url)

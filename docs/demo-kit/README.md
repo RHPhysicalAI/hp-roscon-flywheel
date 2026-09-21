@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # Contingency kit — artifacts that back the demo when nothing is live
 
 Plan of record (D023, operator 2026-09-08): the demo must play from recordings and durable artifacts

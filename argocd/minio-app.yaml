@@ -19,7 +19,7 @@ spec:
   source:
     path: gitops/minio
     repoURL: https://github.com/RHPhysicalAI/hp-roscon-flywheel.git
-    targetRevision: desktop-gpu-split
+    targetRevision: fury
   syncPolicy:
     automated:
       prune: true

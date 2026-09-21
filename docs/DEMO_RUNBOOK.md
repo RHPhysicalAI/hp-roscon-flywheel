@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # Physical AI Edge Flywheel — Demo Runbook (SO-ARM101 on RHEM)
 
 > Re-skinned from `thor-testing/DEMO_RUNBOOK.md` (same six-beat arc, same two cuts), rewritten for the
@@ -51,7 +52,7 @@ sim and no network — and every live element is a bonus layered on top, never a
 
 | claim | evidence |
 |---|---|
-| v1 = the upstream ACT teacher as shipped; v2 = the same weights fine-tuned on 160 of its own curated successes (D021) | `docs/eval-records/phase3-ladder/`, HF `jeremyary/soarm-act-v2-ft160` |
+| v1 = the upstream ACT teacher as shipped; v2 = the same weights fine-tuned on 160 of its own curated successes (D021) | `docs/eval-records/phase3-ladder/`, HF `<account>/soarm-act-v2-ft160` |
 | **73% → 86%** on 100 identical seeded scenes; paired **20 fixed / 7 broken**, net +13, sign-test **p = 0.019**; mean cubes 2.51 → 2.73 | `python3 src/eval-report/ladder_report.py …` (§ Reference) |
 | Those headline numbers were measured with the rosetta client at chunking **30 / 0.95**; the deployed configuration is **100 / 0.5** (D058/D059). A re-measure at the deployed setting is pending — say so if asked, don't imply the numbers were taken on today's config | D059; `docs/eval-records/phase3-ladder/` |
 | Fine-tuning on **20 or 40** successes made the policy **worse** (60%, 56%); 80 broke even (76%) — the eval gate exists because of this | same table |
@@ -114,13 +115,13 @@ on stage.
 | beat | live screen | kit item (exists) | to capture (item 2) |
 |---|---|---|---|
 | 1 | camera stream | — | 30–60 s clip of the arm placing cubes (v2), overhead + wrist |
-| 2 | dashboard | `docs/internal/data-contract-eval-dashboard.md` (what the stream contains) | 60 s screen recording of the dashboard with pass/reject rows landing; MinIO console screenshot of `episodes-curated/act-v2-ft160/` |
+| 2 | dashboard | `docs/internal/data-contract-eval-dashboard.md` (what the stream contains) | 60 s screen recording of the dashboard with pass/reject rows landing; object storage console screenshot of `episodes-curated/act-v2-ft160/` |
 | 3 | runner log, KFP task list | `docs/demo-kit/run-192f3ec5-task-states.txt`, `docs/demo-kit/run-192f3ec5-host-runner.log` (run 6's files stay as history) | screenshot of the terminal; a live run recording from the kit session |
-| 4 | static chart | `docs/internal/phase3-ladder.html`, `docs/eval-records/phase3-ladder/`, `src/eval-report/ladder_report.py`, published chart https://claude.ai/code/artifact/84a1ec60-403d-4a34-ba3f-a0cbb69e5e71 | PNG export of the chart for slides |
+| 4 | static chart | `docs/internal/phase3-ladder.html`, `docs/eval-records/phase3-ladder/`, `src/eval-report/ladder_report.py` | PNG export of the chart for slides |
 | 5 | PR #2, Rekor UI, RHEM Fleet page | `docs/demo-kit/pr2.md`, `docs/demo-kit/rekor-entry-4.json`, `docs/eval-records/promotion-2.md` (the rollout, second by second) | clips **5a–5e** in the kit script: PR *Files changed*, Rekor entry, the merge, the Fleet rollout with the device tab in frame |
 | 6 | device Applications tab, console log, dashboard, registry, Catalog | `docs/eval-records/promotion-2.md` § *Lineage downstream*, `docs/eval-records/model-registry.md`, `docs/eval-records/catalog.md` | clips **6a–6f**: Applications tab, `Published model_version:`, badge + bar reset + first re-stamped rows, registry JSON, Catalog graph |
 | Q&A | rollback, negative trust | `docs/eval-records/promotion-2.md` § D3, `docs/eval-records/negative-trust-tests.md` | clips **R1–R2**, **N1** |
-| all | — | HP status brief https://claude.ai/code/artifact/5359ed44-5028-4ba5-b7bf-d13914e4d0cc; private HF copies of datasets and checkpoints (`jeremyary/soarm-*`) | **the full Short Cut screen recording** (non-negotiable, Phase 4 item 2) |
+| all | — | private HF copies of datasets and checkpoints (`<account>/soarm-*`) | **the full Short Cut screen recording** (non-negotiable, Phase 4 item 2) |
 
 Keep the recording and the screenshots on the presenting laptop **and** on a USB stick; the venue
 network is not part of the plan.
@@ -140,7 +141,7 @@ says otherwise.
 | Overhead camera (MJPEG) | host `so-arm-sim` container, port 8081 | `http://10.0.0.48:8081/static` (wrist: `/wrist`, `/health`) |
 | Rest-pose picker (both cams + live joints) | host `pose-ui` container | `http://10.0.0.48:8090/` |
 | Operational dashboard (Beat 2, Beat 6 badge) | SNO, NodePort | `http://10.0.0.49:30801` (`/api/status` for JSON) |
-| MinIO console | SNO route | `https://minio-console-minio.apps.sno-flywheel.local` |
+| Object storage console | SNO route | `https://minio-console-minio.apps.sno-flywheel.local` |
 | DSP (KFP) API | SNO, via port-forward on the host | `oc port-forward -n flywheel svc/ds-pipeline-dspa 8888:8888` → `https://localhost:8888` + SA token |
 | Host runner / poller logs | host | `~/host-runner.log`, `~/pipeline-run.log` |
 | Static chart (Beat 4) | repo, local file | `open docs/internal/phase3-ladder.html` |
@@ -149,11 +150,12 @@ says otherwise.
 | **RHEM UI** — Fleet page | SNO route (flightctl) | `https://ui.flightctl.apps.sno-flywheel.local/devicemanagement/fleets/act-inference` (OpenShift OAuth login) |
 | **RHEM UI** — device page, *Applications* tab | same | `https://ui.flightctl.apps.sno-flywheel.local/devicemanagement/devices/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg` |
 | **RHEM UI** — Catalog (v1alpha1) | same | `https://ui.flightctl.apps.sno-flywheel.local/catalog` → `physical-ai-models` → `soarm-act` |
-| `flightctl` CLI | **desktop**, `~/.local/bin/flightctl`, through a `while true` port-forward loop on 3443 (`~/flightctl-pf.log`) | every `flightctl` line below runs over `ssh -n jary@10.0.0.48 '…'` |
+| `flightctl` CLI | **desktop**, `~/.local/bin/flightctl`, through a `while true` port-forward loop on 3443 (`~/flightctl-pf.log`) | every `flightctl` line below runs over `ssh -n <user>@10.0.0.48 '…'` |
 | Model Registry REST | SNO route (OAuth proxy; needs a bearer token) | `https://flywheel-rest.apps.sno-flywheel.local/api/model_registry/v1alpha3/…` — the Beat 6 curl below |
+| **RHOAI dashboard** (D134) — DSP run graph (Beat 3), Model Registry UI (Beat 6) | SNO route (OpenShift OAuth) | `https://rhods-dashboard-redhat-ods-applications.apps.sno-flywheel.local` (on RHOAI 3.x: `https://rh-ai.apps.sno-flywheel.local`) → *Data Science Pipelines* / *Model Registry*, project **flywheel** |
 | Argo CD | SNO route | `https://openshift-gitops-server-openshift-gitops.apps.sno-flywheel.local` |
 
-Constants: host `jary@10.0.0.48` (always `ssh -n` for one-liners; `ssh … 'bash -s' <<'EOF'` for
+Constants: host `<user>@10.0.0.48` (always `ssh -n` for one-liners; `ssh … 'bash -s' <<'EOF'` for
 scripts, and then inner `ssh` needs `-n`). SNO node `10.0.0.49`. Device VM `10.0.0.51`.
 `KUBECONFIG=~/sno-flywheel/auth/kubeconfig` **on the host** (the presenting laptop has no kubeconfig for this
 cluster — every `oc` below runs over ssh). Pipeline id `99ec0aab-51fb-412e-bd2f-47bc6a0d3e3d`,
@@ -197,14 +199,14 @@ runtime image (Tekton, multi-arch) `quay.io/jary/soarm-flywheel@sha256:02e66d895
    oauth, perses, tempo, sim-cameras. **Add** (one line, all → the node; the `flightctl` and
    `flywheel-rest` names were missing on 2026-09-09):
    ```
-   10.0.0.49 ui.flightctl.apps.sno-flywheel.local api.flightctl.apps.sno-flywheel.local flywheel-rest.apps.sno-flywheel.local rekor-search-ui-trusted-artifact-signer.apps.sno-flywheel.local rekor-server-trusted-artifact-signer.apps.sno-flywheel.local minio-console-minio.apps.sno-flywheel.local ds-pipeline-dspa-flywheel.apps.sno-flywheel.local
+   10.0.0.49 ui.flightctl.apps.sno-flywheel.local api.flightctl.apps.sno-flywheel.local flywheel-rest.apps.sno-flywheel.local rekor-search-ui-trusted-artifact-signer.apps.sno-flywheel.local rekor-server-trusted-artifact-signer.apps.sno-flywheel.local minio-console-minio.apps.sno-flywheel.local ds-pipeline-dspa-flywheel.apps.sno-flywheel.local rhods-dashboard-redhat-ods-applications.apps.sno-flywheel.local
    ```
-2. `ssh -n jary@10.0.0.48 true` works; `gh auth status` is logged in; this repo is checked out on
+2. `ssh -n <user>@10.0.0.48 true` works; `gh auth status` is logged in; this repo is checked out on
    the presenting laptop on `desktop-gpu-split` (for the chart and the report script). Log in to the RHEM UI
    during setup (OpenShift OAuth, kubeadmin) — the Fleet and device pages are Beat 5/6.
 3. **State check** — run this and read it against the expected block below:
    ```bash
-   ssh -n jary@10.0.0.48 'docker ps --format "{{.Names}}  {{.Status}}" | grep -E "^(so-arm-sim|pose-ui|act-coordinator) ";
+   ssh -n <user>@10.0.0.48 'docker ps --format "{{.Names}}  {{.Status}}" | grep -E "^(so-arm-sim|pose-ui|act-coordinator) ";
      ~/.local/bin/flightctl get devices;
      ~/.local/bin/flightctl get fleet act-inference -o yaml | grep -E "templateVersion|MODEL_VERSION:|soarm-act-modelcar@";
      ~/.local/bin/flightctl get resourcesync;
@@ -225,7 +227,7 @@ runtime image (Tekton, multi-arch) `quay.io/jary/soarm-flywheel@sha256:02e66d895
 4. **Credentials you may need on screen** (read them on the host, never paste them into a doc):
    - RHEM UI / Argo: *Log in via OpenShift* as kubeadmin (`~/sno-flywheel/auth/kubeadmin-password`
      on the host), or Argo `admin` with `oc extract secret/openshift-gitops-cluster -n openshift-gitops --keys=admin.password --to=-`.
-   - MinIO console: `oc extract secret/minio-credentials -n minio --to=-` (`root-user`/`root-password`).
+   - Object storage console: `oc extract secret/minio-credentials -n minio --to=-` (`root-user`/`root-password`).
    - Model Registry: a runner SA token, minted on the host inside the Beat 6 curl (10 min lifetime).
 5. **Do not** start the in-cluster `so-arm-sim` Deployment (it is intentionally 0 on the desktop; the
    sim is the host container). **Never run two coordinators** (both drive `/run_policy`, D057):
@@ -240,7 +242,7 @@ runtime image (Tekton, multi-arch) `quay.io/jary/soarm-flywheel@sha256:02e66d895
 
 1. **Camera** `http://10.0.0.48:8081/static` — Beat 1 (full-screen the tab).
 2. **Dashboard** `http://10.0.0.49:30801` — Beat 1 cutaway, Beat 2, Beat 6 badge.
-3. **Terminal on the host** (`ssh jary@10.0.0.48`) — Beat 3, Beat 5, Beat 6.
+3. **Terminal on the host** (`ssh <user>@10.0.0.48`) — Beat 3, Beat 5, Beat 6.
 4. **Chart** `open docs/internal/phase3-ladder.html` from the repo — Beat 4.
 5. **PR #2** https://github.com/RHPhysicalAI/hp-roscon-flywheel/pull/2 — Beat 5.
 6. **Rekor UI** `https://rekor-search-ui-trusted-artifact-signer.apps.sno-flywheel.local/?logIndex=4` — Beat 5.
@@ -267,7 +269,7 @@ while the loop runs — start it before the show with `~/run-coordinator.sh`, §
 > watching is not the policy that shipped; it's **the second version, which this loop trained and
 > promoted.** Hold that thought."
 
-**If it breaks:** stream blank → `ssh -n jary@10.0.0.48 'curl -s -m 3 http://127.0.0.1:8081/health'`
+**If it breaks:** stream blank → `ssh -n <user>@10.0.0.48 'curl -s -m 3 http://127.0.0.1:8081/health'`
 (200 = bridge up; reload the tab). Bridge dead but sim up → the pose UI (tab 8090) has its own copy
 of both streams. Arm frozen → check the loop is running (`docker ps | grep act-coordinator`) and
 the device is Healthy (state check); restart the loop per § *Failure recovery*. Sim dead (no
@@ -280,11 +282,11 @@ to Beat 2 and narrate over the dashboard's last frames.
 **Screen:** tab 2, the dashboard. Point at the *latest episode* card (rollout status, steps,
 duration, **task success, cubes placed, smoothness, curation verdict**) and the curation log
 below it filling with `pass` / `reject` rows, then at the progress bar (**n / 160 curated episodes
-sent to hub** — the live lineage's count since the last promotion). Optional cutaway: MinIO console
+sent to hub** — the live lineage's count since the last promotion). Optional cutaway: the object storage console
 → bucket `episodes-curated` → prefix `act-v2-ft160/` growing. Terminal alternative for the count
 **[not run today]**:
 ```bash
-ssh -n jary@10.0.0.48 'docker run --rm --network host -v ~/count_curated.py:/c.py --entrypoint python3 act-inference:latest /c.py'   # prints: curated rejected (teacher lineage)
+ssh -n <user>@10.0.0.48 'docker run --rm --network host -v ~/count_curated.py:/c.py --entrypoint python3 act-inference:latest /c.py'   # prints: curated rejected (teacher lineage)
 ```
 
 **Say:**
@@ -298,7 +300,7 @@ ssh -n jary@10.0.0.48 'docker run --rm --network host -v ~/count_curated.py:/c.p
 
 **If it breaks:** dashboard stale → `curl -s http://10.0.0.49:30801/api/status | python3 -m json.tool | head -30`
 (if the JSON moves, reload the page; if not, `oc delete pod -n flywheel -l app=dashboard` on the
-host, ~40 s with the pip install — **[not run today]**). Dashboard dead → the MinIO console is the
+host, ~40 s with the pip install — **[not run today]**). Dashboard dead → the object storage console is the
 screen (objects have timestamps).
 
 ### Beat 3 — "Training started from the curated data: here's the pipeline" (~45 s)
@@ -309,7 +311,7 @@ records reused → `PASS — upstream-act-teacher 0.73 -> act-v2-ft160-rhem 0.86
 p=0.0192`) and the poller's final `FINAL SUCCEEDED | … eval-gate=SUCCEEDED …` line. To show the run
 as the platform sees it (task list with timestamps, 3 m 45 s trigger-to-PR):
 ```bash
-ssh jary@10.0.0.48 'bash -s' <<'EOF'
+ssh <user>@10.0.0.48 'bash -s' <<'EOF'
 export KUBECONFIG=~/sno-flywheel/auth/kubeconfig
 pgrep -f "port-forward -n flywheel svc/ds-pipeline-dspa" >/dev/null || { setsid nohup oc port-forward -n flywheel svc/ds-pipeline-dspa 8888:8888 </dev/null >/tmp/pf.log 2>&1 & sleep 4; }
 KFP_TOKEN=$(oc create token manifest-consumer -n flywheel --duration=1h) RUN=192f3ec5-c0f2-459d-8e84-6e8e32e90b35 ~/venv-runner/bin/python - <<'PY'
@@ -332,10 +334,16 @@ EOF
 > takes half an hour, so I'm showing you the real run, not making you watch it. It passed: 73 to
 > 86 percent, twenty scenes fixed, seven broken."
 
-**If it breaks:** port-forward flaky → `tail ~/pipeline-run.log` is the same information. Pods as
-evidence: `oc get pods -n flywheel | grep promotion` **[not run today]**. There is **no graphical
-run view** on this cluster (the RHOAI dashboard component is `Removed` in the DSC); the terminal is
-the screen.
+**Graphical run view (D134):** the RHOAI dashboard is enabled again, so the run DAG, per-step
+status/logs and artifacts are visible at the **RHOAI dashboard** →
+`https://rhods-dashboard-redhat-ods-applications.apps.sno-flywheel.local` (on RHOAI 3.x:
+`https://rh-ai.apps.sno-flywheel.local`; OpenShift OAuth login) →
+*Data Science Pipelines* under the **flywheel** project. This is the nicer Beat 3 screen; the
+terminal `kfp.Client` task list below is the fallback if the dashboard or its route is down.
+
+**If it breaks:** dashboard unreachable → the terminal task list is the same information;
+port-forward flaky → `tail ~/pipeline-run.log`; pods as evidence: `oc get pods -n flywheel | grep
+promotion`.
 
 ### Beat 4 — "Model improvement: v1 vs v2 side-by-side" (~60 s) — *two screens and a fallback*
 
@@ -370,14 +378,14 @@ Then tab 6, the Rekor UI: entry **log index 4**, kind `hashedrekord`, integrated
 transparency-log record of that signature. Optional live verify on the host (port-forward to
 `svc/rekor-server` on 8090 is resident):
 ```bash
-ssh -n jary@10.0.0.48 'SIGSTORE_REKOR_PUBLIC_KEY=~/rekor-live.pub ~/bin/cosign verify --key ~/cosign/cosign.pub --rekor-url http://localhost:8090 quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b 2>&1 | grep -E "^  - "'
+ssh -n <user>@10.0.0.48 'SIGSTORE_REKOR_PUBLIC_KEY=~/rekor-live.pub ~/bin/cosign verify --key ~/cosign/cosign.pub --rekor-url http://localhost:8090 quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b 2>&1 | grep -E "^  - "'
 #   -> claims validated; existence in the transparency log verified offline; signature verified
 ```
 Then tab 7, the RHEM Fleet page `act-inference`: template version `v7`, rollout `Inactive`,
 batch 1 `100% success`, the device row `UpToDate` / `Healthy`. Terminal equivalent:
 ```bash
-ssh -n jary@10.0.0.48 '~/.local/bin/flightctl get fleet act-inference -o yaml | grep -E "templateVersion|batchNumber|MODEL_VERSION:|soarm-act-modelcar@" ; ~/.local/bin/flightctl get device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg -o json | jq -c ".status.applicationsSummary,.status.updated"'
-ssh -n jary@10.0.0.48 '~/.local/bin/flightctl get events --limit 8'      # the rollout, as RHEM logged it
+ssh -n <user>@10.0.0.48 '~/.local/bin/flightctl get fleet act-inference -o yaml | grep -E "templateVersion|batchNumber|MODEL_VERSION:|soarm-act-modelcar@" ; ~/.local/bin/flightctl get device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg -o json | jq -c ".status.applicationsSummary,.status.updated"'
+ssh -n <user>@10.0.0.48 '~/.local/bin/flightctl get events --limit 8'      # the rollout, as RHEM logged it
 ```
 
 **Say:**
@@ -397,9 +405,9 @@ ssh -n jary@10.0.0.48 '~/.local/bin/flightctl get events --limit 8'      # the r
 Optional Q&A line, terminal (the strings are verbatim from the device, D091; **not re-run on the
 device today** — `docs/eval-records/negative-trust-tests.md`):
 ```bash
-ssh -n jary@10.0.0.48 '~/.local/bin/flightctl console device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg --notty -- sudo -n podman pull quay.io/jary/soarm-flywheel:negtest-notlog-2026-09-09'
+ssh -n <user>@10.0.0.48 '~/.local/bin/flightctl console device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg --notty -- sudo -n podman pull quay.io/jary/soarm-flywheel:negtest-notlog-2026-09-09'
 #   -> Error: … Source image rejected: missing dev.sigstore.cosign/bundle annotation   (signed with the right key, never logged in Rekor; exit 125)
-ssh -n jary@10.0.0.48 '~/.local/bin/flightctl console device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg --notty -- sudo -n podman pull quay.io/jary/soarm-flywheel@sha256:06413b09f79dd1186d7b199ffa56b01d56c12f50ed2a4671fb299cac297a66e3'
+ssh -n <user>@10.0.0.48 '~/.local/bin/flightctl console device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg --notty -- sudo -n podman pull quay.io/jary/soarm-flywheel@sha256:06413b09f79dd1186d7b199ffa56b01d56c12f50ed2a4671fb299cac297a66e3'
 #   -> Error: … Source image rejected: A signature was required, but no signature exists   (unsigned; exit 125)
 ```
 Never sign `negtest-notlog-2026-09-09` into Rekor and never move a tag onto it — its only value is
@@ -417,13 +425,13 @@ above are the same screen.
 the volume reference `…soarm-act-modelcar@sha256:bdb513ca…`. Then tab 3, the host terminal — the
 device's own word for what it is serving:
 ```bash
-ssh -n jary@10.0.0.48 '~/.local/bin/flightctl get device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg -o json | jq -c ".status.applicationsSummary,.status.updated,.status.applications[0].volumes"'
-ssh -n jary@10.0.0.48 '~/.local/bin/flightctl console device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg --notty -- sudo -n podman logs --tail 20 act-inference-128875-act-inference | grep "Published model_version"'
+ssh -n <user>@10.0.0.48 '~/.local/bin/flightctl get device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg -o json | jq -c ".status.applicationsSummary,.status.updated,.status.applications[0].volumes"'
+ssh -n <user>@10.0.0.48 '~/.local/bin/flightctl console device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg --notty -- sudo -n podman logs --tail 20 act-inference-128875-act-inference | grep "Published model_version"'
 #   -> [model_version_publisher]: Published model_version: act-v2-ft160
 ```
 Then the registry row (route + token minted on the host; prints the fields, never the token):
 ```bash
-ssh -n jary@10.0.0.48 'export KUBECONFIG=~/sno-flywheel/auth/kubeconfig; TOK=$(oc create token pipeline-runner-dspa -n flywheel --duration=10m);
+ssh -n <user>@10.0.0.48 'export KUBECONFIG=~/sno-flywheel/auth/kubeconfig; TOK=$(oc create token pipeline-runner-dspa -n flywheel --duration=10m);
   curl -sk --resolve flywheel-rest.apps.sno-flywheel.local:443:10.0.0.49 -H "Authorization: Bearer $TOK" https://flywheel-rest.apps.sno-flywheel.local/api/model_registry/v1alpha3/model_versions | python3 -c "import sys,json; [print(v[\"name\"], \"|\", v[\"description\"], \"|\", {k:(v[\"customProperties\"][k].get(\"string_value\") or v[\"customProperties\"][k].get(\"int_value\") or v[\"customProperties\"][k].get(\"double_value\")) for k in (\"fixed\",\"broken\",\"sign_test_p\",\"rekor_index\",\"pr_url\",\"dsp_run_id\")}) for v in json.load(sys.stdin)[\"items\"]]";
   curl -sk --resolve flywheel-rest.apps.sno-flywheel.local:443:10.0.0.49 -H "Authorization: Bearer $TOK" https://flywheel-rest.apps.sno-flywheel.local/api/model_registry/v1alpha3/model_artifacts | python3 -c "import sys,json; [print(a[\"name\"], a[\"uri\"]) for a in json.load(sys.stdin)[\"items\"]]"'
 #   -> act-v2-ft160-rhem | upstream-act-teacher 0.73 -> act-v2-ft160-rhem 0.86, net +13, p=0.0192 | {fixed 20, broken 7, p 0.0192, rekor_index 8, pr_url …/pull/4, dsp_run_id 9015ecd4-…}
@@ -432,7 +440,7 @@ ssh -n jary@10.0.0.48 'export KUBECONFIG=~/sno-flywheel/auth/kubeconfig; TOK=$(o
 Then tab 9, the Catalog: `physical-ai-models` → `soarm-act` → versions `2.0.0-ft160` →
 `2.0.0-ft160-rhem` (`replaces`). Terminal equivalent:
 ```bash
-ssh -n jary@10.0.0.48 '~/.local/bin/flightctl get catalogitem soarm-act --catalog physical-ai-models -o yaml | grep -E "version:|container:|replaces:"'
+ssh -n <user>@10.0.0.48 '~/.local/bin/flightctl get catalogitem soarm-act --catalog physical-ai-models -o yaml | grep -E "version:|container:|replaces:"'
 ```
 Back to tab 2: the dashboard badge reads **`act-v2-ft160`** — the hub's view of the lineage — and
 the newest log rows are that lineage's episodes.
@@ -497,7 +505,7 @@ PR #3), no open PR, dashboard badge `act-v2-ft160`. If a previous rehearsal left
 `act-v2-ft160-rhem` live, roll it back exactly as PR #3 did (rehearsed 2026-09-09, D074) — from the
 **desktop** (its `gh` login can open PRs; the presenting laptop's PAT cannot):
 ```bash
-ssh jary@10.0.0.48 'bash -s' <<'EOF'
+ssh <user>@10.0.0.48 'bash -s' <<'EOF'
 cd ~/redhat/git/hp-roscon-flywheel && git checkout desktop-gpu-split && git pull --ff-only
 M=$(gh pr view <n> --repo RHPhysicalAI/hp-roscon-flywheel --json mergeCommit --jq .mergeCommit.oid)
 git checkout -b rollback/act-v2-ft160-rhem-$(date +%H%M) && git revert -m 1 --no-edit "$M"
@@ -505,7 +513,7 @@ git diff --stat HEAD~1   # expect exactly gitops/rhem/fleet-act-inference.yaml +
 git push -u origin HEAD && gh pr create --repo RHPhysicalAI/hp-roscon-flywheel --base desktop-gpu-split --fill
 EOF
 # merge it (phone or `gh pr merge <n> --merge`), then watch — nothing to apply by hand (ResourceSync ~2 min, no re-pull, Argo re-syncs the consumer ~3 min):
-ssh -n jary@10.0.0.48 '~/.local/bin/flightctl get device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg -o json | jq -c ".status.applicationsSummary,.status.applications[0].volumes"'
+ssh -n <user>@10.0.0.48 '~/.local/bin/flightctl get device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg -o json | jq -c ".status.applicationsSummary,.status.applications[0].volumes"'
 ```
 Verify with the state check. Head branches auto-delete on merge (D089 applied by the operator), so
 the PR step's `promote/<candidate>-<run8>` branch never collides (D087).
@@ -536,7 +544,7 @@ and a **pass** row.
 In **T2**, submit the run exactly as the manifest-consumer would (same API, same parameters), then
 poll it:
 ```bash
-ssh jary@10.0.0.48 'bash -s' <<'EOF'
+ssh <user>@10.0.0.48 'bash -s' <<'EOF'
 export KUBECONFIG=~/sno-flywheel/auth/kubeconfig
 pgrep -f "port-forward -n flywheel svc/ds-pipeline-dspa" >/dev/null || { setsid nohup oc port-forward -n flywheel svc/ds-pipeline-dspa 8888:8888 </dev/null >/tmp/pf.log 2>&1 & sleep 4; }
 TOK=$(oc create token manifest-consumer -n flywheel --duration=1h)
@@ -579,7 +587,7 @@ Beat 5 line.
 
 Nothing to compress: ResourceSync polls ~2 min, everything after it is seconds (D069). **T1**:
 ```bash
-ssh -n jary@10.0.0.48 'watch -n 5 "~/.local/bin/flightctl get device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg -o json | jq -c .status.config.renderedVersion,.status.updated.status,.status.applicationsSummary.status,.status.applications[0].volumes[0].reference"'
+ssh -n <user>@10.0.0.48 'watch -n 5 "~/.local/bin/flightctl get device/s28p3s5ln7o5m1bccplipa4v5eqmqetqelg9ltqdii92rco95hdg -o json | jq -c .status.config.renderedVersion,.status.updated.status,.status.applicationsSummary.status,.status.applications[0].volumes[0].reference"'
 ```
 Expected: `renderedVersion` +1 and `UpToDate` at about +1:30–2:00 from the merge, the volume
 reference flips to the new digest, `Healthy` at about +2:00–2:45, the console log
@@ -639,13 +647,13 @@ teacher's weights, ~2 epochs, LR 1e-5; eval = seeds 1000–1049, +1050–1099 fo
   mean?"* — spec delivered (`UpToDate`), not app healthy; the Applications tab is "serving"
   (D070). *"Why does the registry digest differ from the Fleet's?"* — one row per candidate,
   refreshed by the latest run; the multi-arch modelcar is not byte-reproducible (D090).
-  *"Where are the datasets?"* — MinIO `episodes-data/` and private HF `jeremyary/soarm-flywheel-*`
+  *"Where are the datasets?"* — object storage, bucket `episodes-data/`, and private HF `<account>/soarm-flywheel-*`
   / `soarm-act-*`, LeRobot-native.
 
 ## What's real (know this if asked)
 
 **Real, running, genuine:** Gazebo SO-ARM101 with the upstream LeRobot ACT policy (`francocipollone/…`)
-· ground-truth scoring and per-episode MCAP recording · curator → MinIO/Kafka with lineage ·
+· ground-truth scoring and per-episode MCAP recording · curator → object storage/Kafka with lineage ·
 LeRobot fine-tune from the incumbent's weights · seeded N=100 paired eval · RHOAI Data Science
 Pipelines run · multi-arch `crane` modelcar · `cosign` v2.6.5 + RHTAS Rekor, recursive · Model
 Registry row · GitOps PR with evidence · RHEM Fleet rollout to an enrolled device with node-side
@@ -685,7 +693,7 @@ served a policy yet.
 | Arm frozen, no `Early stop`/`Resetting cubes` in `docker logs --since 5m act-coordinator` | the loop is off or the device unhealthy: state check; restart the loop (below); if the device app is not Healthy, `flightctl get events --limit 10` says why |
 | **Loop (re)start** | on the host, disk guard first if not resident: `nohup ~/disk-guard.sh >/dev/null 2>&1 &`; then `IMAGE=quay.io/jary/soarm-flywheel@sha256:02e66d895ed4ba328aa43263561027c18406d774887f465ab7acbd81e4c42d08 MODEL_VERSION=<the Fleet's MODEL_VERSION> ~/run-coordinator.sh` (the script refuses without the guard or with < 100 GB free; the last loop ran on the interim digest `2ad1fb1c…` — first run with the Tekton digest **[not run today]**). Stop with `docker stop act-coordinator`. Never two coordinators (D057) |
 | Bags ≥ 330 or free < 100 GB (guard parks the loop) | port + prune first (`~/assemble_all.sh` pattern, `tools/host/prune_bags.py --yes`), then restart the loop |
-| **Host runner not resident** (`pgrep -af host_runner` empty; `trigger-and-wait` FAILED) | on the host: `set -a; source ~/.minio-env; set +a; nohup ~/venv-runner/bin/python ~/host_runner.py </dev/null >> ~/host-runner.log 2>&1 &` (the runner reads the MinIO credentials from the environment) **[not run today — the runner was resident]** |
+| **Host runner not resident** (`pgrep -af host_runner` empty; `trigger-and-wait` FAILED) | on the host: `set -a; source ~/.minio-env; set +a; nohup ~/venv-runner/bin/python ~/host_runner.py </dev/null >> ~/host-runner.log 2>&1 &` (the runner reads the object storage credentials from the environment) **[not run today — the runner was resident]** |
 | Dashboard not updating | `/api/status` moving? reload; else `oc delete pod -n flywheel -l app=dashboard` (host) **[not run today]** |
 | Dashboard badge disagrees with the device | the badge is the hub's view (`manifest-consumer` `COLLECTOR`, Argo-synced ~3 min after the merge); the device's is `flightctl console … podman logs … \| grep Published`; `soarm-act-v1` means the G-prep ConfigMap has not rolled |
 | `flightctl`: `connection refused 127.0.0.1:3443` | the desktop port-forward loop is re-establishing (`tail ~/flightctl-pf.log`); retry in 5 s |

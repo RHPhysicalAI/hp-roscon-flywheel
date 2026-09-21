@@ -1,0 +1,5 @@
+# This project was developed with assistance from AI tools.
+# the scripts log next to themselves, and those logs carry serial numbers and device UUIDs
+log/
+mjwarp-spike/out*/
+__pycache__/

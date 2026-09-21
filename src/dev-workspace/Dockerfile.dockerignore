@@ -1,0 +1,6 @@
+# This project was developed with assistance from AI tools.
+# The build context is src/. Only the files the Dockerfile copies are let through.
+*
+!dev-workspace/opencode.jsonc
+!eval-dashboard/requirements.txt
+!eval-dashboard/requirements-dev.txt

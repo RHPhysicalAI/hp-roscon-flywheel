@@ -1,0 +1,73 @@
+# This project was developed with assistance from AI tools.
+#
+# Robot zero's world (D164): the tenants-mode variant of the host's sim. MIG slices have no graphics, so this is the
+# physics-only world the fleet's robots have (SIM_CAMERAS=off, D163) - the same signed image the hub runs as world
+# pods, not the locally built one: Gazebo without its sensors system, the Zenoh router the policy connects to
+# (0.0.0.0:7447, as in flywheel mode), and the state forwarder that reports the arm and the cubes to the rendering
+# tenant as robot r00. No GPU, no camera bridge and NO episode emitter: nothing in here can reach a curator, and
+# nothing of /data is mounted (74-robot-zero-install.sh checks both on the file it installs). Episodes are reported
+# by a unit of its own, robot-zero-emitter, and only to the show curator, which keeps nothing (D166).
+#
+# The policy itself is not a unit of ours. It is the Fleet's act-inference application, placed on slice 0:1 by
+# RHEM through the device's gpu_device label (tools/hub/robot-zero.sh). Its unit follows so-arm-sim.service, which
+# does not exist in this mode, and its action server does not survive a restart of the router in here - so this
+# unit restarts it, if and only if it is running, whenever this world has (re)started.
+#
+# One handle for the four robot-zero units: starting this one starts the frames, the episode loop and the episode
+# reporter, stopping or restarting it takes them along (they are bound to it). fury-mode tenants starts it, every
+# switch stops it.
+[Unit]
+Description=Robot zero's world (physics-only sim, state to the fleet renderer as r00)
+After=mig-config.service nvidia-cdi-refresh.service
+Wants=robot-zero-frames.service robot-zero-episodes.service robot-zero-emitter.service
+# fury-mode clears the count before it starts the unit, so a switch always gets a fresh try
+StartLimitIntervalSec=1h
+StartLimitBurst=10
+
+[Container]
+ContainerName=robot-zero-sim
+# the fleet worlds' image (gitops/fleet-worlds/world.yaml): docker/Dockerfile built and signed by the hub's pipeline
+Image=quay.io/jary/soarm-flywheel@sha256:179cbedc5a65759030c2a7cb58b64e952eb50aba7ca421fd7fe57176e2029fe4
+Pull=never
+Network=host
+Environment=SIM_CAMERAS=off
+Environment=ROBOT_ID=r00
+Environment=RENDER_STATE_ADDR=10.20.0.1:9701
+Environment=STATE_HZ=30
+# a fence around this world's Gazebo transport on a host other people use; the episode loop carries the same name
+Environment=GZ_PARTITION=robot-zero
+# what the world pods run under: nothing but /tmp is written (Gazebo's ~/.gz, the ROS logs, the generated world)
+Environment=HOME=/tmp
+Environment=ROS_LOG_DIR=/tmp/ros-log
+ReadOnly=true
+DropCapability=all
+NoNewPrivileges=true
+# The sim does not stop on SIGINT or SIGTERM (known issue) and holds no state worth waiting for: it ends by SIGKILL
+StopTimeout=5
+
+[Service]
+# Not ExecStartPre=: a failed pre-start under Restart=always loops for ever. A condition that exits non-zero skips
+# the start - inactive, not failed, not restarted. So a boot in flywheel mode, or a start by mistake while MIG is
+# off, does nothing: the flywheel's own sim owns port 7447 then.
+ExecCondition=/bin/sh -c 'nvidia-ctk cdi list 2>/dev/null | tr -d "[:blank:]" | grep -qxF "nvidia.com/gpu=0:1" || { echo "CDI device nvidia.com/gpu=0:1 is not there (MIG off): robot zero is a tenants-mode tenant, not starting"; exit 1; }'
+# try-restart: nothing happens to a policy that is stopped. No hub credential is involved - this is what PartOf=
+# does for the policy in flywheel mode. Only once THIS unit's router listens on 7447 (a process of this unit's
+# cgroup, up to 30 s; the entrypoint starts the router first): a world that dies at start, in a loop, must not
+# restart a healthy policy ten times an hour and show it Degraded in RHEM, and somebody else's listener on the port
+# is not a reason either. No ${...} in here: systemd would expand it; %n is this unit's name.
+ExecStartPost=-/bin/sh -c 'i=0; while [ $i -lt 30 ]; do for p in $(ss -Hltnp "sport = :7447" 2>/dev/null | grep -o "pid=[0-9]*" | cut -d= -f2); do if grep -qs "/%n/" /proc/$p/cgroup; then exec systemctl try-restart --no-block "act-inference-*-act-inference.service"; fi; done; i=$((i + 1)); sleep 1; done; echo "no Zenoh router of %n on 7447 after 30 s: the policy is left alone"'
+# 137 is the SIGKILL above: a clean stop here, not a failure
+SuccessExitStatus=130 137 143
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+# Measured for the same world as a pod (gitops/fleet-worlds/world.yaml): about one core and 725 MiB at steady
+# state, more than two cores wanted for the half minute of start-up.
+CPUQuota=300%
+MemoryHigh=2G
+MemoryMax=3G
+MemorySwapMax=0
+
+# a boot in tenants mode brings robot zero's host side back by itself; in flywheel mode the condition skips it
+[Install]
+WantedBy=multi-user.target

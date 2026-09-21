@@ -1,6 +1,8 @@
 <!-- This project was developed with assistance from AI tools. -->
 # Interim amd64 runtime image — built on the host, signed into Rekor (D024/D026/D028 bridge)
 
+*2026-09-21 — Editorial note: individuals' names were replaced by roles, including inside historical resource names, and usernames and handles in recorded commands were redacted. Nothing else was changed.*
+
 > **Superseded 2026-09-09** by the Tekton multi-arch build — `docs/eval-records/runtime-image-tekton.md`
 > (`quay.io/jary/soarm-flywheel@sha256:3d67f424…`, Rekor 11/12/13). The tags and Rekor indexes 2 and 3
 > below stay as history; nothing is deleted.
@@ -46,8 +48,8 @@ repo-root `COPY src/... ` and `COPY docker/...` steps). The three changed files 
 working tree into that checkout's `docker/` only (no `git pull` on the host):
 
 ```bash
-rsync -av docker/ jary@10.0.0.48:redhat/git/hp-roscon-flywheel/docker/
-ssh jary@10.0.0.48 'cd ~/redhat/git/hp-roscon-flywheel && docker build --platform linux/amd64 \
+rsync -av docker/ <user>@10.0.0.48:redhat/git/hp-roscon-flywheel/docker/
+ssh <user>@10.0.0.48 'cd ~/redhat/git/hp-roscon-flywheel && docker build --platform linux/amd64 \
   -f docker/Dockerfile.gpu-inference \
   -t quay.io/jary/soarm-flywheel:act-inference-amd64-2026-09-08 . \
   > ~/build-logs/act-inference-amd64-2026-09-08.log 2>&1'

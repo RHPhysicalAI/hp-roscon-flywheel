@@ -1,0 +1,57 @@
+# This project was developed with assistance from AI tools.
+#
+# Robot zero's cameras (D164): the rendering tenant's two pictures of robot r00, fetched over HTTP from
+# 10.20.0.1:9702 and published as the image topics the policy subscribes to - /static_camera/image_raw and
+# /wrist_camera/image_raw, 640x480 rgb8, the 480x480 picture centred and padded, never stretched
+# (src/robot-zero/bridge_core.py says why that is the faithful conversion). It is a client of the Zenoh router in
+# robot-zero-sim, like the policy. With the renderer away it publishes nothing and says so once; it never ends
+# over that, and picks up again by itself.
+#
+# The code is mounted, not baked into an image (the pattern of the runner and the training tenant): a fix is
+# 74-robot-zero-install.sh install and a restart, not an image build. The image is the fleet worlds' signed sim
+# image, which has ROS 2, the Zenoh middleware, numpy and OpenCV.
+[Unit]
+Description=Robot zero's cameras (the fleet renderer's pictures of r00 on the policy's image topics)
+After=robot-zero-sim.service
+# only ever beside its world: stopped with it, restarted with it, started by it
+BindsTo=robot-zero-sim.service
+StartLimitIntervalSec=1h
+StartLimitBurst=10
+
+[Container]
+ContainerName=robot-zero-frames
+Image=quay.io/jary/soarm-flywheel@sha256:179cbedc5a65759030c2a7cb58b64e952eb50aba7ca421fd7fe57176e2029fe4
+Pull=never
+Network=host
+Volume=/usr/local/lib/flywheel/robot-zero:/opt/robot-zero:ro,z
+Environment=ROBOT_ID=r00
+Environment=RENDER_HTTP_ADDR=10.20.0.1:9702
+# the renderer draws 15 frames a second; asking more often only fetches the same picture twice
+Environment=FRAME_HZ=15
+Environment=ZENOH_ROUTER=127.0.0.1:7447
+Environment=PYTHONUNBUFFERED=1
+# nothing but /tmp is written: the Zenoh session file and the ROS logs
+Environment=HOME=/tmp
+Environment=ROS_LOG_DIR=/tmp/ros-log
+ReadOnly=true
+DropCapability=all
+NoNewPrivileges=true
+# The image's entrypoint is the sim's launcher; this runs the bridge under the same ROS environment instead. $$ is
+# systemd's escape for a literal $: the variable is the image's, expanded by the bash inside the container.
+Entrypoint=/bin/bash
+Exec=-c 'source /opt/ros/$${ROS_DISTRO}/setup.bash && source /ws_pai/install/setup.bash && exec python3 -u /opt/robot-zero/frame_bridge.py'
+# python is pid 1 in here and only SIGINT has a handler
+StopSignal=SIGINT
+StopTimeout=10
+
+[Service]
+ExecCondition=/bin/sh -c 'nvidia-ctk cdi list 2>/dev/null | tr -d "[:blank:]" | grep -qxF "nvidia.com/gpu=0:1" || { echo "CDI device nvidia.com/gpu=0:1 is not there (MIG off): robot zero is a tenants-mode tenant, not starting"; exit 1; }'
+SuccessExitStatus=130 143
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+# Two 480 px JPEGs decoded and two 0.9 MB frames published, fifteen times a second: a fraction of a core.
+CPUQuota=200%
+MemoryHigh=1G
+MemoryMax=2G
+MemorySwapMax=0

@@ -34,11 +34,17 @@ RUN apt-get update \
   python3-pip \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ---- Full upstream workspace (same versions as sim image) ----
+# ---- Full upstream workspace ----
 RUN mkdir -p /ws_pai/src
 WORKDIR /ws_pai
 
-RUN git clone --depth 1 https://github.com/ros-physical-ai/demos src/demos
+# Pinned by commit: upstream's next commit moves to rosetta 0.2.0, which renames the client this
+# image's entrypoint launches (rosetta_client -> policy_runner). pai.repos at this commit pins
+# every other repository by commit as well. Moving the pin means porting the entrypoint first.
+ARG DEMOS_REF=80dc00cf6a6abb73c0d6dc7ad39ec261475cc474
+RUN git init -q src/demos \
+  && git -C src/demos fetch -q --depth 1 https://github.com/ros-physical-ai/demos "${DEMOS_REF}" \
+  && git -C src/demos checkout -q FETCH_HEAD
 
 RUN vcs import src < src/demos/pai.repos --recursive
 
@@ -49,6 +55,10 @@ RUN apt-get update \
 
 RUN source /opt/ros/"$ROS_DISTRO"/setup.bash \
   && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+# inference-entrypoint.sh launches these by name: fail the build, not the device, if they are gone
+RUN test -f install/rosetta/share/rosetta/params/rosetta_client.yaml \
+  && test -f install/rosetta/share/rosetta/launch/rosetta_client_launch.py
 
 # ---- ML dependencies (GPU — CUDA 13.0: RTX 5090 on x86, GB10/GB300 on aarch64) ----
 # TARGETARCH is set by buildx/buildah per --platform. The cu130 index publishes aarch64 wheels

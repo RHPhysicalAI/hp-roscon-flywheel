@@ -1,0 +1,4 @@
+# This project was developed with assistance from AI tools.
+# Keep the builder's local bytecode out of the image.
+**/__pycache__
+**/*.pyc

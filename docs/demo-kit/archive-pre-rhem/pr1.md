@@ -1,8 +1,10 @@
 # PR #1 — Promote act-v2-ft160 (73% -> 86%)
 
+*2026-09-21 — Editorial note: individuals' names were replaced by roles, including inside historical resource names, and usernames and handles in recorded commands were redacted. Nothing else was changed.*
+
 https://github.com/RHPhysicalAI/hp-roscon-flywheel/pull/1
 
-Merged: 2026-09-08T16:45:04Z by jeremyary
+Merged: 2026-09-08T16:45:04Z by the project lead
 
 Files changed: gitops/act-serving/deployment-green.yaml, gitops/act-serving/service.yaml
 

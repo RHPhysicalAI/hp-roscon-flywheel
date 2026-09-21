@@ -1,3 +1,4 @@
+<!-- This project was developed with assistance from AI tools. -->
 # Bootstrap Loop — a *real* self-improving flywheel for SO-ARM (Phase 3+ option)
 
 Optional upgrade path beyond the staged v1→v2 proof in `BUILD-PLAN.md` Phase 3.

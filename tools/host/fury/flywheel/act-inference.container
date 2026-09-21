@@ -1,0 +1,34 @@
+# This project was developed with assistance from AI tools.
+#
+# Same image, model volume and environment the Fleet renders for the device (gitops/rhem/fleet-act-inference.yaml),
+# installed by hand until the host is enrolled. 40-device-provision.sh removes it: the Fleet's copy runs under
+# another name (act-inference-<id>-act-inference), but two policy servers on one Zenoh graph reject every goal.
+# No health check yet: the one baked into this image hangs if it runs before the model version is published;
+# the fix is in docker/healthcheck.sh and arrives with the next image build.
+[Unit]
+Description=ACT policy server (the device's workload, pre-enrolment)
+Requires=so-arm-sim.service
+After=so-arm-sim.service
+PartOf=fury-flywheel.target
+
+[Container]
+ContainerName=act-inference
+Image=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837
+Network=host
+AddDevice=nvidia.com/gpu=all
+Environment=ROLE=policy POLICY_DEVICE=cuda MODEL_VERSION=act-v2-ft160 POLICY_PATH=/modelcar/models/act
+Environment=ZENOH_ROUTER=127.0.0.1:7447 ACTIONS_PER_CHUNK=100 CHUNK_SIZE_THRESHOLD=0.5
+Mount=type=image,source=quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b,destination=/modelcar
+HealthCmd=none
+StopSignal=SIGINT
+StopTimeout=15
+
+[Service]
+# a ROS 2 tree exits 130 on the SIGINT above; that is a clean stop, not a failure
+SuccessExitStatus=130 143
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=fury-flywheel.target

@@ -13,10 +13,26 @@
 # (device/enroll.sh) and are read here with flightctl's Go-template placeholders:
 #
 #   label            desktop VM      Fury host    used by
-#   site             desktop         fury         rolloutPolicy batch order (desktop first, then fury)
-#   gpu              none            nvidia       AddDevice=nvidia.com/gpu=all only when "nvidia";
+#   site             desktop         fury         rolloutPolicy batch 2 on this branch (everything on the Fury)
+#   role             (unset)         canary       rolloutPolicy batch 1: one device carrying role=canary goes first.
+#                                                 A batch that matches nothing is passed over (flightctl
+#                                                 managing-fleets.md: batches "might be none"), so the Fleet
+#                                                 works before any canary exists; the implicit last batch
+#                                                 takes whatever the explicit ones did not select.
+#   gpu              none            nvidia       AddDevice=nvidia.com/gpu=<gpu_device> only when "nvidia";
 #                                                 OMP/TORCH thread caps only when "none"
+#   gpu_device       (unset)         MIG-<uuid>   the CDI device handed to the container: "all" when the
+#                                                 label is absent; on a MIG-partitioned host the slice's
+#                                                 MIG-<uuid> name (index names like 0:1 contain ":", which
+#                                                 a label value may not)
 #   policy_device    cpu             cuda         POLICY_DEVICE -> rosetta_client params file (entrypoint)
+#   pull_default     (unset)         insecureAcceptAnything
+#                                                 policy.json's default requirement. Unset = "reject": a device
+#                                                 pulls from the enumerated registries and nowhere else (D131).
+#                                                 The Fury host is also a shared build and tenant machine, so it
+#                                                 alone carries the label; the two quay.io/jary repositories stay
+#                                                 signature- and Rekor-enforced there all the same. Any other
+#                                                 value is not a policy type and podman then refuses every pull.
 #   zenoh_router     10.0.0.48       <fury-ip>    ZENOH_ROUTER=<router>:<port> (two labels: ':' is not a
 #   zenoh_port       7447            7447         legal label-value character, D033)
 #
@@ -32,15 +48,17 @@
 #                                             (Rekor SET enforced on the device), signedIdentity matchRepository;
 #                                             the RHEL default entries for registry.access.redhat.com /
 #                                             registry.redhat.io are preserved because this file REPLACES the
-#                                             distro file; the default is REJECT (review W-10): any reference
+#                                             distro file; the default is REJECT (review W-10) unless the device
+#                                             carries a pull_default label (table above): any reference
 #                                             outside the four enumerated registries/repos — a renamed repo, a
 #                                             typo in a promotion edit, a mirror, docker.io — is refused before
 #                                             any signature is even looked at (third negative test, D091 + Case 3)
 #   /etc/containers/registries.d/quay-jary.yaml  use-sigstore-attachments for quay.io/jary — without it
 #                                             containers/image never looks for the cosign attachment and every
 #                                             pull fails with "A signature was required, but no signature exists"
-#   /etc/pki/containers/cosign.pub            the pipeline's cosign public key (desktop ~/cosign/cosign.pub)
-#   /etc/pki/containers/rekor.pub             RHTAS Rekor log public key (/api/v1/log/publicKey on the SNO route)
+#   /etc/pki/containers/cosign.pub            the pipeline's cosign public key (tools/hub/create-cosign-secrets.sh)
+#   /etc/pki/containers/rekor.pub             this hub's Rekor log public key (/api/v1/log/publicKey on the route;
+#                                             same bytes as gitops/tekton/rekor-public-key.yaml)
 # so both images below are pulled by podman under the same policy CRI-O would apply: unsigned → rejected,
 # signed without --tlog-upload → rejected (no SET), signed + logged → accepted.
 #
@@ -74,7 +92,8 @@ spec:
       sequence:
         - selector:
             matchLabels:
-              site: desktop
+              role: canary
+          limit: 1
           successThreshold: 100%
         - selector:
             matchLabels:
@@ -93,7 +112,7 @@ spec:
                 {
                     "default": [
                         {
-                            "type": "reject"
+                            "type": "{{ getOrDefault .metadata.labels "pull_default" "reject" }}"
                         }
                     ],
                     "transports": {
@@ -155,15 +174,15 @@ spec:
               mode: 0644
               content: |
                 -----BEGIN PUBLIC KEY-----
-                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9EGjXgISiy6pQ44C65fzeTYHua5k
-                23Jni5eZoOR06+M4CfWJo5JmFoV2vf6OzinFhlcwsPLFUGmJCdt3hcu45A==
+                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEBzDM5ZzFL6THPevBGQLp2oGYuPlN
+                8wIgS2RwhWwem9Zu5pAt1Tye/vcPSCFRUm3XkVG6D1ixarxBbCTxg/c2Zg==
                 -----END PUBLIC KEY-----
             - path: /etc/pki/containers/rekor.pub
               mode: 0644
               content: |
                 -----BEGIN PUBLIC KEY-----
-                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEpWlAeU1HRJIh3nRDD9chGR50khDP
-                kSs7UmieeG3iE9zHnCcU0rAUx8QsH2kDVpdFMr8IELMeRzPiqAv1E9qaAg==
+                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEhpJW95T/igzFRfnFWXNq8WvRtPQN
+                oZDRbkgmJpRJYZIlVc2Sn+2PtqT2hju2NJd/j9Jyw5Bylr9kNU7C+tSyZA==
                 -----END PUBLIC KEY-----
         - name: act-inference-env
           inline:
@@ -171,7 +190,7 @@ spec:
               mode: 0644
               content: |
                 # Rendered per device from labels by RHEM (Fleet act-inference); read by EnvironmentFile= in the quadlet.
-                ZENOH_ROUTER={{ .metadata.labels.zenoh_router }}:{{ .metadata.labels.zenoh_port }}
+                ZENOH_ROUTER={{ getOrDefault .metadata.labels "zenoh_router" "127.0.0.1" }}:{{ getOrDefault .metadata.labels "zenoh_port" "7447" }}
                 POLICY_DEVICE={{ getOrDefault .metadata.labels "policy_device" "cpu" }}
                 {{ if eq (getOrDefault .metadata.labels "gpu" "none") "none" }}# CPU device: one torch thread per vCPU (D034); SMT siblings were slower on the host
                 OMP_NUM_THREADS=8
@@ -201,29 +220,38 @@ spec:
               content: |
                 [Volume]
                 Driver=image
-                Image=quay.io/jary/soarm-act-modelcar@sha256:bdb513ca4db028fedfa8a30ffefbfafbfb5cd35fb0ce22e2226eb30781e15d6b
+                # the teacher's modelcar, signed by this hub (Rekor 8); a promotion PR replaces this digest and MODEL_VERSION above
+                Image=quay.io/jary/soarm-act-modelcar@sha256:d741db2bd5f7e2bb1762594ffb49a98da67f4e6096d4359839dc3f2faab3eab8
             - path: act-inference.container
               content: |
                 [Unit]
                 Description=ACT policy inference (RHEM-managed, Fleet act-inference)
+                # Where the sim is a unit on the same machine, a sim restart restarts the policy too (its action
+                # server does not survive one). Inert on a device that has no such unit.
+                After=so-arm-sim.service
+                PartOf=so-arm-sim.service
 
                 [Container]
-                # Runtime image: built + signed by Tekton (Phase 4.5 F), referenced by the multi-arch manifest-list digest (docs/eval-records/runtime-image-tekton.md: tag act-inference-aa7392f, Rekor 11/12/13).
-                Image=quay.io/jary/soarm-flywheel@sha256:02e66d895ed4ba328aa43263561027c18406d774887f465ab7acbd81e4c42d08
+                # Runtime image: built natively on the arm64 hub and signed by Tekton, referenced by the manifest-list digest (D149: tag act-inference-c2560cf, linux/arm64 only, this hub's Rekor 4/5; served 4/5 on the host's GPU before it was pinned).
+                Image=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837
                 ContainerName=act-inference
                 Network=host
                 EnvironmentFile=/etc/act-inference/env
                 Volume=models.volume:/modelcar:ro
-                {{ if eq (getOrDefault .metadata.labels "gpu" "none") "nvidia" }}AddDevice=nvidia.com/gpu=all
-                SecurityLabelDisable=true
+                {{ if eq (getOrDefault .metadata.labels "gpu" "none") "nvidia" }}AddDevice=nvidia.com/gpu={{ getOrDefault .metadata.labels "gpu_device" "all" }}
                 {{ end }}HealthCmd=/healthcheck.sh
                 HealthStartPeriod=240s
                 HealthInterval=30s
                 HealthTimeout=10s
                 HealthRetries=3
                 HealthOnFailure=kill
+                # a ROS 2 tree ignores SIGTERM: without this every stop is a timeout and a SIGKILL
+                StopSignal=SIGINT
+                StopTimeout=15
 
                 [Service]
+                # exit 130 after the SIGINT above is a clean stop, not a failure
+                SuccessExitStatus=130 143
                 Restart=always
                 RestartSec=10
                 TimeoutStartSec=300

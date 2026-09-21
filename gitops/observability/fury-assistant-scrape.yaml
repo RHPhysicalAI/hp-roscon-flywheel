@@ -1,0 +1,37 @@
+# This project was developed with assistance from AI tools.
+#
+# The coding assistant's own numbers (the tenant on MIG slice 0:0): vLLM serves Prometheus text at /metrics on the
+# port its API listens on, 10.20.0.1:8000 (tools/host/fury/flywheel/llm-assistant.container). Configuration only:
+# nothing new runs on the host and no new port is opened - 8000/tcp is already open for the guests, because
+# developer workspaces use the API (tools/host/fury/64-assistant-expose.sh). Same path as the GPU scrape: out of
+# the pod network through the node. A static target on the host's address, as for the other two host targets; the
+# Service assistant.flywheel.svc is for the API's clients.
+#
+# The metric names are those of the vLLM on the host, read from its /metrics (0.24.0). With the host in flywheel
+# mode the assistant is down and the target is down with it: connection refused, up 0.
+#
+# monitoring.rhobs, not monitoring.coreos.com: only those are read by a MonitoringStack.
+apiVersion: monitoring.rhobs/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: fury-assistant
+  namespace: observability
+  labels:
+    # the MonitoringStack's resourceSelector (monitoring-stack.yaml); without it this is ignored silently
+    app.kubernetes.io/part-of: edge-metrics
+spec:
+  jobName: fury-assistant
+  scheme: HTTP
+  metricsPath: /metrics
+  scrapeInterval: 10s
+  scrapeTimeout: 5s
+  staticConfigs:
+    - targets:
+        - 10.20.0.1:8000
+  # vLLM serves about 470 series, most of them histogram buckets, and this Prometheus keeps 7 days on the node's
+  # disk with no size limit (monitoring-stack.yaml): keep what the dashboard draws, and the prompt tokens beside
+  # the generated ones. `up` is not touched by this: it is not a scraped series.
+  metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: 'vllm:(generation_tokens_total|prompt_tokens_total|num_requests_running|num_requests_waiting)'
+      action: keep

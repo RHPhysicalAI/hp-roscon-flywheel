@@ -1,0 +1,36 @@
+# This project was developed with assistance from AI tools.
+#
+# The first Prometheus in this namespace: a Cluster Observability Operator MonitoringStack, separate from
+# the platform's own monitoring. It exists for targets that are not pods - today the GPU host's DCGM
+# exporter (fury-gpu-scrape.yaml) - and picks up anything in this namespace that carries its label.
+#
+# What the operator makes of it (read from its controller, v1.5.1): a Prometheus named like this stack,
+# Service edge-metrics-prometheus on 9090 (prometheus-datasource.yaml points Perses at it), and a
+# ClusterRole that lets the pod use the nonroot SCCs - so the fixed uid and fsGroup 65534 it runs with is
+# admitted here, unlike the Perses pod, which had to drop its fsGroup (perses-instance.yaml).
+apiVersion: monitoring.rhobs/v1alpha1
+kind: MonitoringStack
+metadata:
+  name: edge-metrics
+  namespace: observability
+spec:
+  logLevel: info
+  # no PersistentVolumeClaim: history lives in an emptyDir and goes with the pod. This feeds a live
+  # dashboard, it is not a system of record. Those 7 days sit on the node's disk, and this API has no
+  # size limit for them: the label selector below must stay narrow.
+  retention: 7d
+  # ServiceMonitors, PodMonitors, Probes, ScrapeConfigs and rules are all selected by this one label.
+  # namespaceSelector is left out on purpose: unset means this namespace only, and should mean a
+  # RoleBinding instead of a ClusterRoleBinding. Check once after sync (the ClusterRole for the SCCs is
+  # expected, a ClusterRoleBinding is what to look for):
+  #   oc get clusterrolebinding,clusterrole | grep edge-metrics
+  resourceSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: edge-metrics
+  # nothing routes alerts anywhere yet
+  alertmanagerConfig:
+    disabled: true
+  prometheusConfig:
+    # The default is 2, and the operator gives the pods a required anti-affinity on the hostname: on a
+    # single node the second replica would stay Pending for ever.
+    replicas: 1

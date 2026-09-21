@@ -186,6 +186,9 @@ class EpisodeEmitter(Node):
         self._poll_ok = False  # any successful ground-truth read this episode
         self._coord_peak_cubes = None  # set by the coordinator before 'end'
         self._dataset_path = None  # set by the coordinator before 'end'
+        # Commands seen between episodes (sim reset, the previous rollout's tail) must not arm the idle
+        # timeout: a stale stamp ended the new episode within a second, and the real one was then lost.
+        self._last_command_time = None
         self._rollout_active = True
         self.get_logger().info(f"Episode started: {self._episode_id}")
 

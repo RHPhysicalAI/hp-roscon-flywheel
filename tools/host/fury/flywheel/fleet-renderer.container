@@ -1,0 +1,91 @@
+# This project was developed with assistance from AI tools.
+#
+# Act 2's rendering tenant (D163, D164): MuJoCo-Warp ray-tracing both cameras of every robot of the fleet in one
+# batch, on MIG slice 0:3 (1g.31gb). Robot states come in over UDP from the robots' worlds on the hub, pictures go
+# out over HTTP - the fleet wall's mosaic and each robot's two cameras (docs/internal/FLEET-RENDER-CONTRACT.md).
+# A host service that fury-mode owns, like the coding assistant and the training tenant: fury-mode tenants starts
+# it once the slices exist, and any mode switch stops it first (MIG only changes while nothing holds the GPU).
+#
+# It listens on the host's hub-side address only (10.20.0.1, the libvirt bridge), never on the uplink, which is
+# not ours, and there is no authentication: it is read-only pictures and a status page. Who reaches the two ports:
+# the guests (the hub's pods leave as the node) once 73-fleet-renderer-install.sh has listed 9701/udp and 9702/tcp
+# in the libvirt-to-host policy. Not the lab uplink. Peers on the operator's tailnet reach that address with or
+# without the entry, because this host routes 10.20.0.0/24 for the tailnet - accepted: it is the admin network.
+# From a laptop without the tailnet:  ssh -N -L 9702:10.20.0.1:9702 <user>@<host>   then http://localhost:9702/
+#
+# The image is docker/Dockerfile.fleet-renderer. Until the hub's pipeline builds it, it is built on this host
+# against the local sim image (73-fleet-renderer-install.sh build); then this line becomes a digest reference.
+[Unit]
+Description=Fleet rendering tenant (MuJoCo-Warp on MIG slice 0:3)
+After=mig-config.service nvidia-cdi-refresh.service
+# fury-mode clears the count before it starts the unit, so a switch always gets a fresh try
+StartLimitIntervalSec=1h
+StartLimitBurst=10
+
+[Container]
+ContainerName=fleet-renderer
+Image=localhost/fleet-renderer:arm64
+Pull=never
+# Host networking with explicit addresses, not published ports. A published port is a DNAT rule, and firewalld
+# accepts DNATed traffic before it looks at zones or policies: the opening in libvirt-to-host would decide nothing.
+Network=host
+AddDevice=nvidia.com/gpu=0:3
+Environment=RENDER_STATE_ADDR=10.20.0.1:9701
+Environment=RENDER_HTTP_ADDR=10.20.0.1:9702
+# the slice is the only CUDA device the container sees
+Environment=RENDER_DEVICE=cuda:0
+# The contract's defaults, from D163's measurement (about 228 camera pairs a second at 640x480 with shadows,
+# compute bound at about 4.3 ms a world whatever the batch): 480 px at 15 frames a second serves about twenty
+# robots. Only robots that are sending are rendered, so RENDER_MAX_ROBOTS costs memory, not time.
+Environment=RENDER_SIZE=480
+Environment=RENDER_FPS=15
+Environment=RENDER_SHADOWS=true
+Environment=RENDER_MAX_ROBOTS=24
+# compiled kernels: minutes of work at the first start on a slice, kept across containers
+Volume=fleet-renderer-cache.volume:/var/cache/warp
+# The image runs as uid 1001. It binds two unprivileged ports and opens device nodes that are world-accessible:
+# no capability is needed for either.
+DropCapability=all
+NoNewPrivileges=true
+# no curl in the image. The first start on a slice compiles every kernel before the first frame.
+HealthCmd=["python3","-c","import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://10.20.0.1:9702/healthz', timeout=5).status == 200 else 1)"]
+HealthStartPeriod=15m
+HealthInterval=30s
+HealthTimeout=10s
+HealthRetries=3
+HealthOnFailure=kill
+StopTimeout=20
+
+[Service]
+# Not ExecStartPre=: a failed pre-start under Restart=always loops for ever. A condition that exits non-zero
+# skips the start - the unit ends inactive, not failed, and is not restarted. So a boot in flywheel mode, or a
+# start by mistake while MIG is off, does nothing at all.
+ExecCondition=/bin/sh -c 'nvidia-ctk cdi list 2>/dev/null | tr -d "[:blank:]" | grep -qxF "nvidia.com/gpu=0:3" || { echo "CDI device nvidia.com/gpu=0:3 is not there (MIG off): not starting"; exit 1; }'
+Restart=always
+# also the wait for 10.20.0.1 at boot: the service ends with a line naming the address until libvirt has it up
+RestartSec=15
+TimeoutStartSec=300
+TimeoutStopSec=60
+# So that it cannot starve the robot fleet or the hub. Quadlet runs the container inside this unit's cgroup
+# (--cgroups=split; the installer checks the generated command line for it), so these bind every process in it.
+#   CPU: what costs is making JPEGs, and that is bounded by design, not by load - a picture is encoded only while
+#     somebody watches it, once per frame however many watch, one encode in flight per stream. Measured on this
+#     host's CPU, in this image (rootless, 2026-09-20): the wall's mosaic of 20 robots - 20 tiles scaled to 384 px,
+#     sRGB, one 1920x1536 JPEG of about 170 kB - takes 56 ms, so 0.84 of a core at 15 frames a second and never
+#     more than one core; a robot's own 480 px stream 2.9 ms a frame, 0.04 of a core while open, 1.8 cores with all
+#     forty open. Beside that: the render thread (a core at most, mostly waiting for the slice) and the listener
+#     (720 datagrams a second, a few percent). Four cores' worth of 72 covers all of it at once; the quota is what
+#     keeps a crowd of viewers from the fleet's cores, and then streams lose frames, not the render loop its tick.
+#   Memory: 0.6 GiB measured on the CPU device with 6 robots; expected under 3 GiB on the slice - the CUDA context
+#     and Warp's library, 44 MiB of pixels per batch at 24 robots with a few batches alive, 2 MiB per stale
+#     robot. The slice's own memory is almost untouched (D163: 477 MiB at 32 worlds of 640x480). Not measured on
+#     the slice yet: after a run,  systemctl show -p MemoryPeak fleet-renderer   - and tighten.
+CPUQuota=400%
+CPUWeight=50
+MemoryHigh=6G
+MemoryMax=8G
+MemorySwapMax=0
+
+# a boot in tenants mode brings it back by itself; in flywheel mode the condition above skips it
+[Install]
+WantedBy=multi-user.target

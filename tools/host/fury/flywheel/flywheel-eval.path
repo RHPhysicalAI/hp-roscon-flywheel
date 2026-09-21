@@ -1,0 +1,18 @@
+# This project was developed with assistance from AI tools.
+#
+# Starts the eval rig when the training runner leaves a request. The glob, not DirectoryNotEmpty=: answered
+# requests stay in the same directory as <mv>.json.taken and <mv>.done, so the directory is never empty again
+# after the first one, and systemd looks at the condition again every time the service ends - it would start
+# the service in a circle until the start limit killed this unit. Only a pending request matches *.json, and
+# serve-one renames whatever matches before it does anything else. A glob does not see dot files: the writer
+# can build a request under a dot name and rename it into place.
+[Unit]
+Description=Paired-evaluation requests for the eval rig (51-eval-rig.md)
+
+[Path]
+PathExistsGlob=/data/flywheel/eval/requests/*.json
+MakeDirectory=yes
+DirectoryMode=0755
+
+[Install]
+WantedBy=paths.target

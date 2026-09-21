@@ -1,0 +1,88 @@
+# This project was developed with assistance from AI tools.
+#
+# The operating system of a fleet VM - a robot's computer - as a RHEL image mode (bootc) image: D163 addendum,
+# docs/internal/FLEET-VMS.md. Built and turned into a qcow2 by ../80-fleet-golden.sh. What is in it: the OS, the
+# flightctl agent, podman, cloud-init, a firewall - and no application image: every robot pulls the policy's two
+# images itself, under the Fleet's policy.json, which is what "signature verification on every device" means.
+#
+# Follows flightctl v1.3.0 docs/user/building/building-images.md for a virtual device: agent from the project's
+# rpm repository, cloud-init added, LATE binding - no /etc/flightctl/config.yaml in here. The enrolment config
+# reaches each clone through its cloud-init seed (../81-fleet-scale.sh), so this image and the qcow2 made from it
+# hold no secret. Nothing else is per-device either: image mode makes machine-id and ssh host keys on first boot.
+# Differences from the doc's example, all deliberate:
+#   - the agent is pinned and its repository left disabled, as on the host (../40-device-provision.sh:132-137)
+#   - the repository definition and its signing key are vendored (flightctl.repo, RPM-GPG-KEY-flightctl) and the
+#     key is pinned: the doc fetches both at build time and trusts what it is served
+#   - no weak dependencies: greenboot would reboot and roll back a device on a failed health check, mid-demo
+#   - no open-vm-tools (that is for vSphere); qemu-guest-agent instead
+#
+# Entitlement: no activation key. A rootful build on the registered host sees RHEL's repositories through the
+# host's subscription (/usr/share/containers/mounts.conf -> /run/secrets); the doc asks for exactly that, "a
+# registered RHEL build host". Clones are never registered.
+ARG BASE=registry.redhat.io/rhel10/rhel-bootc:10.2
+FROM ${BASE}
+ARG AGENT_VER=1.3.0-1.el10
+
+# The agent package owns every device's identity, so what signs it is pinned, three ways: the key file's bytes
+# (sha256), the key rpm then holds (gpg-pubkey-<key id low 32 bits>-<creation time>), and the key id on the
+# installed package. The key: fingerprint AB7A FBCB AAB5 B4EA 1554 2BBA 2AC4 5CAD 374E BF59, RSA 2048, created
+# 2024-02-07, "@redhat-et_flightctl" - Fedora COPR's key for the project's builds. Obtained 2026-09-20 over HTTPS
+# from the URL the project's own repo file names (download.copr.fedorainfracloud.org/results/@redhat-et/flightctl/
+# pubkey.gpg), and cross-checked: the flightctl-agent-1.3.0-1.el10 already installed on the Fury host carries a
+# signature by key id 2ac45cad374ebf59, the same key. The repository IS signed upstream (gpgcheck=1 as served).
+COPY flightctl.repo /etc/yum.repos.d/flightctl.repo
+COPY RPM-GPG-KEY-flightctl /etc/pki/rpm-gpg/RPM-GPG-KEY-flightctl
+RUN echo "b0ba76f5f0d9b93b5d2e63255feab1556fd735d0c25fdc651aba2bd621717177  /etc/pki/rpm-gpg/RPM-GPG-KEY-flightctl" | sha256sum -c - && \
+    rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-flightctl && \
+    rpm -q gpg-pubkey-374ebf59-65c39893 && \
+    dnf -y install --enablerepo=flightctl --setopt=flightctl.gpgcheck=1 --setopt=install_weak_deps=False \
+        "flightctl-agent-${AGENT_VER}" podman skopeo cloud-init qemu-guest-agent firewalld && \
+    dnf -y clean all && \
+    test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' flightctl-agent)" = "${AGENT_VER}" && \
+    { rpm -q --qf '%{RSAHEADER:pgpsig}\n' flightctl-agent flightctl-selinux | tee /dev/stderr | grep -ci 'key id 2ac45cad374ebf59' | grep -qx 2 || \
+      { echo "flightctl-agent and flightctl-selinux are not BOTH signed by the pinned key (lines above) - stop and find out why" >&2; exit 1; }; }
+
+# cloud-init the way the image-mode guide and the flightctl doc enable it; the agent on, RHEL's own automatic
+# image updates off (RHEM is what updates these devices; the agent's unit masks the timer too, this makes it plain).
+RUN mkdir -p /usr/lib/systemd/system/default.target.wants && \
+    ln -s ../cloud-init.target /usr/lib/systemd/system/default.target.wants/cloud-init.target && \
+    systemctl enable flightctl-agent.service qemu-guest-agent.service firewalld.service && \
+    systemctl mask bootc-fetch-apply-updates.timer
+
+# The robot's Zenoh router (the Fleet's zenoh-router.container) listens on every address, with no authentication
+# and no TLS: whoever reaches 7447 can publish into that robot's graph. Only the hub may - its node address is what
+# a world pod's traffic arrives from (stage C). Not 10.20.0.0/24: the other robots, the host, and tailnet peers
+# (the host routes for them and, by tailscale's default, they arrive as the host's address) have no business
+# there. The policy reaches its router over loopback, which firewalld never filters. In the image and not in the
+# Fleet: a zone file delivered later would need firewalld reloaded, and this does not vary per device.
+# UNVERIFIED on a bootc guest; if ssh or 7447 misbehave on VM 01:  sudo firewall-cmd --list-all
+RUN printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' '<zone>' '  <short>Public</short>' \
+        '  <service name="ssh"/>' \
+        '  <rule family="ipv4"><source address="10.20.0.10"/><port port="7447" protocol="tcp"/><accept/></rule>' \
+        '</zone>' > /etc/firewalld/zones/public.xml
+
+# The agent's unit is only After=network.target. On a clone's first boot its config is written by cloud-init, so
+# without this it starts too early, fails on the missing file and retries until it appears. On later boots
+# cloud-init is switched off and this ordering is inert.
+# After cloud-init.service - the network stage, where write_files runs - and NOT cloud-final.service: that one is
+# itself After=multi-user.target, which waits for the agent, and systemd breaks the cycle by never starting the agent.
+RUN mkdir -p /usr/lib/systemd/system/flightctl-agent.service.d /etc/flightctl/conf.d && \
+    printf '[Unit]\nAfter=cloud-init.service\n' > /usr/lib/systemd/system/flightctl-agent.service.d/10-after-cloud-init.conf && \
+    printf 'default-labels:\n  enrol: fleet-vm\n' > /etc/flightctl/conf.d/fleet.yaml
+
+# NOT in here, and it was tried (2026-09-20): the policy's two images in an additional read-only image store under
+# /usr/lib/containers/storage, so that no robot downloads 4 GB. It does not work with this runtime image: one of its
+# layers deletes files of a lower one (pip replacing apt's packages), which an overlay store records as whiteouts -
+# 0:0 character devices - and a container build cannot carry those in a COPY or a cp (80-fleet-golden.sh's guard
+# caught it before anything was built). It would also have meant that a robot runs those two images without
+# checking their signatures itself. The answer for local speed is a mirror on the hub (FURY-PLAN Phase 8b), where
+# devices still pull - and so still verify.
+
+# Every clone is a copy of what this build leaves behind, so anything per-device in here would be shared by the
+# whole fleet: identical ssh host keys, one machine-id, one agent identity, one enrolment config. Fail the build
+# rather than find out on the bridge. (machine-id may be absent, empty, or systemd's first-boot marker.)
+RUN { test ! -s /etc/machine-id || grep -qx uninitialized /etc/machine-id; } && \
+    ! ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1 && \
+    test ! -e /var/lib/flightctl/certs/agent.key && test ! -e /etc/flightctl/certs/agent.key && \
+    test ! -e /etc/flightctl/config.yaml && \
+    bootc container lint

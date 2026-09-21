@@ -1,0 +1,43 @@
+# This project was developed with assistance from AI tools.
+#
+# The recording loop. Not part of the target: collecting episodes is something an operator starts
+# (systemctl start act-coordinator) and the disk guard stops. It cannot run without the guard, and it
+# will not start with less than the floor free - each successful episode keeps about 1.3 GB.
+[Unit]
+Description=Episode coordinator and recorder (the collection loop)
+# The policy is the hand-installed unit before enrolment and the Fleet's afterwards, which the agent names
+# act-inference-<id>-...; Wants= of a unit that does not exist is ignored. Deliberately not Requires= on the
+# agent's unit: a Fleet update removes and re-adds it, which would stop the recorder at every promotion.
+Wants=act-inference.service
+After=act-inference.service act-inference-128875-flightctl-quadlet-app.target disk-guard.service
+BindsTo=disk-guard.service
+
+[Container]
+ContainerName=act-coordinator
+Image=quay.io/jary/soarm-flywheel@sha256:5eba6ca4ee8acf7be87ec8da852d314d6dd16d76cfbce09a1581dbf8c5c94837
+Network=host
+Environment=ROLE=coordinator ZENOH_ROUTER=127.0.0.1:7447 MODEL_VERSION=act-v2-ft160
+# The collection scene the training data and the paired evaluation use: the medium cube placed at random
+# within 3 cm, any yaw, 60 s episodes. Without these the image's defaults apply - fixed cubes, 25 s - and a
+# model trained on such episodes fails the gate (the first unattended run here did exactly that).
+# No RESET_ARM here: it breaks the loop (see the coordinator's failure recovery, which homes the arm itself).
+Environment=EPISODE_LEN=60 RANDOMIZE_CUBES=true RANDOMIZE_ONLY=cube_medium RANDOM_RADIUS=0.03 RANDOM_YAW_DEG=180
+Volume=/data/flywheel:/data:z
+Volume=/data/flywheel/bags:/data/bags:z
+HealthCmd=none
+StopSignal=SIGINT
+StopTimeout=20
+
+[Service]
+# a ROS 2 tree exits 130 on the SIGINT above; that is a clean stop, not a failure
+SuccessExitStatus=130 143
+# The collection loop belongs to flywheel mode. In tenants mode robot zero's world (robot-zero-sim, D164) runs a
+# Zenoh router on the same port, with the policy and ray-traced camera topics behind it: started there, this unit
+# would record bags of the rendering tenant's pixels into the flywheel's bag directory and fight robot zero's own
+# episode loop for the arm. A condition, not a pre-start: it skips the start - inactive, not failed, not retried -
+# and it is looked at before the pre-start below creates anything.
+ExecCondition=/bin/sh -c '[ "$(nvidia-smi -i 0 --query-gpu=mig.mode.current --format=csv,noheader)" = Disabled ] || { echo "MIG is on (tenants mode): the collection loop belongs to flywheel mode, not starting. Robot zero has its own loop, which records nothing: robot-zero-episodes.service"; exit 1; }'
+ExecStartPre=/bin/sh -c 'mkdir -p /data/flywheel/bags; [ "$(df -BG --output=avail /data/flywheel/bags | tail -1 | tr -dc 0-9)" -ge 1500 ]'
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=300

@@ -3,7 +3,7 @@
 # Bootstrap once: oc apply -f argocd/observability-app.yaml
 # Committed from the live Application (Phase 4.5 F, D026 row 5); prune: true so the cluster
 # equals gitops/observability. The live app tracked main; the directory is
-# identical on both branches and every other app follows desktop-gpu-split, so this one does too.
+# identical on both branches and every other app follows the same branch, so this one does too.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -19,7 +19,7 @@ spec:
   source:
     path: gitops/observability
     repoURL: https://github.com/RHPhysicalAI/hp-roscon-flywheel.git
-    targetRevision: desktop-gpu-split
+    targetRevision: fury
   syncPolicy:
     automated:
       prune: true

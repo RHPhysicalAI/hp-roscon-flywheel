@@ -101,9 +101,26 @@ metadata:
 spec:
   to:
     kind: Service
-    name: so-arm-sim
+    name: sim-cameras-host
   port:
     targetPort: camera
   tls:
     termination: edge
     insecureEdgeTerminationPolicy: Redirect
+---
+# On this hub the sim is a unit on the GPU host, not the Deployment above (replicas 0), so the camera bridge is
+# outside the cluster. The dashboard is served over https, and a browser will not load an http stream into an
+# https page - so the streams go through the router like everything else: this Service has no selector, the
+# EndpointSlice tools/hub/manual/sim-cameras-endpointslice.yaml names the host's bridge (applied by hand: Argo CD
+# leaves EndpointSlices out of what it manages, so one in this folder is silently ignored), and the Route above points here. The host lets the hub reach that
+# one port and nothing else (tools/host/fury/15-camera-port.sh).
+apiVersion: v1
+kind: Service
+metadata:
+  name: sim-cameras-host
+  namespace: flywheel
+spec:
+  ports:
+    - name: camera
+      port: 8081
+      targetPort: 8081

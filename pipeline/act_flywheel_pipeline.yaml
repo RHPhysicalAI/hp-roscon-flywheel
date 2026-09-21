@@ -2,6 +2,7 @@
 # Name: act-flywheel-promotion
 # Description: assemble -> train -> eval gate -> package -> sign -> Fleet promotion PR (D022, D025)
 # Inputs:
+#    also_fleet_files: str [Default: 'gitops/rhem/fleet-robots.yaml']
 #    candidate: str
 #    catalog_item_file: str [Default: 'gitops/rhem-catalog/catalogitem-soarm-act.yaml']
 #    collector: str [Default: 'upstream-act-teacher']
@@ -17,7 +18,7 @@
 #    fleet_file: str [Default: 'gitops/rhem/fleet-act-inference.yaml']
 #    fleet_ui_url: str [Default: 'https://ui.flightctl.apps.sno-flywheel.local/devicemanagement/fleets/act-inference']
 #    github_repo: str [Default: 'RHPhysicalAI/hp-roscon-flywheel']
-#    gitops_branch: str [Default: 'desktop-gpu-split']
+#    gitops_branch: str [Default: 'fury']
 #    incumbent: str [Default: 'upstream-act-teacher']
 #    incumbent_checkpoint: str [Default: 'hf']
 #    kafka_bootstrap: str [Default: 'edge-kafka.flywheel.svc:9092']
@@ -47,6 +48,10 @@ components:
     executorLabel: exec-open-promotion-pr
     inputDefinitions:
       parameters:
+        also_fleet_files:
+          defaultValue: gitops/rhem/fleet-robots.yaml
+          isOptional: true
+          parameterType: STRING
         candidate:
           parameterType: STRING
         catalog_item_file:
@@ -94,6 +99,10 @@ components:
         platform:
           parameterType: LIST
         registry_repo:
+          parameterType: STRING
+        run_id:
+          defaultValue: ''
+          isOptional: true
           parameterType: STRING
         s3_endpoint:
           parameterType: STRING
@@ -275,60 +284,73 @@ deploymentSpec:
           \ str, report_json: str, github_repo: str,\n                      gitops_branch:\
           \ str, fleet_file: str, consumer_file: str, fleet_ui_url: str, run_id: str,\n\
           \                      catalog_item_file: str = \"gitops/rhem-catalog/catalogitem-soarm-act.yaml\"\
-          ) -> str:\n    \"\"\"ONE commit (thor-testing 5e3e87a: a partial flip is\
-          \ an outage) editing the RHEM Fleet - modelcar\n    digest + MODEL_VERSION\
-          \ - and the trigger's lineage in manifest-consumer, then a PR whose body\
-          \ carries\n    the eval report, the Fleet URL and the rollback (D025). Human\
-          \ merge is the last gate.\"\"\"\n    import json, re\n    from datetime\
-          \ import datetime, timezone\n    from github import Github, GithubException,\
-          \ InputGitTreeElement\n    tok = open(\"/etc/github/token\").read().strip()\n\
-          \    repo = Github(tok).get_repo(github_repo)\n    base_ref = repo.get_git_ref(f\"\
-          heads/{gitops_branch}\"); base = repo.get_git_commit(base_ref.object.sha)\n\
+          ,\n                      also_fleet_files: str = \"gitops/rhem/fleet-robots.yaml\"\
+          ) -> str:\n    \"\"\"ONE commit (a partial flip is an outage) editing every\
+          \ Fleet file and the trigger's lineage, then the PR a human merges (D025,\
+          \ D166).\"\"\"\n    import json, re\n    from datetime import datetime,\
+          \ timezone\n    from github import Github, GithubException, InputGitTreeElement\n\
+          \    tok = open(\"/etc/github/token\").read().strip()\n    repo = Github(tok).get_repo(github_repo)\n\
+          \    base_ref = repo.get_git_ref(f\"heads/{gitops_branch}\"); base = repo.get_git_commit(base_ref.object.sha)\n\
           \    def get(p): return repo.get_contents(p, ref=gitops_branch).decoded_content.decode()\n\
-          \    digest = image_ref.split(\"@\", 1)[1]\n    # Fleet: the two-regex edit.\
-          \ Both must match exactly once or the promotion is not attempted.\n    fleet\
-          \ = get(fleet_file)\n    old_mv = re.search(r\"^\\s+MODEL_VERSION:\\s*(\\\
-          S+)\", fleet, re.M).group(1)\n    fleet, n_img = re.subn(r\"(soarm-act-modelcar)@sha256:[0-9a-f]{64}\"\
-          , r\"\\1@\" + digest, fleet, count=1)\n    fleet, n_mv = re.subn(r\"^(\\\
-          s+MODEL_VERSION:\\s*)\\S+\", lambda m: m.group(1) + candidate, fleet, count=1,\
-          \ flags=re.M)\n    # Trigger: the next round counts and fine-tunes from\
-          \ the new lineage (same commit, D025).\n    consumer = get(consumer_file)\n\
-          \    n_c = 0\n    for key, val in ((\"INCUMBENT\", candidate), (\"COLLECTOR\"\
-          , candidate), (\"INCUMBENT_CHECKPOINT\", checkpoint_uri)):\n        consumer,\
-          \ n = re.subn(r\"(\\{name: \" + key + r\", value: \\\")[^\\\"]*(\\\")\"\
-          , lambda m: m.group(1) + val + m.group(2), consumer, count=1)\n        n_c\
-          \ += n\n    if (n_img, n_mv, n_c) != (1, 1, 3):\n        print(f\"promotion\
-          \ edit did not match exactly: image={n_img} model_version={n_mv} consumer={n_c}\"\
-          ); raise SystemExit(1)\n    rep = json.loads(report_json)\n    elems = [InputGitTreeElement(fleet_file,\
-          \ \"100644\", \"blob\", content=fleet),\n             InputGitTreeElement(consumer_file,\
-          \ \"100644\", \"blob\", content=consumer)]\n\n    # ---- Catalog seam (D027)\
-          \ BEGIN -- removable. Delete this fenced block, the `catalog_item_file`\
-          \ param, the\n    # PyYAML pin and the `body += catalog_note` line when\
-          \ RHEM's registry->catalog bridge lands. Nothing else\n    # reads its output:\
-          \ the Fleet pins the digest (D038); the CatalogItem is the version graph\
-          \ beside it.\n    def append_catalog_version(item_yaml: str, version: str,\
-          \ digest: str, replaces: str) -> str:\n        \"\"\"Append `version` (a\
-          \ candidate name) to the CatalogItem's `versions:` list, or refresh its\
-          \ reference if\n        already present. Catalog API v1alpha1 requires strict\
-          \ semver names, so `act-v<N>-<suffix>` is recorded as\n        `<N>.0.0-<suffix>`\
-          \ with the candidate name in the version's readme; `replaces` is set only\
-          \ when the\n        previous candidate is already a node. Everything before\
-          \ `versions:` is kept byte-for-byte.\"\"\"\n        import yaml\n      \
-          \  def semver(name):\n            m = re.fullmatch(r\"act-v(\\d+)-([0-9A-Za-z.-]+)\"\
-          , name)\n            return f\"{m.group(1)}.0.0-{m.group(2)}\" if m else\
-          \ \"0.0.0-\" + re.sub(r\"[^0-9A-Za-z.-]\", \"-\", name)\n        head, sep,\
-          \ _ = item_yaml.partition(\"\\n  versions:\")\n        if not sep: raise\
-          \ SystemExit(f\"{catalog_item_file}: no `versions:` key\")\n        doc\
-          \ = yaml.safe_load(item_yaml)\n        uri = doc[\"spec\"][\"artifacts\"\
-          ][0][\"uri\"]\n        versions = list(doc[\"spec\"].get(\"versions\") or\
-          \ [])\n        sv, prev = semver(version), semver(replaces)\n        idx\
-          \ = next((i for i, v in enumerate(versions) if v[\"version\"] == sv), None)\n\
-          \        entry = {\"version\": sv, \"channels\": [\"stable\"], \"references\"\
-          : {\"container\": digest},\n                 \"readme\": f\"candidate {version}\
-          \ -- {uri}@{digest}\"}\n        if prev != sv and any(v[\"version\"] ==\
-          \ prev for v in versions): entry[\"replaces\"] = prev\n        elif idx\
-          \ is not None and versions[idx].get(\"replaces\"): entry[\"replaces\"] =\
-          \ versions[idx][\"replaces\"]\n        if idx is None: versions.append(entry)\n\
+          \    digest = image_ref.split(\"@\", 1)[1]\n    # Fleets: the same two-regex\
+          \ edit in every file. A placeholder cannot carry a digest (it reads device\
+          \ labels\n    # only), so each Fleet file pins the model itself; one merge\
+          \ has to move them together or not at all.\n    img_re, mv_re = r\"(soarm-act-modelcar)@(sha256:[0-9a-f]{64})\"\
+          , r\"^(\\s+MODEL_VERSION:\\s*)(\\S+)\"\n    fleet_files = list(dict.fromkeys([fleet_file]\
+          \ + [f.strip() for f in also_fleet_files.split(\",\") if f.strip()]))\n\
+          \    fleets, names, held = {}, {}, {}\n    for f in fleet_files:\n     \
+          \   text = get(f)\n        imgs, mvs = re.findall(img_re, text), re.findall(mv_re,\
+          \ text, re.M)\n        if (len(imgs), len(mvs)) != (1, 1):\n           \
+          \ print(f\"{f}: the promotion edit must match exactly once each, found image={len(imgs)}\
+          \ model_version={len(mvs)} - nothing was changed\"); raise SystemExit(1)\n\
+          \        held[f] = (imgs[0][1], mvs[0][1])\n        name = re.search(r\"\
+          ^metadata:\\s*\\n\\s+name:\\s*(\\S+)\", text, re.M); names[f] = name.group(1)\
+          \ if name else f\n        text = re.sub(img_re, r\"\\1@\" + digest, text)\n\
+          \        fleets[f] = re.sub(mv_re, lambda m: m.group(1) + candidate, text,\
+          \ flags=re.M)\n    if len(set(held.values())) != 1:\n        print(\"the\
+          \ Fleet files do not pin the same model, so one promotion cannot move them\
+          \ together: \"\n              + \"; \".join(f\"{f} has {d[:19]}... {mv}\"\
+          \ for f, (d, mv) in held.items())\n              + f\" - make them agree\
+          \ on {gitops_branch} ({fleet_file} is the reference), then start the run\
+          \ again. Nothing was changed\"); raise SystemExit(1)\n    old_mv = held[fleet_file][1]\n\
+          \    # Trigger: the next round counts and fine-tunes from the new lineage\
+          \ (same commit, D025).\n    consumer = get(consumer_file)\n    n_c = 0\n\
+          \    for key, val in ((\"INCUMBENT\", candidate), (\"COLLECTOR\", candidate),\
+          \ (\"INCUMBENT_CHECKPOINT\", checkpoint_uri)):\n        consumer, n = re.subn(r\"\
+          (\\{name: \" + key + r\", value: \\\")[^\\\"]*(\\\")\", lambda m: m.group(1)\
+          \ + val + m.group(2), consumer, count=1)\n        n_c += n\n    if n_c !=\
+          \ 3:\n        print(f\"promotion edit did not match exactly: consumer={n_c}\"\
+          ); raise SystemExit(1)\n    rep = json.loads(report_json)\n    elems = [InputGitTreeElement(f,\
+          \ \"100644\", \"blob\", content=text) for f, text in fleets.items()]\n \
+          \   elems.append(InputGitTreeElement(consumer_file, \"100644\", \"blob\"\
+          , content=consumer))\n    fleet_names = \" + \".join(names[f] for f in fleet_files)\n\
+          \n    # ---- Catalog seam (D027) BEGIN -- removable. Delete this fenced\
+          \ block, the `catalog_item_file` param, the\n    # PyYAML pin and the `body\
+          \ += catalog_note` line when RHEM's registry->catalog bridge lands. Nothing\
+          \ else\n    # reads its output: the Fleet pins the digest (D038); the CatalogItem\
+          \ is the version graph beside it.\n    def append_catalog_version(item_yaml:\
+          \ str, version: str, digest: str, replaces: str) -> str:\n        \"\"\"\
+          Append `version` (a candidate name) to the CatalogItem's `versions:` list,\
+          \ or refresh its reference if\n        already present. Catalog API v1alpha1\
+          \ requires strict semver names, so `act-v<N>-<suffix>` is recorded as\n\
+          \        `<N>.0.0-<suffix>` with the candidate name in the version's readme;\
+          \ `replaces` is set only when the\n        previous candidate is already\
+          \ a node. Everything before `versions:` is kept byte-for-byte.\"\"\"\n \
+          \       import yaml\n        def semver(name):\n            m = re.fullmatch(r\"\
+          act-v(\\d+)-([0-9A-Za-z.-]+)\", name)\n            return f\"{m.group(1)}.0.0-{m.group(2)}\"\
+          \ if m else \"0.0.0-\" + re.sub(r\"[^0-9A-Za-z.-]\", \"-\", name)\n    \
+          \    head, sep, _ = item_yaml.partition(\"\\n  versions:\")\n        if\
+          \ not sep: raise SystemExit(f\"{catalog_item_file}: no `versions:` key\"\
+          )\n        doc = yaml.safe_load(item_yaml)\n        uri = doc[\"spec\"][\"\
+          artifacts\"][0][\"uri\"]\n        versions = list(doc[\"spec\"].get(\"versions\"\
+          ) or [])\n        sv, prev = semver(version), semver(replaces)\n       \
+          \ idx = next((i for i, v in enumerate(versions) if v[\"version\"] == sv),\
+          \ None)\n        entry = {\"version\": sv, \"channels\": [\"stable\"], \"\
+          references\": {\"container\": digest},\n                 \"readme\": f\"\
+          candidate {version} -- {uri}@{digest}\"}\n        if prev != sv and any(v[\"\
+          version\"] == prev for v in versions): entry[\"replaces\"] = prev\n    \
+          \    elif idx is not None and versions[idx].get(\"replaces\"): entry[\"\
+          replaces\"] = versions[idx][\"replaces\"]\n        if idx is None: versions.append(entry)\n\
           \        else: versions[idx] = entry\n        out = [head, \"  versions:\"\
           ]\n        for v in versions:\n            out += [f\"    - version: {json.dumps(v['version'])}\"\
           , f\"      channels: [{', '.join(v['channels'])}]\", \"      references:\"\
@@ -347,7 +369,7 @@ deploymentSpec:
           \ != 404: raise\n        print(f\"catalog seam: {catalog_item_file} not\
           \ on {gitops_branch}, skipped (not load-bearing)\")\n    # ---- Catalog\
           \ seam END\n    tree = repo.create_git_tree(elems, base.tree)\n    msg =\
-          \ (f\"Promote {candidate}: Fleet act-inference <- {digest[:19]}..., MODEL_VERSION\
+          \ (f\"Promote {candidate}: Fleet {fleet_names} <- {digest[:19]}..., MODEL_VERSION\
           \ {old_mv} -> {candidate}; manifest-consumer lineage -> {candidate}\\n\\\
           n\"\n           f\"Eval gate: {rep['incumbent']} {rep['incumbent_success_rate']:.2f}\
           \ -> {candidate} {rep['candidate_success_rate']:.2f}, fixed {rep['fixed']}\
@@ -359,33 +381,37 @@ deploymentSpec:
           \    try:\n        repo.create_git_ref(f\"refs/heads/{head}\", commit.sha)\n\
           \    except GithubException as e:\n        if e.status != 422: raise\n \
           \       repo.get_git_ref(f\"heads/{head}\").edit(commit.sha, force=True);\
-          \ print(\"ref existed, moved:\", head)\n    body = (f\"## Promotion: `{candidate}`\
-          \ replaces `{rep['incumbent']}`\\n\\n\"\n            f\"| | success | mean\
-          \ cubes |\\n|---|---|---|\\n| incumbent `{rep['incumbent']}` | {rep['incumbent_success_rate']:.0%}\
-          \ | {rep['incumbent_mean_cubes']:.2f} |\\n\"\n            f\"| candidate\
-          \ `{candidate}` | {rep['candidate_success_rate']:.0%} | {rep['candidate_mean_cubes']:.2f}\
-          \ |\\n\\n\"\n            f\"Paired on {rep['n_paired']} identical seeded\
-          \ scenes: **{rep['fixed']} fixed / {rep['broken']} broken, net {rep['net']:+d},\
-          \ sign-test p = {rep['sign_test_p']}** - gate rule: {rep['rule']} -> **{rep['verdict']}**.\\\
-          n\\n\"\n            f\"Signed modelcar: `{image_ref}`\\n\\n\"\n        \
-          \    f\"Merging edits Fleet `act-inference` in one commit (`{fleet_file}`:\
-          \ modelcar digest + `MODEL_VERSION` `{old_mv}` -> `{candidate}`) \"\n  \
-          \          f\"and points the trigger at the new lineage (`{consumer_file}`:\
+          \ print(\"ref existed, moved:\", head)\n    fleets_md = \" and \".join(f\"\
+          Fleet `{names[f]}` (`{f}`)\" for f in fleet_files)\n    ui_base, _, ui_name\
+          \ = fleet_ui_url.rpartition(\"/\")  # one UI page per Fleet, when the given\
+          \ URL ends in the first one's name\n    fleet_urls = \" , \".join(f\"{ui_base}/{names[f]}\"\
+          \ for f in fleet_files) if ui_name == names[fleet_file] else fleet_ui_url\n\
+          \    body = (f\"## Promotion: `{candidate}` replaces `{rep['incumbent']}`\\\
+          n\\n\"\n            f\"| | success | mean cubes |\\n|---|---|---|\\n| incumbent\
+          \ `{rep['incumbent']}` | {rep['incumbent_success_rate']:.0%} | {rep['incumbent_mean_cubes']:.2f}\
+          \ |\\n\"\n            f\"| candidate `{candidate}` | {rep['candidate_success_rate']:.0%}\
+          \ | {rep['candidate_mean_cubes']:.2f} |\\n\\n\"\n            f\"Paired on\
+          \ {rep['n_paired']} identical seeded scenes: **{rep['fixed']} fixed / {rep['broken']}\
+          \ broken, net {rep['net']:+d}, sign-test p = {rep['sign_test_p']}** - gate\
+          \ rule: {rep['rule']} -> **{rep['verdict']}**.\\n\\n\"\n            f\"\
+          Signed modelcar: `{image_ref}`\\n\\n\"\n            f\"Merging edits {fleets_md}\
+          \ in one commit (modelcar digest + `MODEL_VERSION` `{old_mv}` -> `{candidate}`)\
+          \ \"\n            f\"and points the trigger at the new lineage (`{consumer_file}`:\
           \ COLLECTOR/INCUMBENT/INCUMBENT_CHECKPOINT). \"\n            f\"ResourceSync\
-          \ renders the Fleet; RHEM rolls it out batch by batch; each device pulls\
+          \ renders each Fleet; RHEM rolls each out batch by batch; each device pulls\
           \ the modelcar under its policy.json \"\n            f\"(cosign key + Rekor\
           \ SET) and restarts the container, which publishes the new `model_version`.\\\
-          n\\n\"\n            f\"Fleet: {fleet_ui_url}\\n\\n\"\n            f\"Rollback:\
+          n\\n\"\n            f\"Fleet: {fleet_urls}\\n\\n\"\n            f\"Rollback:\
           \ `git revert <sha>` - revert the merge commit of this PR and merge the\
-          \ revert. The previous modelcar is still in device storage \"\n        \
-          \    f\"(image volume `reclaimPolicy: Retain`), so rolling back does not\
-          \ re-pull.\")\n    body += catalog_note  # Catalog seam (D027): delete with\
-          \ the fenced block above\n    title = f\"Promote {candidate} ({rep['incumbent_success_rate']:.0%}\
-          \ -> {rep['candidate_success_rate']:.0%})\"\n    existing = list(repo.get_pulls(state=\"\
-          open\", base=gitops_branch, head=f\"{repo.owner.login}:{head}\"))\n    pr\
-          \ = existing[0] if existing else repo.create_pull(title=title, body=body,\
-          \ base=gitops_branch, head=head)\n    print(pr.html_url); return pr.html_url\n\
-          \n"
+          \ revert. A device keeps the previous modelcar in its storage \"\n     \
+          \       f\"(image volume `reclaimPolicy: Retain`), so there is no re-pull\
+          \ on a device that has served it before.\")\n    body += catalog_note  #\
+          \ Catalog seam (D027): delete with the fenced block above\n    title = f\"\
+          Promote {candidate} ({rep['incumbent_success_rate']:.0%} -> {rep['candidate_success_rate']:.0%})\"\
+          \n    existing = list(repo.get_pulls(state=\"open\", base=gitops_branch,\
+          \ head=f\"{repo.owner.login}:{head}\"))\n    pr = existing[0] if existing\
+          \ else repo.create_pull(title=title, body=body, base=gitops_branch, head=head)\n\
+          \    print(pr.html_url); return pr.html_url\n\n"
         image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
     exec-package-modelcar:
       container:
@@ -417,24 +443,29 @@ deploymentSpec:
           \ *\n\ndef package_modelcar(checkpoint_uri: str, candidate: str, registry_repo:\
           \ str, platform: List[str],\n                     s3_endpoint: str, crane_version:\
           \ str, modelcar_base: str,\n                     crane_sha256_amd64: str,\
-          \ crane_sha256_arm64: str) -> str:\n    \"\"\"crane append per platform:\
-          \ flat ACT checkpoint dir -> /models/act on ubi-micro, then one OCI index\n\
-          \    at the candidate tag (the model layer is shared; only the ubi-micro\
-          \ base differs). Returns index@digest.\n    The crane release tarball is\
-          \ SHA-256-checked against the pinned digest before it runs (same\n    discipline\
-          \ as gitops/tekton/cosign-sign-task.yaml); a mismatch aborts the run.\"\"\
-          \"\n    import os, platform as _plat, subprocess, tarfile, io, boto3, urllib.request,\
-          \ hashlib\n    s3 = boto3.client(\"s3\", endpoint_url=s3_endpoint, aws_access_key_id=os.environ[\"\
-          AWS_ACCESS_KEY_ID\"],\n                      aws_secret_access_key=os.environ[\"\
-          AWS_SECRET_ACCESS_KEY\"])\n    b, k = checkpoint_uri[5:].split(\"/\", 1)\n\
-          \    buf = io.BytesIO(s3.get_object(Bucket=b, Key=k)[\"Body\"].read())\n\
-          \    os.makedirs(\"/tmp/layer/models/act\", exist_ok=True)\n    with tarfile.open(fileobj=buf,\
-          \ mode=\"r:gz\") as t:\n        for m in t:\n            if m.isfile():\n\
-          \                m.name = \"models/act/\" + os.path.basename(m.name); t.extract(m,\
-          \ \"/tmp/layer\")\n    with tarfile.open(\"/tmp/layer.tar\", \"w\") as t:\
-          \ t.add(\"/tmp/layer/models\", arcname=\"models\")\n    arch = {\"x86_64\"\
-          : \"x86_64\", \"amd64\": \"x86_64\", \"aarch64\": \"arm64\", \"arm64\":\
-          \ \"arm64\"}[_plat.machine()]\n    url = f\"https://github.com/google/go-containerregistry/releases/download/{crane_version}/go-containerregistry_Linux_{arch}.tar.gz\"\
+          \ crane_sha256_arm64: str, run_id: str = \"\") -> str:\n    \"\"\"crane\
+          \ append per platform: flat ACT checkpoint dir -> /models/act on ubi-micro,\
+          \ then one OCI index\n    (the model layer is shared; only the ubi-micro\
+          \ base differs). Returns index@digest.\n    Every image of a run is tagged\
+          \ <candidate>-<run id, 8 chars>[-<arch>] and keeps that tag for good; the\
+          \ bare\n    <candidate> tag is only moved to the newest index afterwards.\
+          \ A registry stops serving a manifest by digest,\n    and drops its signature,\
+          \ the moment its last tag moves away - which is what promoting the same\
+          \ candidate\n    name a second time did to the image a Fleet still pinned.\n\
+          \    The crane release tarball is SHA-256-checked against the pinned digest\
+          \ before it runs (same\n    discipline as gitops/tekton/cosign-sign-task.yaml);\
+          \ a mismatch aborts the run.\"\"\"\n    import os, platform as _plat, subprocess,\
+          \ tarfile, io, boto3, urllib.request, hashlib\n    s3 = boto3.client(\"\
+          s3\", endpoint_url=s3_endpoint, aws_access_key_id=os.environ[\"AWS_ACCESS_KEY_ID\"\
+          ],\n                      aws_secret_access_key=os.environ[\"AWS_SECRET_ACCESS_KEY\"\
+          ])\n    b, k = checkpoint_uri[5:].split(\"/\", 1)\n    buf = io.BytesIO(s3.get_object(Bucket=b,\
+          \ Key=k)[\"Body\"].read())\n    os.makedirs(\"/tmp/layer/models/act\", exist_ok=True)\n\
+          \    with tarfile.open(fileobj=buf, mode=\"r:gz\") as t:\n        for m\
+          \ in t:\n            if m.isfile():\n                m.name = \"models/act/\"\
+          \ + os.path.basename(m.name); t.extract(m, \"/tmp/layer\")\n    with tarfile.open(\"\
+          /tmp/layer.tar\", \"w\") as t: t.add(\"/tmp/layer/models\", arcname=\"models\"\
+          )\n    arch = {\"x86_64\": \"x86_64\", \"amd64\": \"x86_64\", \"aarch64\"\
+          : \"arm64\", \"arm64\": \"arm64\"}[_plat.machine()]\n    url = f\"https://github.com/google/go-containerregistry/releases/download/{crane_version}/go-containerregistry_Linux_{arch}.tar.gz\"\
           \n    urllib.request.urlretrieve(url, \"/tmp/crane.tgz\")\n    want = {\"\
           x86_64\": crane_sha256_amd64, \"arm64\": crane_sha256_arm64}[arch]\n   \
           \ got = hashlib.sha256(open(\"/tmp/crane.tgz\", \"rb\").read()).hexdigest()\n\
@@ -447,19 +478,24 @@ deploymentSpec:
           /tmp/docker\", exist_ok=True)\n    cfg = _j.load(open(\"/etc/quay/.dockerconfigjson\"\
           ))\n    _j.dump({\"auths\": cfg.get(\"auths\", {})}, open(\"/tmp/docker/config.json\"\
           , \"w\"))  # drop credsStore/credHelpers\n    os.environ[\"DOCKER_CONFIG\"\
-          ] = \"/tmp/docker\"\n    per_arch = []\n    for p in platform:\n       \
-          \ tag = f\"{registry_repo}:{candidate}-{p.split('/', 1)[1].replace('/',\
-          \ '-')}\"\n        r = subprocess.run([\"/tmp/crane\", \"append\", \"--platform\"\
-          , p, \"-b\", modelcar_base,\n                            \"-f\", \"/tmp/layer.tar\"\
-          , \"-t\", tag], capture_output=True, text=True)\n        if r.returncode\
-          \ != 0:\n            print(f\"crane append {p} failed:\", r.stderr[-1500:]);\
-          \ raise SystemExit(1)\n        per_arch.append(r.stdout.strip().splitlines()[-1]);\
-          \ print(\"pushed\", per_arch[-1])\n    cmd = [\"/tmp/crane\", \"index\"\
-          , \"append\", \"-t\", f\"{registry_repo}:{candidate}\"]\n    for m in per_arch:\
-          \ cmd += [\"-m\", m]\n    r = subprocess.run(cmd, capture_output=True, text=True)\n\
-          \    if r.returncode != 0:\n        print(\"crane index append failed:\"\
-          , r.stderr[-1500:]); raise SystemExit(1)\n    ref = r.stdout.strip().splitlines()[-1];\
-          \ print(\"pushed\", ref); return ref\n\n"
+          ] = \"/tmp/docker\"\n    per_arch = []\n    unique = f\"{candidate}-{run_id[:8]}\"\
+          \ if run_id else candidate\n    for p in platform:\n        tag = f\"{registry_repo}:{unique}-{p.split('/',\
+          \ 1)[1].replace('/', '-')}\"\n        r = subprocess.run([\"/tmp/crane\"\
+          , \"append\", \"--platform\", p, \"-b\", modelcar_base,\n              \
+          \              \"-f\", \"/tmp/layer.tar\", \"-t\", tag], capture_output=True,\
+          \ text=True)\n        if r.returncode != 0:\n            print(f\"crane\
+          \ append {p} failed:\", r.stderr[-1500:]); raise SystemExit(1)\n       \
+          \ per_arch.append(r.stdout.strip().splitlines()[-1]); print(\"pushed\",\
+          \ per_arch[-1])\n    cmd = [\"/tmp/crane\", \"index\", \"append\", \"-t\"\
+          , f\"{registry_repo}:{unique}\"]\n    for m in per_arch: cmd += [\"-m\"\
+          , m]\n    r = subprocess.run(cmd, capture_output=True, text=True)\n    if\
+          \ r.returncode != 0:\n        print(\"crane index append failed:\", r.stderr[-1500:]);\
+          \ raise SystemExit(1)\n    ref = r.stdout.strip().splitlines()[-1]; print(\"\
+          pushed\", ref)\n    if unique != candidate:\n        r = subprocess.run([\"\
+          /tmp/crane\", \"tag\", ref, candidate], capture_output=True, text=True)\n\
+          \        if r.returncode != 0:\n            print(f\"crane tag {candidate}\
+          \ failed:\", r.stderr[-1500:]); raise SystemExit(1)\n        print(f\"tag\
+          \ {candidate} -> {ref}\")\n    return ref\n\n"
         image: registry.access.redhat.com/ubi9/python-312:9.8-1788919789
     exec-record-pr-url:
       container:
@@ -760,6 +796,8 @@ root:
         - trigger-and-wait
         inputs:
           parameters:
+            also_fleet_files:
+              componentInputParameter: also_fleet_files
             candidate:
               componentInputParameter: candidate
             catalog_item_file:
@@ -818,6 +856,9 @@ root:
               componentInputParameter: platform
             registry_repo:
               componentInputParameter: registry_repo
+            run_id:
+              runtimeValue:
+                constant: '{{$.pipeline_job_uuid}}'
             s3_endpoint:
               componentInputParameter: s3_endpoint
         taskInfo:
@@ -944,6 +985,10 @@ root:
           name: trigger-and-wait
   inputDefinitions:
     parameters:
+      also_fleet_files:
+        defaultValue: gitops/rhem/fleet-robots.yaml
+        isOptional: true
+        parameterType: STRING
       candidate:
         parameterType: STRING
       catalog_item_file:
@@ -1003,7 +1048,7 @@ root:
         isOptional: true
         parameterType: STRING
       gitops_branch:
-        defaultValue: desktop-gpu-split
+        defaultValue: fury
         isOptional: true
         parameterType: STRING
       incumbent:

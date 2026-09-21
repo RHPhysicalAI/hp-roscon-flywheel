@@ -1,0 +1,8 @@
+# This project was developed with assistance from AI tools.
+# Only for the image's scene-baking stage, inside the sim image (scene.py). The converter is the fork and rev that
+# upstream's pixi.toml pins (demos @ 4d3564cd); the PyPI release 0.1.2 is too old. It also imports Gazebo's
+# `sdformat` and `gz.math` bindings, which are not on PyPI: they come from the sim image's ROS install.
+mujoco==3.13.0
+numpy>=1.26,<3
+sdformat_mjcf @ git+https://github.com/francocipollone/gz-mujoco.git@79de56da1226568605d0aff35fa457aca10006e9#subdirectory=sdformat_mjcf
+dm-control==1.0.46

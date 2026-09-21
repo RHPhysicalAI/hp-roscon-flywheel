@@ -1,0 +1,44 @@
+# This project was developed with assistance from AI tools.
+#
+# The fleet's rendering tenant (act 2, MIG slice 0:3; D163, D164) is a unit on the GPU host, outside the cluster.
+# Inside the cluster it is this Service: http://fleet-renderer.flywheel.svc:9702 - the wall's mosaic at
+# /wall.mjpg, each robot's cameras at /robot/<id>/<static|wrist>.<mjpg|jpg>, /status and /healthz
+# (docs/internal/FLEET-RENDER-CONTRACT.md). No selector - its one endpoint is the renderer's own listener on the
+# host's hub-side address, 10.20.0.1:9702 (tools/host/fury/73-fleet-renderer-install.sh), named by an EndpointSlice
+# that is applied by hand because Argo CD leaves EndpointSlices out of what it manages:
+# tools/hub/manual/fleet-renderer-endpointslice.yaml (argocd/README.md).
+#
+# The Route is there because the wall page is served over https, and a browser will not load an http stream into an
+# https page (the pattern of Route sim-cameras, D159). Read-only pictures and a status page, no authentication. The
+# long timeout is for MJPEG: a stream is one response that never ends, and the router's default cuts it after
+# 30 s. With the host in flywheel mode the renderer is down and the Route answers 503.
+#
+# The robots' worlds do not come through here: they send their state to 10.20.0.1:9701 over UDP, straight from
+# the pod (traffic leaves as the node).
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-renderer
+  namespace: flywheel
+spec:
+  ports:
+    - name: pictures
+      port: 9702
+      targetPort: 9702
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: fleet-wall
+  namespace: flywheel
+  annotations:
+    haproxy.router.openshift.io/timeout: 3600s
+spec:
+  to:
+    kind: Service
+    name: fleet-renderer
+  port:
+    targetPort: pictures
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
