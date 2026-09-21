@@ -208,7 +208,7 @@ spec:
             # bags) runs next to the simulator: tools/host/run-coordinator.sh on the sim host.
             ROLE: policy
             # Lineage contract: MODEL_VERSION -> model_version_pub.py -> /flywheel/model_version -> emitter -> curator
-            MODEL_VERSION: act-v2-ft160
+            MODEL_VERSION: upstream-act-teacher
             # Image-volume mount is the modelcar rootfs; the checkpoint lives at models/act inside it (test A)
             POLICY_PATH: /modelcar/models/act
             # rosetta client chunking (cpu-spike.md part 2, D024 fallback 1): the checkpoint's full chunk,
@@ -221,7 +221,7 @@ spec:
                 [Volume]
                 Driver=image
                 # the teacher's modelcar, signed by this hub (Rekor 8); a promotion PR replaces this digest and MODEL_VERSION above
-                Image=quay.io/jary/soarm-act-modelcar@sha256:d741db2bd5f7e2bb1762594ffb49a98da67f4e6096d4359839dc3f2faab3eab8
+                Image=quay.io/jary/soarm-act-modelcar@sha256:d5e5897ff3b917e81d2b16d026c91dc603242f31b5aa4e054d3673fb2ad308ac
             - path: act-inference.container
               content: |
                 [Unit]
