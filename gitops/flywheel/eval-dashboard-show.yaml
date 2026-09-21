@@ -1,0 +1,192 @@
+# This project was developed with assistance from AI tools.
+#
+# The live lane's episodes page (D166): a third instance of the evaluation dashboard image (src/eval-dashboard; the
+# other two are in eval-dashboard.yaml - one image, three deployments, one digest: tests/hub/test_show_lane.py holds
+# them equal). SOURCE_MODE=files over the show curator's verdict directories (curator-show.yaml): robot zero's
+# episodes as the curator judged them, success rate by model label, the rows behind it.
+#
+# It is not the "Live episodes" page of eval-dashboard.yaml and must never be blended with it: that one is the
+# governed collection's record, read from Kafka and object storage, and it shows nothing of the live lane. This one
+# reads a throwaway volume and says so on the page (PAGE_TITLE, PAGE_NOTE, the source chip), with a link to the other.
+#
+# What it can reach is what this file gives it, and that is one thing:
+#   - the show curator's PVC, read-only at the volume and at each mount, and of it only curated/ and rejected/
+#     (subPath): raw/ - records not yet judged - and the totals file are not in the pod at all. The same single-node
+#     sharing of an RWO claim as the flywheel page's mount (dashboard.yaml); readable because every pod of the
+#     namespace gets the namespace's one SELinux level and the provisioner's directory is container_file_t, 0777
+#     (curator-show.yaml, at the claim). No fsGroup here either: a hostPath volume gets none applied.
+#   - its own ServiceAccount with no SCC grant (scc-rolebinding.yaml names `default` and `dashboard` only) and
+#     required-scc restricted-v2: no host path could be mounted; no token, no Secret, no ConfigMap (the versions map is
+#     the image's own: upstream-act-teacher 0, act-v2-ft160 160, otherwise the -ft<N> of the label)
+#   - no object storage or Kafka variable: files mode opens neither client (main.py), so the NetworkPolicy below can
+#     let nothing out of the pod and the page loses nothing
+#   - read-only root filesystem: the image writes nothing at run time (src/eval-dashboard/README.md).
+#
+# The numbers are honest only with FILES_NEWEST at or below the show curator's KEEP_NEWEST: that curator keeps the
+# newest 300 records of EACH verdict, so the two directories together are not a sample of anything - once both are
+# full they hold 300 passes and 300 rejects whatever the policy does. The newest 300 files of both together are
+# exactly the last 300 episodes judged (each of them is still in its directory), and that is what is read.
+# FILES_MAX_BYTES and the stat-only scan are the flywheel page's bounds (dashboard.yaml: MAX_RECORD_BYTES,
+# newest_records): a full volume costs a directory walk, not the pod's memory.
+#
+# The claim is held by this pod too: deleting it to start the lane at zero waits until this pod, the flywheel page's
+# and the show curator's are gone.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: eval-dashboard-show
+  namespace: flywheel
+automountServiceAccountToken: false
+---
+# Nothing out - the page needs nothing - and in only from the router, on the page's port. On this hub the router is on
+# the host network (endpointPublishingStrategy HostNetwork), so its traffic reaches the pod as the node's own, which
+# OVN-Kubernetes admits whatever a policy says - the kubelet's probes likewise. The rule below is what admits the
+# router where it runs as pods: both namespaces carry the label. Shut out: every other pod of the cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: eval-dashboard-show-router-only
+  namespace: flywheel
+spec:
+  podSelector:
+    matchLabels:
+      app: eval-dashboard-show
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              policy-group.network.openshift.io/ingress: ""
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress: []
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eval-dashboard-show
+  namespace: flywheel
+  labels:
+    app: eval-dashboard-show
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: eval-dashboard-show
+  template:
+    metadata:
+      labels:
+        app: eval-dashboard-show
+      annotations:
+        openshift.io/required-scc: restricted-v2
+    spec:
+      serviceAccountName: eval-dashboard-show
+      automountServiceAccountToken: false
+      containers:
+        - name: eval-dashboard
+          # Digest: the one of eval-dashboard.yaml's two image lines, always (tools/hub/build-eval-dashboard.sh prints
+          # it). This instance needs an image built from a commit that has PAGE_NOTE and FILES_NEWEST in it.
+          image: quay.io/jary/soarm-flywheel@sha256:94ca059fa9518b8bef6f85afc492a7a9d09080d0656758c5b68f493f1cd29281
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SOURCE_MODE
+              value: "files"
+            - name: RECORDS_DIR
+              value: "/records"
+            - name: FILES_NEWEST
+              value: "300"
+            - name: FILES_MAX_BYTES
+              value: "65536"
+            - name: SOURCE_LABEL
+              value: "Live lane: judged, not kept"
+            - name: PAGE_TITLE
+              value: "Live episodes - live lane"
+            - name: PAGE_NOTE
+              value: "Robot zero's episodes as the curator judged them - cameras ray-traced by the rendering tenant. Judged, not kept: the newest few hundred verdicts, no recordings. The governed collection's record is on its own page:"
+            - name: PAGE_NOTE_LINK_URL
+              value: "https://eval-dashboard-live-flywheel.apps.sno-flywheel.local"
+            - name: PAGE_NOTE_LINK_LABEL
+              value: "Live episodes (collection)"
+            - name: OTHER_VIEW_URL
+              value: "https://eval-dashboard-flywheel.apps.sno-flywheel.local"
+            - name: OTHER_VIEW_LABEL
+              value: "Paired evaluation"
+            - name: LIVE_DASHBOARD_URL
+              value: "https://dashboard-flywheel.apps.sno-flywheel.local"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          readinessProbe:
+            httpGet:
+              path: /api/stats
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/stats
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: 25m
+              memory: 96Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: show-lane
+              mountPath: /records/curated
+              subPath: curated
+              readOnly: true
+            - name: show-lane
+              mountPath: /records/rejected
+              subPath: rejected
+              readOnly: true
+      volumes:
+        - name: show-lane
+          persistentVolumeClaim:
+            claimName: curator-show-episodes
+            readOnly: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: eval-dashboard-show
+  namespace: flywheel
+spec:
+  selector:
+    app: eval-dashboard-show
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: eval-dashboard-show
+  namespace: flywheel
+spec:
+  to:
+    kind: Service
+    name: eval-dashboard-show
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

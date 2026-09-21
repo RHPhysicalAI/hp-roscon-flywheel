@@ -1,11 +1,16 @@
 # This project was developed with assistance from AI tools.
 #
-# Evaluation dashboard (APPENG-6295): one image (src/eval-dashboard), two read-only instances.
+# Evaluation dashboard (APPENG-6295): one image (src/eval-dashboard), two read-only instances here.
 #
 # - eval-dashboard       SOURCE_MODE=eval  the latest promotion run's paired comparison, read from
 #                                          MinIO episodes-data/eval/<run_id>/.
 # - eval-dashboard-live  SOURCE_MODE=live  success rate by lineage from the curated and rejected
 #                                          buckets, kept current from the episode-manifests topic.
+#                                          The governed collection's record: robot zero's judged-and-
+#                                          not-kept episodes (D166) never reach it.
+#
+# A third instance of the same image, for those episodes, is a file of its own with nothing of this
+# one's storage or credentials: eval-dashboard-show.yaml. One image, one digest, all three.
 #
 # Each links to the other (OTHER_VIEW_*) and back to the flywheel dashboard (LIVE_DASHBOARD_URL).
 # The URLs assume the router's default host, <route>-<namespace>.<apps domain>.
@@ -64,8 +69,9 @@ spec:
       containers:
         - name: eval-dashboard
           # Digest: filled in from the output of tools/hub/build-eval-dashboard.sh (same value
-          # on both image lines in this file). Do not commit this file with the placeholder in it.
-          image: quay.io/jary/soarm-flywheel@sha256:3deca2e5c6553cb3f4c682a8647690cb59919e89ffd9e609bf21ee1732905636
+          # on both image lines in this file and on the one in eval-dashboard-show.yaml). Do not
+          # commit this file with the placeholder in it.
+          image: quay.io/jary/soarm-flywheel@sha256:94ca059fa9518b8bef6f85afc492a7a9d09080d0656758c5b68f493f1cd29281
           ports:
             - containerPort: 8080
           env:
@@ -96,7 +102,8 @@ spec:
             - name: OTHER_VIEW_URL
               value: "https://eval-dashboard-live-flywheel.apps.sno-flywheel.local"
             - name: OTHER_VIEW_LABEL
-              value: "Live episodes"
+              # "(collection)": the flywheel page's "Live episodes" is another page (eval-dashboard-show.yaml)
+              value: "Live episodes (collection)"
             - name: LIVE_DASHBOARD_URL
               value: "https://dashboard-flywheel.apps.sno-flywheel.local"
           securityContext:
@@ -191,8 +198,9 @@ spec:
       containers:
         - name: eval-dashboard
           # Digest: filled in from the output of tools/hub/build-eval-dashboard.sh (same value
-          # on both image lines in this file). Do not commit this file with the placeholder in it.
-          image: quay.io/jary/soarm-flywheel@sha256:3deca2e5c6553cb3f4c682a8647690cb59919e89ffd9e609bf21ee1732905636
+          # on both image lines in this file and on the one in eval-dashboard-show.yaml). Do not
+          # commit this file with the placeholder in it.
+          image: quay.io/jary/soarm-flywheel@sha256:94ca059fa9518b8bef6f85afc492a7a9d09080d0656758c5b68f493f1cd29281
           ports:
             - containerPort: 8080
           env:

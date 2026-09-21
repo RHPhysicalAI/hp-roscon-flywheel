@@ -8,7 +8,10 @@ Owned by the Argo `flywheel` Application (`argocd/flywheel-app.yaml`, `prune: tr
 deployments) that judges robot zero's episodes for the flywheel page while the demo stays in tenants mode (D166).
 It reads **no** Secret and has no way to the flywheel's data: its own PVC instead of the node's
 `/var/lib/episodes`, its own ServiceAccount without an SCC grant (the pod requires `restricted-v2`, which has no
-host paths), no token, no egress. Only the dashboard mounts its volume, read-only. Its NodePort is 30812; the
+host paths), no token, no egress. Two pages mount its volume, both read-only: the dashboard, and
+`eval-dashboard-show.yaml` - the live lane's own episodes page, a third instance of the evaluation dashboard image
+that sees only `curated/` and `rejected/`, has no credential and no egress, and says on the page that it is not the
+collection's record (`eval-dashboard-live`, which never reads this volume). Its NodePort is 30812; the
 flywheel's curator keeps 30802. Only the GPU host (`10.20.0.1`) is let in to that port (NetworkPolicy, with the
 Service's `externalTrafficPolicy: Local` keeping the client's address). Both curators carry the same
 `CURATOR_CODE_REV` and are bumped together. `tests/hub/test_show_lane.py` holds all of that.

@@ -88,6 +88,9 @@ data:
     CAMERA_CAPTION = os.environ.get("CAMERA_CAPTION", "").strip() or "Live feeds from SO-ARM101 Gazebo sim (480x480)."
     # Header link to the evaluation dashboard; empty means no link is rendered.
     EVAL_DASHBOARD_URL = os.environ.get("EVAL_DASHBOARD_URL", "").strip()
+    # Header link "Live episodes" to the live lane's own episodes page (eval-dashboard-show.yaml): rendered on the live
+    # lane only. The flywheel's own page has no such link, with this set or not.
+    SHOW_EPISODES_URL = os.environ.get("SHOW_EPISODES_URL", "").strip()
     FW_NS         = os.environ.get("FLYWHEEL_NS", "flywheel")
     THRESHOLD     = int(os.environ.get("TRIGGER_THRESHOLD", "10"))
     COLLECTOR_DEPLOY = os.environ.get("COLLECTOR_DEPLOYMENT", "manifest-consumer")
@@ -435,12 +438,16 @@ data:
     threading.Thread(target=_watcher, daemon=True).start()
 
     # ---- Routes --------------------------------------------------------------
-    def eval_link() -> str:
+    def header_link(element_id: str, url: str, label: str) -> str:
         """Header link markup, or nothing unless an http(s) URL is configured."""
-        if not EVAL_DASHBOARD_URL.startswith(("http://", "https://")):
+        if not url.startswith(("http://", "https://")):
             return ""
-        href = escape(EVAL_DASHBOARD_URL, quote=True)
-        return f'<a id="eval-link" class="btn btn-link btn-sm" href="{href}">Evaluation comparison &rarr;</a>'
+        return f'<a id="{element_id}" class="btn btn-link btn-sm" href="{escape(url, quote=True)}">{label} &rarr;</a>'
+
+    def eval_link() -> str:
+        """The evaluation comparison; on the live lane, that lane's own episodes page before it."""
+        episodes = header_link("show-episodes-link", SHOW_EPISODES_URL, "Live episodes") if SHOW_LANE else ""
+        return episodes + header_link("eval-link", EVAL_DASHBOARD_URL, "Evaluation comparison")
 
     @app.route("/")
     def index():
@@ -1229,13 +1236,15 @@ data:
     // ---- Theme toggle --------------------------------------------------------
     // The evaluation pages are on other hosts (no shared storage), so the link to them carries ?theme=.
     function themeEvalLink(t) {
-      const link = document.getElementById('eval-link');
-      if (!link) return;
-      try {
-        const target = new URL(link.href);
-        target.searchParams.set('theme', t);
-        link.href = target.href;
-      } catch (e) { /* leave the configured href as it is */ }
+      ['eval-link', 'show-episodes-link'].forEach(id => {
+        const link = document.getElementById(id);
+        if (!link) return;
+        try {
+          const target = new URL(link.href);
+          target.searchParams.set('theme', t);
+          link.href = target.href;
+        } catch (e) { /* leave the configured href as it is */ }
+      });
     }
     function setTheme(t) {
       document.documentElement.setAttribute('data-theme', t);
@@ -1832,7 +1841,7 @@ spec:
             - name: TRIGGER_THRESHOLD
               value: "160"   # matches manifest-consumer (D022/D023); was thor-testing's 10
             - name: DASHBOARD_CODE_REV
-              value: "2026-09-20-show-lane"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
+              value: "2026-09-20-show-episodes-link"   # bump with dashboard.py: the ConfigMap is read once at start, so Argo must roll the pod
             - name: SHOW_LANE_DIR
               # D166, the live lane: counts, log, badge and bar come from the SHOW curator's volume (curator-show.yaml,
               # mounted read-only below) - robot zero's episodes, judged and not kept - and the page says so. For
@@ -1861,6 +1870,10 @@ spec:
             - name: EVAL_DASHBOARD_URL
               # Header link "Evaluation comparison" (gitops/flywheel/eval-dashboard.yaml); empty = no link.
               value: "https://eval-dashboard-flywheel.apps.sno-flywheel.local"
+            - name: SHOW_EPISODES_URL
+              # Header link "Live episodes", on the live lane only: that lane's own episodes page
+              # (eval-dashboard-show.yaml), never the governed collection's record (eval-dashboard-live).
+              value: "https://eval-dashboard-show-flywheel.apps.sno-flywheel.local"
             - name: CAMERA_HOST
               # The address the *viewer's browser* uses to reach the camera bridge (port 8081),
               # which runs next to the simulator, not in the cluster. On the Fury this is the

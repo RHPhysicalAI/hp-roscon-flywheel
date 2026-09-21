@@ -381,12 +381,12 @@ def test_the_show_curator_has_no_way_to_the_dataset_or_the_trigger():
     assert show["spec"]["template"]["metadata"]["labels"] == {"app": "curator-show"}
 
 
-def test_only_the_dashboard_reads_the_show_volume_and_only_read_only():
-    """The sync agent, the rejected mirror and the consumer never see it; nothing mounts it writable but its curator."""
+def test_only_the_two_pages_read_the_show_volume_and_only_read_only():
+    """The sync agent, the rejected mirror, the consumer and the collection's evaluation pages never see it; nothing mounts it writable but its curator."""
     users = {}
     for path in sorted(FLYWHEEL.glob("*.yaml")):
         text = path.read_text()
-        if path.name not in ("curator-show.yaml", "dashboard.yaml", "curator.yaml"):
+        if path.name not in ("curator-show.yaml", "dashboard.yaml", "curator.yaml", "eval-dashboard-show.yaml"):
             assert "curator-show" not in text and "show-lane" not in text, path.name
         for doc in (d for d in yaml.safe_load_all(text) if d):
             pod = doc.get("spec", {}).get("template", {}).get("spec") or doc.get("spec", {}).get("jobTemplate", {}).get("spec", {}).get("template", {}).get("spec") or {}
@@ -394,10 +394,13 @@ def test_only_the_dashboard_reads_the_show_volume_and_only_read_only():
                 claim = volume.get("persistentVolumeClaim", {})
                 if claim.get("claimName") == "curator-show-episodes":
                     users[doc["metadata"]["name"]] = (claim.get("readOnly", False), volume["name"], pod)
-    assert set(users) == {"curator-show", "dashboard"}
-    read_only, name, pod = users["dashboard"]
+    assert set(users) == {"curator-show", "dashboard", "eval-dashboard-show"}
+    for reader in ("dashboard", "eval-dashboard-show"):
+        read_only, name, pod = users[reader]
+        mounts = [m for c in pod["containers"] for m in c["volumeMounts"] if m["name"] == name]
+        assert read_only is True and mounts and all(m["readOnly"] is True for m in mounts), reader
+    _, name, pod = users["dashboard"]
     (mount,) = [m for c in pod["containers"] for m in c["volumeMounts"] if m["name"] == name]
-    assert read_only is True and mount["readOnly"] is True
     assert env(one("dashboard.yaml", "Deployment", "dashboard"))["SHOW_LANE_DIR"]["value"] == mount["mountPath"]
 
 
@@ -442,6 +445,121 @@ def test_the_show_volume_names_its_class_and_the_class_makes_it_writable():
         "restricted-v2 assigns fsGroup from the namespace's range; a fixed one breaks where the range differs"
     storage = (ROOT / "gitops" / "storage" / "local-path-provisioner.yaml").read_text()
     assert 'mkdir -m 0777 -p "$VOL_DIR"' in storage and 'chcon -Rt container_file_t "$VOL_DIR"' in storage
+
+
+# ---- eval-dashboard-show.yaml: the live lane's own episodes page, and the collection's page left as it was ----
+
+APPS = "apps.sno-flywheel.local"
+# The image pinned before the page could say what it is: no PAGE_NOTE, no FILES_NEWEST, rollout.steps unescaped.
+IMAGE_WITHOUT_THE_PAGE_NOTE = "sha256:3deca2e5c6553cb3f4c682a8647690cb59919e89ffd9e609bf21ee1732905636"
+
+
+def route_url(name: str) -> str:
+    """The router's default host for a Route of the flywheel namespace."""
+    return f"https://{name}-flywheel.{APPS}"
+
+
+def show_page() -> dict:
+    return one("eval-dashboard-show.yaml", "Deployment", "eval-dashboard-show")
+
+
+def test_the_episodes_page_reaches_the_verdict_directories_and_nothing_else():
+    """One volume, the show curator's, read-only, and of it only curated/ and rejected/: no host path, no Secret, no ConfigMap, no token, no SCC grant."""
+    page = show_page()
+    pod = page["spec"]["template"]["spec"]
+    assert pod["volumes"] == [{"name": "show-lane", "persistentVolumeClaim": {"claimName": "curator-show-episodes", "readOnly": True}}]
+    records_dir = env(page)["RECORDS_DIR"]["value"]
+    assert sorted((m["name"], m["subPath"], m["mountPath"], m["readOnly"]) for m in container(page)["volumeMounts"]) == [
+        ("show-lane", "curated", f"{records_dir}/curated", True), ("show-lane", "rejected", f"{records_dir}/rejected", True)], \
+        "raw/ (not yet judged) and the totals file are not in the pod"
+    assert env(page)["SOURCE_MODE"]["value"] == "files"
+    assert not [name for name in env(page) if PIPELINE_NAMES.search(name)]
+    assert not [e for e in env(page).values() if "valueFrom" in e] and "envFrom" not in container(page)
+    assert pod["serviceAccountName"] == "eval-dashboard-show" and pod["automountServiceAccountToken"] is False
+    assert one("eval-dashboard-show.yaml", "ServiceAccount", "eval-dashboard-show")["automountServiceAccountToken"] is False
+    assert page["spec"]["template"]["metadata"]["annotations"]["openshift.io/required-scc"] == "restricted-v2"
+    granted = [s["name"] for d in documents("scc-rolebinding.yaml") if d["kind"] == "RoleBinding" for s in d["subjects"]]
+    assert "eval-dashboard-show" not in granted
+    assert "securityContext" not in pod, "no fixed fsGroup, as on the show curator"
+    context = container(page)["securityContext"]
+    assert context["readOnlyRootFilesystem"] is True and context["allowPrivilegeEscalation"] is False
+    assert context["runAsNonRoot"] is True and context["capabilities"] == {"drop": ["ALL"]}
+    assert not [d["kind"] for d in documents("eval-dashboard-show.yaml") if d["kind"] in ("Secret", "ConfigMap", "PersistentVolumeClaim", "RoleBinding")]
+
+
+def test_nothing_leaves_the_episodes_page_and_only_the_router_reaches_it():
+    """Egress: none. Ingress: the router's namespaces, the page's port; an edge-TLS Route like its siblings', no NodePort."""
+    policy = one("eval-dashboard-show.yaml", "NetworkPolicy", "eval-dashboard-show-router-only")["spec"]
+    assert policy["podSelector"] == {"matchLabels": show_page()["spec"]["template"]["metadata"]["labels"]} == {"matchLabels": {"app": "eval-dashboard-show"}}
+    assert sorted(policy["policyTypes"]) == ["Egress", "Ingress"] and policy["egress"] == []
+    assert policy["ingress"] == [{"from": [{"namespaceSelector": {"matchLabels": {"policy-group.network.openshift.io/ingress": ""}}}],
+                                  "ports": [{"protocol": "TCP", "port": 8080}]}]
+    service = one("eval-dashboard-show.yaml", "Service", "eval-dashboard-show")["spec"]
+    assert service == {"selector": {"app": "eval-dashboard-show"}, "ports": [{"port": 8080, "targetPort": 8080}]}
+    assert one("eval-dashboard-show.yaml", "Route", "eval-dashboard-show")["spec"] == one("eval-dashboard.yaml", "Route", "eval-dashboard-live")["spec"] | {
+        "to": {"kind": "Service", "name": "eval-dashboard-show"}}
+
+
+def test_the_episodes_page_reads_the_last_episodes_judged_with_the_flywheel_pages_bounds():
+    """The show curator keeps the newest N of EACH verdict: only a window no larger than N is a sample of what the policy did."""
+    keep = int(env(one("curator-show.yaml", "Deployment", "curator-show"))["KEEP_NEWEST"]["value"])
+    assert 0 < int(env(show_page())["FILES_NEWEST"]["value"]) <= keep, "more than the curator keeps per verdict tends to 50 % whatever the policy does"
+    cap = re.search(r"MAX_RECORD_BYTES = (\d+)", embedded("dashboard.yaml", "dashboard-code", "dashboard.py")).group(1)
+    assert env(show_page())["FILES_MAX_BYTES"]["value"] == cap
+    siblings = [one("eval-dashboard.yaml", "Deployment", name) for name in ("eval-dashboard", "eval-dashboard-live")]
+    assert all(container(show_page())["resources"]["limits"] == container(s)["resources"]["limits"] for s in siblings)
+
+
+def test_the_episodes_page_says_what_it_is_and_points_at_the_collections_record():
+    """Title, chip and note name the live lane; the note's link is the collection's page; siblings' links and no product name."""
+    settings = {name: e["value"] for name, e in env(show_page()).items()}
+    assert "live lane" in settings["PAGE_TITLE"] and "judged, not kept" in settings["SOURCE_LABEL"]
+    for words in ("Robot zero", "as the curator judged them", "ray-traced by the rendering tenant", "Judged, not kept", "no recordings",
+                  "governed collection"):
+        assert words in settings["PAGE_NOTE"], words
+    assert settings["PAGE_NOTE_LINK_URL"] == route_url("eval-dashboard-live") and settings["PAGE_NOTE_LINK_LABEL"] == "Live episodes (collection)"
+    assert (settings["OTHER_VIEW_URL"], settings["OTHER_VIEW_LABEL"]) == (route_url("eval-dashboard"), "Paired evaluation")
+    assert settings["LIVE_DASHBOARD_URL"] == route_url("dashboard")
+    assert "minio" not in " ".join(settings.values()).lower()
+
+
+def test_the_collections_live_page_is_what_it_was():
+    """eval-dashboard-live still reads Kafka and object storage through the read-only user, mounts no claim, and its file never names the live lane."""
+    text = (FLYWHEEL / "eval-dashboard.yaml").read_text()
+    assert "curator-show" not in text and "show-lane" not in text and "persistentVolumeClaim" not in text
+    live = one("eval-dashboard.yaml", "Deployment", "eval-dashboard-live")
+    settings = env(live)
+    assert {name: settings[name]["value"] for name in ("SOURCE_MODE", "S3_ENDPOINT", "S3_CURATED_BUCKET", "S3_REJECTED_BUCKET",
+                                                        "KAFKA_BOOTSTRAP", "KAFKA_TOPIC")} == {
+        "SOURCE_MODE": "live", "S3_ENDPOINT": "http://minio.minio.svc:9000", "S3_CURATED_BUCKET": "episodes-curated",
+        "S3_REJECTED_BUCKET": "episodes-rejected", "KAFKA_BOOTSTRAP": "edge-kafka.flywheel.svc:9092", "KAFKA_TOPIC": "episode-manifests"}
+    assert {settings[name]["valueFrom"]["secretKeyRef"]["name"] for name in ("S3_ACCESS_KEY", "S3_SECRET_KEY")} == {"minio-eval-readonly-credentials"}
+    assert not {"RECORDS_DIR", "FILES_NEWEST", "PAGE_TITLE", "PAGE_NOTE"} & set(settings)
+    assert live["spec"]["template"]["spec"]["volumes"] == [{"name": "versions", "configMap": {"name": "eval-dashboard-versions"}}]
+    assert live["spec"]["template"]["spec"]["serviceAccountName"] == "eval-dashboard"
+    assert (settings["OTHER_VIEW_URL"]["value"], settings["LIVE_DASHBOARD_URL"]["value"]) == (route_url("eval-dashboard"), route_url("dashboard"))
+    paired = env(one("eval-dashboard.yaml", "Deployment", "eval-dashboard"))
+    assert (paired["OTHER_VIEW_URL"]["value"], paired["OTHER_VIEW_LABEL"]["value"]) == (route_url("eval-dashboard-live"), "Live episodes (collection)"), \
+        "one name, one page: the paired page's link says which Live episodes it leads to"
+
+
+def evaluation_images() -> dict:
+    return {name: container(one(file, "Deployment", name))["image"] for file, name in (
+        ("eval-dashboard.yaml", "eval-dashboard"), ("eval-dashboard.yaml", "eval-dashboard-live"), ("eval-dashboard-show.yaml", "eval-dashboard-show"))}
+
+
+def test_one_image_three_deployments():
+    """The three evaluation pages pin the same digest: a rebuild moves all of them, or none."""
+    images = evaluation_images()
+    assert len(set(images.values())) == 1, images
+    assert re.fullmatch(r"quay\.io/jary/soarm-flywheel@sha256:[0-9a-f]{64}", images["eval-dashboard-show"])
+
+
+def test_the_pinned_image_can_say_what_the_live_lane_is():
+    """The episodes page must not run an image that cannot label itself, window its read or escape a row."""
+    assert not [name for name, image in evaluation_images().items() if image.endswith(IMAGE_WITHOUT_THE_PAGE_NOTE)], (
+        "this digest predates PAGE_NOTE / FILES_NEWEST: push the src/eval-dashboard change, run tools/hub/build-eval-dashboard.sh, "
+        "and pin the digest it prints on all three image lines (eval-dashboard.yaml x2, eval-dashboard-show.yaml) before this file is synced")
 
 
 # ---- the dashboard's live-lane helpers ----
@@ -567,6 +685,27 @@ def test_the_backend_in_show_mode_reads_the_show_volume_and_nothing_else(backend
     assert refused.status_code == 409 and len(list((lane / "curated").glob("*.json"))) == 162
     module["set_replicas"] = lambda *a, **k: pytest.fail("the live lane scaled one of the flywheel's deployments")
     assert client.post("/api/control/flywheel", json={"action": "stop"}).status_code == 409
+
+
+def test_live_episodes_links_to_the_live_lanes_own_page_and_only_on_the_live_lane(backend, monkeypatch):
+    """On the live lane the header has 'Live episodes', to the lane's own page; the flywheel's own page never has it, set or not."""
+    load, _ = backend
+    target = env(one("dashboard.yaml", "Deployment", "dashboard"))["SHOW_EPISODES_URL"]["value"]
+    assert target == route_url("eval-dashboard-show") != route_url("eval-dashboard-live")
+    monkeypatch.setenv("SHOW_EPISODES_URL", target)
+    monkeypatch.setenv("EVAL_DASHBOARD_URL", route_url("eval-dashboard"))
+    _, client = load(show=True)
+    html = client.get("/").get_data(as_text=True)
+    assert f'<a id="show-episodes-link" class="btn btn-link btn-sm" href="{target}">Live episodes &rarr;</a>' in html
+    assert f'<a id="eval-link" class="btn btn-link btn-sm" href="{route_url("eval-dashboard")}">Evaluation comparison &rarr;</a>' in html
+    assert "eval-dashboard-live" not in html, "the collection's record is not what this page's episodes are"
+    _, client = load(show=False)
+    html = client.get("/").get_data(as_text=True)
+    assert 'id="show-episodes-link"' not in html and 'id="eval-link"' in html
+    monkeypatch.setenv("SHOW_EPISODES_URL", "javascript:alert(1)")
+    _, client = load(show=True)
+    assert 'id="show-episodes-link"' not in client.get("/").get_data(as_text=True)
+    assert "['eval-link', 'show-episodes-link'].forEach" in SCRIPT, "both links carry ?theme="
 
 
 def test_the_backend_without_the_variable_is_the_flywheels_own(backend):

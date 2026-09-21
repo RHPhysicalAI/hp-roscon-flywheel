@@ -12,7 +12,8 @@ other host's certificate has been accepted too.
 |---|---|---|
 | Flywheel page | https://dashboard-flywheel.apps.sno-flywheel.local | live lane: robot zero's cameras, episodes judged and not kept, counter to 160 |
 | Paired evaluation | https://eval-dashboard-flywheel.apps.sno-flywheel.local | pinned to the governed run `9fb233e8` (295 -> 333 of 360) |
-| Live episodes (the collection's record) | https://eval-dashboard-live-flywheel.apps.sno-flywheel.local | success by lineage from the governed collection; not fed by the live lane |
+| Live episodes - live lane | https://eval-dashboard-show-flywheel.apps.sno-flywheel.local | robot zero's last 300 episodes as the curator judged them, success rate by model label; judged, not kept - a throwaway volume, no recordings. The flywheel page's "Live episodes" link |
+| Live episodes (collection) | https://eval-dashboard-live-flywheel.apps.sno-flywheel.local | the governed collection's record: success by lineage from object storage and the manifest topic. Never fed by the live lane - in tenants mode it does not move |
 | Fleet wall | https://fleet-wall-flywheel.apps.sno-flywheel.local/ | every robot's overhead camera, ray-traced on slice `0:3`; `r00` is robot zero |
 | One robot's cameras | https://fleet-wall-flywheel.apps.sno-flywheel.local/robot/r00/static.mjpg | also `/wrist.mjpg`, `.jpg` for one frame, any `rNN` |
 | GPU tenants dashboard | https://edge-perses-observability.apps.sno-flywheel.local/projects/observability/dashboards/gpu-tenants | four slices by tenant, training loss, renderer and assistant headlines |
