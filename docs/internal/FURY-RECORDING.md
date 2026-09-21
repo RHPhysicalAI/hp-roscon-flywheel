@@ -43,7 +43,7 @@ time anyway). Better, in this order:
 
 | Setting | Use |
 |---|---|
-| Resolution, frame rate | 1920x1080 at 30 fps: what a booth screen shows, and what the title cards and transitions are made at (section 5). 2560x1440 only if every take uses it and the master is scaled down once. Never mix |
+| Resolution, frame rate | one fixed 16:9 region for every take, 30 fps, recorded at the screen's native resolution (a 1920x1080-point region on a Retina screen records as 3840x2160); the masters are exported at 1920x1080, which is what a booth screen shows and what the title cards and transitions are made at. Recording above the export size is what lets the loop punch in on one panel and stay sharp. Never mix region sizes |
 | Browser zoom | one zoom for every page (propose 125%); check every page at that zoom before the first take. If one page needs another zoom, write it in the take log and use it on every take of that page |
 | Theme | light, everywhere. The flywheel page and the evaluation pages take `?theme=light` and remember it per hostname; pages with their own theme switch (GPU dashboard, Edge Manager, consoles, the workspace editor) are set once in the recording profile |
 | Browser profile | a new, clean profile: no bookmarks bar, no extensions, no autofill or password-manager popups, no other tabs, no personal history behind the address bar |
@@ -107,11 +107,10 @@ Arranged so that nothing recorded early is disturbed by what comes later, and so
 
 | Block | What | Disturbs | Between takes |
 |---|---|---|---|
-| 1 | B-roll and the long takes: fleet wall, GPU dashboard, terminal view, flywheel page cameras | nothing | nothing |
-| 2 | B's non-destructive segments: B01-B07, B12, B13, B15 | nothing | reload the page |
-| 3 | B's coding segment, B14 (about 3 min a take; plan three takes) | the workspace | the `reset-demo` command, then a new agent conversation (`/new`) |
-| 4 | B's promotion, B08-B11: one dedicated take with Edge Manager in frame from the merge to all 13 healthy | both Fleets, the pull request | reset (about 5 min), re-open (seconds), check |
-| 5 | Recording A, the full run-through. It contains one coding run and one promotion | both of the above | both of the above |
+| 1 | The loop's captures C1 to C9 (`docs/internal/FURY-LOOP-RECORDING.md`): dashboard, training, flywheel page, evaluation, pipeline, fleet wall, Edge Manager, Argo CD | nothing | reload the page |
+| 2 | The loop's coding capture, C10 (about 5 min a take) | the workspace | the `reset-demo` command, then a new agent conversation (`/new`) |
+| 3 | The loop's promotion capture, C11: one take from the pull request to all 13 healthy | both Fleets, the pull request | reset (about 5 min), re-open (seconds), check |
+| 4 | Recording A, the full run-through. It contains one coding run and one promotion | both of the above | both of the above |
 
 The promotion comes **last**, and there is **one take per reset cycle**:
 
@@ -134,92 +133,17 @@ tools/hub/reopen-promotion.sh --open
   workspace reset.
 - The reset is itself a real rollout, to the previous model. Do not record it and pass it off as the promotion.
 - The minutes after a promotion or a reset are when the live lane shows rejects (the policy's restart interrupts
-  an episode, and the lane records that truthfully). Record B02-B05 before block 4, or a quarter of an hour after it.
+  an episode, and the lane records that truthfully). Record the loop's flywheel page capture (C3) before any promotion take, or a quarter of an hour after one.
 
 ## 4. Shot list for B (the loop)
 
-One row per segment. "Length" is what the loop uses; the notes say how much to record. A caption is at most two
-lines on screen at a time, held five seconds or longer; the " / " in a cell separates one caption from the next.
-Captions are written to be read without sound. URLs: `docs/internal/FURY-URLS.md`.
-
-| Id | Title card | On screen | Action | Length | Captions, in order | Notes |
-|---|---|---|---|---|---|---|
-| B01 | One GPU, four tenants | GPU tenants dashboard | slow scroll over the four slices and their headline numbers | 25 s | One HP ZGX Fury workstation. One NVIDIA GB300 GPU, split into four isolated slices. / A coding assistant. A robot's policy. A training tenant. A renderer for a whole robot fleet. / All four are running right now. | record 3 min; no click needed |
-| B02 | Robot zero | flywheel page, the two cameras | none; let an episode play | 25 s | Robot zero, working from its two cameras. / Its policy is a signed image, delivered by Red Hat Edge Manager, on a GPU slice of its own. / Both cameras are ray-traced on another slice. | record 5 min, use one clean placement; "x2" label if sped up |
-| B03 | Every episode is judged | flywheel page, gates and episode log | none; wait for a pass and a reject | 35 s | Every episode goes through the curator's real gates: did the cubes land on the tray, was the motion smooth. / PASSED: all three cubes on the tray. / REJECTED: (the reason the page gives, word for word). / Live lane: judged, not kept. | record 10 min, cut one pass and one reject; a jump cut gets a visible dip to white, never a hidden splice |
-| B04 | The counter | flywheel page, the counter and "live lane: judged, not kept" | none | 20 s | Passed episodes are counted up to 160. / At 160 a governed training run would start. / On the live lane nothing is kept and nothing is started. The count begins again. | the real 160 moment if one was caught (section 1); otherwise mid-climb with these captions. Never the hand-set count |
-| B05 | Live episodes | "Live episodes - live lane" page | scroll once through the table | 15 s | Robot zero's last 300 episodes, as the curator judged them. Success by model label. / Judged, not kept: no recordings. | no rate in the caption - the page shows its own number |
-| B06 | The training tenant | GPU dashboard, panel "Training tenant - loss (round N)"; then the terminal view `training-watch.sh` | none | 25 s | The training tenant: real ACT fine-tunes, round after round. 9000 steps a round, about a quarter of an hour. / About 10 steps a second on a 1g slice, while three other tenants work. / Nothing from these rounds is promoted. | terminal prints a line about every ten seconds: record 3 min, use 12 s; "x4" label if sped up |
-| B07 | How a model earns promotion | paired evaluation page, pinned to `9fb233e8` | scroll from the headline to the paired table | 30 s | The governed run's paired evaluation: candidate against incumbent on 360 identical seeded scenes. / 295 -> 333 successes. 82% -> 92%. / 57 scenes fixed, 19 broken. Sign test. Gate: PASS. / Recorded results, shown in a live page. | nothing on screen says where it ran (section 7): for this segment the strap of section 5 reads `Recorded results - the governed run` |
-| B08 | A promotion is a pull request | the open pull request ("... - re-opened for a showing"), then its changed files | zoom until the first sentence reads; open the changed files | 20 s | This pull request re-proposes a promotion the pipeline made earlier: same signed image, same gate record. The pipeline did not run again; nothing was re-measured. / A promotion is a change in git: a signed model image's digest and a version, for both Fleets. | the first caption stays up as long as the pull request's text is in frame |
-| B09 | Merge | the pull request's merge button | one click (merge commit), cursor highlight on | 8 s | A person merges. Red Hat Edge Manager does the rest. | the elapsed timer starts at the click: 0:00 |
-| B10 | The host follows | Edge Manager, the GPU host's device; then the flywheel page's model badge | none | 20 s | 0:45 - both Fleets carry the new version. / 1:32 - the GPU host serves the promoted model on its slice. | burned-in timer, real time; speed label ("x6" or what it is). Times in captions are this take's own; 45 s and 1 min 32 s are the measured reference |
-| B11 | Twelve robots, in batches | Edge Manager, Fleet `robots`, device list | none | 25 s | The twelve robots follow in batches: canary, 25%, 50%, the rest. Waves of 1, 2, 3, 5, 1. / 3:23 - all twelve robots updated. 3:39 - all 13 devices healthy. / Nothing was pulled: every device already holds both models. | same take as B09 and B10, uncut in the raw file; timer and speed label as B10; reference 3 min 23 s and 3 min 39 s |
-| B12 | The fleet | fleet wall, full screen | none | 20 s | Twelve robots and robot zero. Every camera is ray-traced with CUDA on one GPU slice. / 13 robots at 15 frames a second, two 480x480 cameras each: about 228 camera pairs a second. | real speed only |
-| B13 | One robot | Edge Manager, one robot's device page | open a robot from the device list | 15 s | Each robot is a RHEL image-mode micro-VM. / It enrolled itself, was approved, and pulls and verifies its own signed images. / One golden image; every robot has its own identity. | pick a robot that is Online, UpToDate, Healthy |
-| B14 | A coding tenant on the same GPU | left: the Dev Spaces workspace; right: GPU dashboard, "Generated tokens per second" with the training and rendering slices in view | type the prompt, let the agent run to green | 40 s | A coding agent in a Dev Spaces workspace. Its model is served on the largest slice of the same GPU. / One prompt: "Read DEMO-TASK.md and do what it says." / Failing tests. The agent reads, writes, runs the tests, corrects itself. All passing. / The assistant's tokens per second rise. The training and rendering slices do not move. Isolation. / Measured: 246.6 tokens a second while the slice next door trains, 245.7 with the GPU idle. Unchanged. | both windows in ONE capture, so the relation in time is real; a run takes about 3 min: speed label ("x5" or what it is) |
-| B15 | Signed, logged, verified | the pull request's reference to the transparency-log entry; the entry itself; Argo CD's application list | none | 20 s | Every image is signed. Every signature has an entry in a transparency log. / Each device checks both before it runs anything. / Everything here is delivered by GitOps. | how the entry is put on screen is not rehearsed - section 8 |
-| B16 | (closing card) | card only | - | 8 s | see section 5 | same background as the opening card |
-
-B14's terminal shows `7 failed, 342 passed, 5 skipped` at the start and `349 passed, 5 skipped` at the end (the
-presenter notes on branch `demo/coding-task`). Let the terminal show them; the captions carry no counts.
-
-**B-roll worth having** (no captions planned; real speed unless labelled):
-
-- the fleet wall, full screen, 5 minutes unbroken
-- the GPU tenants dashboard for 20 minutes, across the end of a training round (the loss curve's sawtooth)
-- the terminal view across a round's end and the next round's start
-- the flywheel page's cameras, 10 minutes
-- Edge Manager's device list at rest: 13 devices, all healthy
-- Argo CD's application list, everything synced
-- a second angle on the promotion: the fleet wall during the rollout, from a second take
+In `docs/internal/FURY-LOOP-RECORDING.md`: eleven captures in recording order (its Part 1), and what the loop takes
+from each, with the captions (its Part 2).
 
 ## 5. The loop's storyboard
 
-Someone walks up at any second. Within 20 seconds they must know what they are looking at. Three devices do that:
-
-1. **A strap that stays**, top left, small: `Live system, recorded - one workstation, one GPU, four tenants`. Only
-   B07 swaps it (see its notes): nothing may tie the governed run's evaluation to a place.
-2. **A segment title that stays**, under the strap, for the whole segment: the title-card text of section 4.
-3. **No 20 seconds without a caption** that names what is in frame. Section 4's captions are spaced for that.
-
-Full-screen cards only at the five chapter starts (3 s each); inside a chapter the segment title changes in place.
-
-| # | Card or segment | Length |
-|---|---|---|
-| - | **Opening card** | 6 s |
-| 1 | Chapter card "One machine, four tenants" - B01 | 28 s |
-| 2 | Chapter card "The flywheel, still running" - B02, B03, B04, B05 | 98 s |
-| 3 | B06, B07 (titles in place) | 55 s |
-| 4 | B08, B09, B10, B11 (one timer across all four) | 73 s |
-| 5 | Chapter card "The fleet" - B12, B13 | 38 s |
-| 6 | Chapter card "A coding tenant on the same GPU" - B14 | 43 s |
-| 7 | Chapter card "Signed, logged, verified" - B15 | 23 s |
-| - | **Closing card** - B16 | 8 s |
-
-About 6 min 10 s. To get under 6 minutes, drop B05 and B13 first (about 5 min 40 s). Never drop B08's first caption.
-
-**The loop point** is between the closing card and the opening card. Both use the same background, and the closing
-card fades to that background before the opening card's text comes up, so the seam does not show.
-
-One more caption appears twice, 6 s each, at the end of B05 and at the end of B11: `What you see is judged and
-not kept. This is the system that produced that promotion, still running.`
-
-**Opening card**
-
-> One workstation. One GPU. Four tenants.
-> A robot and its fleet, a training tenant and a coding assistant - all running at once on an HP ZGX Fury.
-> Everything in this video is the real system, recorded as it ran. Sped-up parts are labelled.
-
-**Closing card**
-
-> OpenShift · OpenShift AI · Red Hat Edge Manager · Dev Spaces · RHEL image mode
-> One workstation. 13 managed devices. Everything delivered by GitOps; every image signed, logged and verified.
-> Ask us about it.
-
-**Where cards come from.** Title cards and transitions are the owner's to make, at 1920x1080 and 30 fps to match
-the capture. Card text comes from this document. The pages are recorded light; whether the cards are light or dark
-is the owner's call (section 8).
+Also in `docs/internal/FURY-LOOP-RECORDING.md`: the strap, the chapter cards, the opening and closing cards and the
+loop point. Title cards and transitions are the owner's to make, at 1920x1080 and 30 fps.
 
 ## 6. Script for A
 

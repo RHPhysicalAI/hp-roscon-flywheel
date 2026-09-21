@@ -10,6 +10,7 @@ docs/internal/THOR-TESTING-REUSE.md
 docs/internal/BOOTSTRAP-LOOP.md
 docs/internal/CUDA-RENDERER-PLAN.md
 docs/internal/FURY-RECORDING.md
+docs/internal/FURY-LOOP-RECORDING.md
 docs/internal/phase3-ladder.html
 docs/DEMO_RUNBOOK.md
 docs/demo-kit/**
