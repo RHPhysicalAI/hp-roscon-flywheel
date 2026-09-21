@@ -21,8 +21,6 @@ gated pipeline, signing, promotion and fleet delivery.
 > [!NOTE]
 > This project was developed with assistance from AI tools.
 
-> **Visual to add:** a photo of the workstation on the bench, as the opening picture.
-
 ## One GPU, four tenants
 
 The workstation has one NVIDIA GB300 with 251 GiB of GPU memory, beside a 72-core Grace CPU and 492 GiB of system
@@ -50,9 +48,7 @@ OpenAI-compatible API. A Red Hat OpenShift Dev Spaces workspace on the hub opens
 agent pointed at the slice, so the code and the model that reads it stay on the workstation. A single stream decodes
 about 245 tokens a second, with the first token after 0.13 s.
 
-![The terminal coding agent in the Dev Spaces workspace, set to the Qwen3 coder model on the Fury's slice](docs/images/coding-assistant.png)
-
-> **Visual to add:** the agent in the middle of a task in the Dev Spaces workspace - an edit and a test run on screen.
+![The terminal coding agent at work in the Dev Spaces workspace: an edit in progress and its task list, on the Qwen3 coder model from the Fury's slice](docs/images/coding-agent-at-work.png)
 
 ### Robot zero and the flywheel
 
