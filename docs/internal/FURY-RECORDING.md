@@ -9,16 +9,16 @@ at the blank lines. **Bold** numbers are said exactly as written. `«…»` mean
 The last line of each beat is the bridge into the next. `▶ EDIT POINT` marks the two places where the recording can
 stop and jump ahead if the wait runs long.
 
-Scene tabs, leftmost: **R** the repository's README · **U** the upstream demo page · **A** the arm's page ·
-**H** the workstation's page. Then, left to right: **1** GPU dashboard · **2** flywheel page · **3** live episodes ·
-**4** paired evaluation · **5** pull request · **6** Edge Manager · **7** fleet wall · **8** workspace ·
-**9** transparency log · **10** Argo CD. Terminal A: `training-watch.sh`, running. Terminal B: the checkout.
+Every cue names the page. Have them open in this order, left to right: the README on GitHub · the upstream demo
+page · the arm's page · the HP ZGX Fury page · GPU dashboard · flywheel page · live episodes · paired evaluation ·
+the pull request · Edge Manager · fleet wall · workspace · transparency log · Argo CD. Two terminals:
+`training-watch.sh` running, and a shell in the checkout.
 
 ---
 
 ## 0 · Set the scene
 
-`▶ TAB R, the README, title in view.`
+`▶ README on GitHub, title in view.`
 
 This is the project. Red Hat and HP: empowering physical AI from bench to fleet.
 
@@ -31,7 +31,7 @@ job for a robotics team, at the same time.
 
 Two: the flywheel. A robot's model gets better on its own work - and only ships when it proves it is better.
 
-`▶ TAB U, the upstream demo page.`
+`▶ UPSTREAM DEMO PAGE.`
 
 The robot, its simulation and the model are upstream work of the ROS physical AI community.
 
@@ -40,14 +40,14 @@ will see all the way through.
 
 We did not build the robot. We built the platform around it.
 
-`▶ TAB A, the arm's page.`
+`▶ THE ARM'S PAGE.`
 
 The arm is the SO-101 from LeRobot: open hardware, six motors, the arm that most of the physical AI community learns
 on.
 
 Everything today is that arm, simulated - thirteen of them.
 
-`▶ TAB H, the workstation's page.`
+`▶ HP ZGX FURY PAGE.`
 
 And the machine. An HP ZGX Fury.
 
@@ -62,7 +62,7 @@ assistant. Nothing is in a cloud.
 
 ## 1 · One machine, four tenants
 
-`▶ TAB 1. Hands off the mouse for the first two lines.`
+`▶ GPU DASHBOARD. Hands off the mouse for the first two lines.`
 
 This is one workstation.
 
@@ -85,7 +85,7 @@ An OpenShift hub runs in a VM on the same machine. It manages **13** devices: th
 
 ## 2 · Collect
 
-`▶ TAB 2. Let an episode play under the words.`
+`▶ FLYWHEEL PAGE. Let an episode play under the words.`
 
 This is robot zero.
 
@@ -114,7 +114,7 @@ Passed episodes count up to **160**. At 160, this is where a governed training r
 
 In a few minutes you will see a model promoted. This is the system that produced that promotion - still running.
 
-`▶ TAB 3.`
+`▶ LIVE EPISODES.`
 
 The same robot's last **300** episodes, as the curator judged them. Success by model: `«read the rate»`.
 
@@ -124,13 +124,13 @@ The same robot's last **300** episodes, as the curator judged them. Success by m
 
 ## 3 · Train
 
-`▶ TAB 1, the "Training tenant" group. POINT at the loss curve.`
+`▶ GPU DASHBOARD, the "Training tenant" group. POINT at the loss curve.`
 
 This is the training tenant. Real ACT fine-tunes, round after round, on one small slice.
 
 A round is **9,000** steps - about a quarter of an hour. Then the next one starts.
 
-`▶ TERMINAL A. Let a line or two arrive.`
+`▶ TRAINING TERMINAL. Let a line or two arrive.`
 
 About **10** steps a second, while three other tenants work next to it.
 
@@ -142,7 +142,7 @@ Nothing from these rounds is promoted. The point is simpler: training shares thi
 
 ## 4 · Evaluate and gate
 
-`▶ TAB 4.`
+`▶ PAIRED EVALUATION.`
 
 This is the governed run's paired evaluation. Candidate against incumbent, on **360** identical seeded scenes.
 
@@ -168,7 +168,7 @@ What this hub did with that result: the gate decision, packaging and signing the
 
 ## 5 · Promote - LIVE
 
-`▶ TAB 5, the open pull request. Title and first sentence on screen.`
+`▶ PULL REQUEST, title and first sentence on screen.`
 
 This pull request is a re-showing of a recorded promotion.
 
@@ -191,7 +191,7 @@ A human merges. That is the only thing a person does.
 
 Nobody logs in to a robot. Nothing is downloaded - every device already holds both models.
 
-`▶ TAB 6, Devices. Stay until the host leaves "Up-to-date".`
+`▶ EDGE MANAGER, Devices. Stay until the host leaves "Up-to-date".`
 
 Edge Manager picks the change up at its next check of git.
 
@@ -211,7 +211,7 @@ and **1**.
 In the measured run the host was serving the new model a minute and a half after the merge, and all twelve robots
 within three and a half minutes.
 
-`▶ Do not wait. Go to beat 6 and come back to tab 6 when it is done.`
+`▶ Do not wait. Go to beat 6 and come back to Edge Manager when it is done.`
 
 *Bridge:* While the batches roll, the fleet itself.
 
@@ -219,7 +219,7 @@ within three and a half minutes.
 
 ## 6 · Fleet
 
-`▶ TAB 7.`
+`▶ FLEET WALL.`
 
 Thirteen robots. `r00` is robot zero; the other twelve are the fleet.
 
@@ -227,7 +227,7 @@ Two cameras each, **480** by **480**, **15** frames a second - all ray-traced on
 
 That slice manages about **228** camera pairs a second.
 
-`▶ TAB 6. OPEN one robot that is Online, Up-to-date, Healthy.`
+`▶ EDGE MANAGER. OPEN one robot that is Online, Up-to-date, Healthy.`
 
 Each of the twelve is a RHEL image mode virtual machine.
 
@@ -243,7 +243,7 @@ own identity.
 
 And there is the rollout, finished: twelve of twelve. All thirteen healthy.
 
-`▶ TAB 2, if the badge is in view.`
+`▶ FLYWHEEL PAGE, if the badge is in view.`
 
 The flywheel page now shows the promoted model.
 
@@ -253,7 +253,7 @@ The flywheel page now shows the promoted model.
 
 ## 7 · Coding tenant
 
-`▶ TAB 8, the prepared workspace, agent ready.`
+`▶ WORKSPACE, agent ready.`
 
 A coding agent in a Dev Spaces workspace. Its model runs on the large slice of this same GPU.
 
@@ -270,7 +270,7 @@ It runs the tests itself, reads the failures, and corrects its own work. Nobody 
 It may edit files and run the tests, and nothing else. Web access is off. If you see a refusal, that is the guard
 rail working.
 
-`▶ TAB 1 while it runs. POINT at "Generated tokens per second", then at the training and rendering lines.`
+`▶ GPU DASHBOARD while it runs. POINT at "Generated tokens per second", then at the training and rendering lines.`
 
 About **245** tokens a second, first token in about **0.13** seconds.
 
@@ -278,7 +278,7 @@ The assistant is busy - and the training and rendering slices did not move.
 
 Measured with training running next door: **246.6** against **245.7** tokens a second. Unchanged. That is isolation.
 
-`▶ TAB 8. Wait for "349 passed, 5 skipped".`
+`▶ WORKSPACE. Wait for "349 passed, 5 skipped".`
 `▶ EDIT POINT: if the agent is still working, stop talking here; the recording jumps to the green line.`
 
 All green - `«read the last line»`. The existing tests are what shows it broke nothing.
@@ -289,13 +289,13 @@ All green - `«read the last line»`. The existing tests are what shows it broke
 
 ## 8 · Close
 
-`▶ TAB 9.`
+`▶ TRANSPARENCY LOG.`
 
 Every image you saw is signed. Every signature has an entry in a transparency log.
 
 Each device checks both before it runs anything.
 
-`▶ TAB 10.`
+`▶ ARGO CD.`
 
 Everything is delivered from git: the platform, the Fleets, the promotion you just watched.
 
