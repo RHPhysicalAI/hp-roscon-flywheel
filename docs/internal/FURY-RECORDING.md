@@ -11,7 +11,8 @@ stop and jump ahead if the wait runs long.
 
 Every cue names the page. Have them open in this order, left to right: the README on GitHub · the upstream demo
 page · the arm's page · the HP ZGX Fury page · GPU dashboard · flywheel page · live episodes · paired evaluation ·
-the pull request · Edge Manager · fleet wall · workspace · transparency log · Argo CD. Two terminals:
+OpenShift AI (the pipeline run, then the Model Registry) · the pull request · Edge Manager · fleet wall ·
+workspace · transparency log · Argo CD. Two terminals:
 `training-watch.sh` running, and a shell in the checkout.
 
 ---
@@ -160,7 +161,28 @@ The gate says pass. A rule, not an opinion.
 
 Recorded results, in a live page. An evaluation takes hours; it is never a live beat.
 
-What this hub did with that result: the gate decision, packaging and signing the model image, and a pull request.
+*Bridge:* That result went into a pipeline.
+
+`▶ OPENSHIFT AI, the run promote-act-v2-ft160, Graph tab. Every step green.`
+
+This is that pipeline, on OpenShift AI. One run, top to bottom.
+
+`▶ POINT down the graph as you name the steps.`
+
+The gate - the decision you just saw.
+Package the model as an image.
+Sign it.
+Register it.
+Open a pull request.
+
+Every step green. The pipeline does not deploy anything. It proposes.
+
+`▶ OPENSHIFT AI, Model Registry, soarm-act, Versions tab.`
+
+And the Model Registry: the version it registered, with the gate's result in its description - `«read the line
+under the version name»`.
+
+One entry, written once by the pipeline. Nobody edits it afterwards.
 
 *Bridge:* And a pull request is something we can merge.
 
