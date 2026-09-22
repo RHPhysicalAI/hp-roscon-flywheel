@@ -30,14 +30,26 @@ Ask the demo owner for every credential **out of band**. None is in this reposit
 
 **Network**
 - [ ] You are a member of the demo owner's tailnet, with access to the machine (the demo owner grants it).
-- [ ] The cluster's names resolve through the tailnet: on macOS the check below answers `10.20.0.10` (on Linux,
-      any resolver lookup of that name must). If your `/etc/hosts` pins `sno-flywheel.local` names,
-      comment those lines out first.
+- [ ] The cluster's names resolve through the tailnet, and quickly: the check below answers `10.20.0.10` with a
+      lookup time well under a second. If your `/etc/hosts` pins `sno-flywheel.local` names, comment those lines
+      out first.
 - [ ] `ssh gb300@hp-fury` gives you a shell on the host.
 
 ```
-dscacheutil -q host -a name api.flightctl.apps.sno-flywheel.local
+curl -sk -o /dev/null -w '%{time_namelookup}s\n' https://api.flightctl.apps.sno-flywheel.local/
 ```
+
+**macOS: a 5-second lookup.** macOS treats every `.local` name as a Bonjour name and waits five seconds for a
+multicast answer before it asks the tailnet, so every page takes five seconds longer than it should. One-time fix:
+send the domain straight to the host's resolver.
+
+```
+sudo mkdir -p /etc/resolver
+printf 'nameserver %s\n' "$(tailscale ip -4 hp-fury)" | sudo tee /etc/resolver/sno-flywheel.local
+```
+
+The check above then reports about 0.1 s. (`dscacheutil -q host` still takes five seconds afterwards; it is the
+command that is slow, not the pages.)
 
 | Credential, from the demo owner | Needed for | Without it |
 |---|---|---|
