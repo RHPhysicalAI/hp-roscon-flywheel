@@ -13,7 +13,7 @@ Every cue names the page. Have them open in this order, left to right: the READM
 page · the arm's page · the HP ZGX Fury page · GPU dashboard · flywheel page · live episodes · paired evaluation ·
 OpenShift AI (the pipeline run, then the Model Registry) · the pull request · Edge Manager · fleet wall ·
 workspace · transparency log · Argo CD. Two terminals:
-`training-watch.sh` running, and a shell in the checkout.
+`training-watch.sh` running, and a shell in the checkout (`KUBECONFIG` set, `cosign` installed).
 
 ---
 
@@ -311,11 +311,21 @@ All green - `«read the last line»`. The existing tests are what shows it broke
 
 ## 8 · Close
 
-`▶ TRANSPARENCY LOG.`
+`▶ MAC TERMINAL, in the checkout. TYPE:  tools/hub/verify-signed.sh   ENTER. Takes a few seconds.`
 
 Every image you saw is signed. Every signature has an entry in a transparency log.
 
-Each device checks both before it runs anything.
+This is the check every device runs before it starts anything - the same key, the same log.
+
+`▶ POINT at the three check lines, then at "log entry: index N".`
+
+The claims validated. The entry found in the log. The signature verified against the key.
+
+And that is the entry's number in the log: `«read the index»`.
+
+`▶ TRANSPARENCY LOG, optional: paste the entry's address from the terminal into the browser.`
+
+The entry itself, with its inclusion proof - the log's promise that it was there and cannot be removed.
 
 `▶ ARGO CD.`
 

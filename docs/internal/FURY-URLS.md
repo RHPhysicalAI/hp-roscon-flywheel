@@ -23,7 +23,7 @@ other host's certificate has been accepted too.
 | OpenShift AI | https://data-science-gateway.apps.sno-flywheel.local | pipelines runs, model registry |
 | Argo CD | https://openshift-gitops-server-openshift-gitops.apps.sno-flywheel.local | every app under GitOps |
 | Object storage console | https://minio-console-minio.apps.sno-flywheel.local | say "object storage" on stage |
-| Transparency log (Rekor) | https://rekor-server-trusted-artifact-signer.apps.sno-flywheel.local | the signatures' entries |
+| Transparency log (Rekor) | https://rekor-server-trusted-artifact-signer.apps.sno-flywheel.local | the signatures' entries; the landing page shows only a count - `tools/hub/verify-signed.sh` verifies the pinned model and prints its entry's address (`/api/v1/log/entries?logIndex=N`) |
 | The repository, the promotion PRs | https://github.com/RHPhysicalAI/hp-roscon-flywheel/pulls | PR #7 is the recorded promotion |
 | Images | https://quay.io/repository/jary/soarm-flywheel , https://quay.io/repository/jary/soarm-act-modelcar | runtime and model images, signed |
 

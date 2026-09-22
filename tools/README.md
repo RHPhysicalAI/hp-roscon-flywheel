@@ -25,7 +25,7 @@ terminal.
 | The promotion beat (between showings) | `reset-promotion.sh`, `reopen-promotion.sh`; shared rule `lib-promotion.sh` | put both Fleets back to the model before the last promotion; re-propose the same signed model in a new pull request that says what it is. Both refuse while a rollout is in progress |
 | The fleet | `fleet-enrol-config.sh`, `fleet-approve.sh`, `fleet-status.sh`, `fleet-worlds-scale.sh` | make the robots' short-lived enrolment config and hand it to the host; approve the enrolment requests that really are fleet VMs, with their labels; the fleet as Edge Manager sees it, decommissioning, stale requests; size the robots' worlds on the hub |
 | Robot zero and the GPU mode | `robot-zero.sh`, `fury-switch.sh` | place the host's policy on its MIG slice through the device's label, reset or inspect robot zero; move the machine between its two GPU modes in the one safe order |
-| At demo time | `training-watch.sh` | the training tenant's output, formatted for a projector; reads and changes nothing |
+| At demo time | `training-watch.sh`, `verify-signed.sh` | the training tenant's output, formatted for a projector; verify the pinned model image against the signing key and the transparency log, as every device does, and print its log entry's address. Both read and change nothing |
 | `manual/` | three `EndpointSlice` manifests | applied by hand once per hub: Argo CD does not manage that kind (`argocd/README.md`) |
 
 ## `host/fury/` - on the GPU host, with sudo
