@@ -1,15 +1,48 @@
 <!-- This project was developed with assistance from AI tools. -->
 # Fury demo-lite: showing the running system
 
-For a presenter who did not build this: a partner-facing colleague, a manager, a booth volunteer. The system is
-already running. Someone technical - **the demo owner** - prepared it, opened the browser tabs in order and accepted
-the certificates. You show what is running and talk to it. The full technical demo is `docs/FURY-DEMO.md`.
+For a presenter: a partner-facing colleague, a manager, a booth volunteer. The system is already running - 
+You only need to show what is running and talk to it. 
+
+THIS WILL NOT WORK WITHOUT BEING ON THE CORRECT TAILNET. Do the setup below once, the day before if you can.
+
+## Setup, once
+
+The pages live on a private network reached through Tailscale. Nothing here needs a password for the pages
+themselves.
+
+1. **Get on the tailnet.** Give the demo owner the email address you sign in to Tailscale with (Google, GitHub or
+   Microsoft); accept the invitation that arrives.
+2. **Install Tailscale and sign in** with that address.
+   - macOS: `brew install --cask tailscale`, or the App Store. Open it, sign in. In its menu, "Use Tailscale DNS
+     settings" and "Use Tailscale subnets" must both be ticked.
+   - Linux: `curl -fsSL https://tailscale.com/install.sh | sh`, then `sudo tailscale up --accept-routes --accept-dns`.
+   - Windows: the installer from tailscale.com/download, sign in; DNS and subnets are on by default.
+3. **Check you can reach the machine:** `tailscale ping hp-fury` answers.
+4. **macOS only: stop the five-second wait.** macOS treats these `.local` names as Bonjour names and waits five
+   seconds on every page. One-time fix:
+
+   ```
+   sudo mkdir -p /etc/resolver
+   printf 'nameserver %s\n' "$(tailscale ip -4 hp-fury)" | sudo tee /etc/resolver/sno-flywheel.local
+   ```
+
+   If `/etc/hosts` pins any `sno-flywheel.local` name, comment those lines out.
+5. **Check the names resolve, fast:** this prints the lookup time; it should be well under a second.
+
+   ```
+   curl -sk -o /dev/null -w '%{time_namelookup}s\n' https://dashboard-flywheel.apps.sno-flywheel.local/
+   ```
+
+6. **Open every stop's link once** and accept the certificate warning on each. The warnings are per hostname, so
+   each page asks once. Do this before the audience is there.
+
+## How to run it
 
 - **Browser only.** No terminal, no commands, nothing to merge, reset, approve or delete. Click only what a stop
   names. You never need a password: if a page asks for one, skip that stop.
 - **7 to 10 minutes** for stops 1-7 and the close. Every stop works alone: with two minutes, do stops 1 and 2.
 - **Numbers come off the screen or off this page,** never from memory.
-- **Anything deeper than this page: the demo owner.** Saying so is a good answer.
 
 | Stop | Tab, left to right | Min | The point |
 |---|---|---|---|
@@ -36,8 +69,8 @@ the certificates. You show what is running and talk to it. The full technical de
 > rolled it out: the GPU host was serving the new model a minute and a half after the merge, and all twelve robots
 > within three and a half minutes. Every device checks the signature itself before it runs anything.
 >
-> All of it is delivered from git, on OpenShift, OpenShift AI, Red Hat Edge Manager, OpenShift Dev Spaces and RHEL
-> image mode. What I am showing is the system that produced that promotion, still running.
+> All of it is delivered from git, on OpenShift, OpenShift AI, Red Hat Edge Manager, OpenShift Dev Spaces and RHEL.
+> What I am showing is the system that produced that promotion, still running.
 
 ## Words to use, words to avoid
 
@@ -200,10 +233,9 @@ the certificates. You show what is running and talk to it. The full technical de
   - *Does it slow the others down?* "Measured: the coding assistant's speed did not change with this running."
 - **Hand off:** what is being trained, and on what: the demo owner.
 
-## Stop 8 - OPTIONAL: the coding workspace (3-5 min)
+## Stop 8 - The coding workspace (3-5 min)
 
-Only if the demo owner told you the workspace is reset and the agent is waiting. It is the one place you type, and
-it can be shown **once**; after that it needs the demo owner's reset.
+If reset is needed, exit opencode and do a `git reset --hard HEAD` then `clear`. Then, run opencode again.
 
 - **Tab:** Coding workspace (OpenShift Dev Spaces) - https://devspaces.apps.sno-flywheel.local
 - **What you are looking at:** a developer's workspace in the browser. In one pane a coding agent waits for an
@@ -211,7 +243,7 @@ it can be shown **once**; after that it needs the demo owner's reset.
   missing on purpose: 7 tests fail, 342 pass.
 - **Do:** click into the agent's pane, type this sentence exactly, press Enter. Type it; do not paste by mouse.
 
-  > Read DEMO-TASK.md and do what it says.
+  > Read DEMO-TASK.md and follow those instructions.
 
 - **What will happen:** the agent reads the task, the tests and the code, writes the feature, runs the tests and
   corrects itself. Done when the screen shows `349 passed, 5 skipped`: about three minutes; have talk for five.
@@ -237,8 +269,6 @@ it can be shown **once**; after that it needs the demo owner's reset.
   - "Everything is delivered from git: the system follows what is written there."
   - "The products on screen: OpenShift, OpenShift AI, Red Hat Edge Manager, OpenShift Dev Spaces, RHEL image mode."
   - "This is the system that produced that promotion, still running."
-- **If asked** *Is this supported? Can I buy it like this?* "This is what is running today. For what is supported on
-  which hardware, the demo owner will put you in touch with the right people."
 
 ## If something looks wrong
 
@@ -250,32 +280,5 @@ it can be shown **once**; after that it needs the demo owner's reset.
 | A page will not load | Skip the stop. Tell the demo owner afterwards. |
 | A page asks for a user name and password | You do not have one and do not need one. Skip the stop; tell the demo owner. |
 | The counter is full and says "this is where a governed training run would start" | Nothing is wrong; that is the design. Say: "160 good episodes is where a governed run would start training. On the live lane nothing was kept and nothing was started; the count begins again." It clears after five minutes. |
-| The screen has gone dark | Move the mouse or press a key. If the laptop wants a password, fetch the demo owner and tell the 60-second story meanwhile. |
-| Anything else | Do not try to fix it. Note what you saw - a phone photo of the screen is ideal - and tell the demo owner. |
 
 **Fallback:** if most pages fail, play the recorded video from the desktop and talk over it with the 60-second story.
-Where a section of the video is sped up, a caption says so ("x8"). The timings it shows are real.
-
-## Pre-flight card - for the DEMO OWNER
-
-Before the laptop goes to a lite presenter, all of this is true. How to get there: `docs/FURY-DEMO.md`.
-
-- [ ] One browser window, tabs in the order of the table at the top, every page loaded, every hostname's certificate
-      accepted - the fleet wall's too, because the flywheel page embeds its pictures.
-- [ ] GitHub tab on the "Closed" list, numbers 7 and 8 in view. No promotion pull request left open - or the
-      presenter knows it is there and that it is not theirs to merge.
-- [ ] Edge Manager logged in: thirteen devices online, up to date, healthy; both fleets on the promoted model; no
-      rollout in progress. Fleet wall: twelve robots and `r00`, "13 live, 0 stale".
-- [ ] Flywheel page: "Serving - live lane", both cameras moving, the count's start time honest (no hand-set total).
-- [ ] GPU tenants dashboard: four slices named by tenant; the loss panel's title shows a round number.
-- [ ] Coding workspace reset to 7 failing tests, the agent started on an empty conversation and waiting, panes
-      arranged - or the presenter is told to leave stop 8 out.
-- [ ] Show day: the training trigger is disarmed, so nothing fires unattended.
-- [ ] Laptop on mains power; sleep, screen lock and screen saver off; notifications off; on the demo's network.
-- [ ] The recorded video on the desktop, played once on this laptop (see the recording plan, kept by the demo owner). The presenter
-      has this document on paper or a second screen, and knows how to reach you.
-
-## Not rehearsed yet
-
-- This walk-through has not been given end to end by a non-technical presenter.
-- The coding task has not been timed on this cluster: "about three minutes" is a comparable task in rehearsal.
