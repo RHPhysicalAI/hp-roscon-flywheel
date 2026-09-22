@@ -2,19 +2,65 @@
 # The Fury demo - show script
 
 The words, in order, for the full demo. Set-up, tabs and recovery are in `docs/FURY-DEMO.md` (sections 3 and 7);
-this page is what you read while you present. About 21 minutes.
+this page is what you read while you present.
 
-**How to read it.** Every beat starts with the running clock and the tab. Lines in `▶ CAPS` are what you do; plain
-lines are what you say. One thought per line - breathe at the blank lines. **Bold** numbers are said exactly as
-written. `«…»` means read the live number off the screen. The last line of each beat is the bridge into the next.
+**How to read it.** Lines in `▶ CAPS` are what you do; plain lines are what you say. One thought per line - breathe
+at the blank lines. **Bold** numbers are said exactly as written. `«…»` means read the live number off the screen.
+The last line of each beat is the bridge into the next. `▶ EDIT POINT` marks the two places where the recording can
+stop and jump ahead if the wait runs long.
 
-Tabs, left to right: **1** GPU dashboard · **2** flywheel page · **3** live episodes · **4** paired evaluation ·
-**5** pull request · **6** Edge Manager · **7** fleet wall · **8** workspace · **9** transparency log · **10** Argo CD.
-Terminal A: `training-watch.sh`, running. Terminal B: the checkout.
+Scene tabs, leftmost: **R** the repository's README · **U** the upstream demo page · **A** the arm's page ·
+**H** the workstation's page. Then, left to right: **1** GPU dashboard · **2** flywheel page · **3** live episodes ·
+**4** paired evaluation · **5** pull request · **6** Edge Manager · **7** fleet wall · **8** workspace ·
+**9** transparency log · **10** Argo CD. Terminal A: `training-watch.sh`, running. Terminal B: the checkout.
 
 ---
 
-## 1 · Open - one machine, four tenants `00:00` → `01:30`
+## 0 · Set the scene
+
+`▶ TAB R, the README, title in view.`
+
+This is the project. Red Hat and HP: empowering physical AI from bench to fleet.
+
+One workstation carries a robot-learning project from the engineer's bench to a managed fleet of robots.
+
+It tells two stories.
+
+One: one GPU, four tenants. The GPU is split in hardware into four isolated slices, and each slice does a different
+job for a robotics team, at the same time.
+
+Two: the flywheel. A robot's model gets better on its own work - and only ships when it proves it is better.
+
+`▶ TAB U, the upstream demo page.`
+
+The robot, its simulation and the model are upstream work of the ROS physical AI community.
+
+An SO-ARM101 arm in Gazebo, and a pretrained ACT policy that places three cubes on a tray. That is the task you
+will see all the way through.
+
+We did not build the robot. We built the platform around it.
+
+`▶ TAB A, the arm's page.`
+
+The arm is the SO-101 from LeRobot: open hardware, six motors, the arm that most of the physical AI community learns
+on.
+
+Everything today is that arm, simulated - thirteen of them.
+
+`▶ TAB H, the workstation's page.`
+
+And the machine. An HP ZGX Fury.
+
+A **72**-core Grace CPU. A Blackwell Ultra GPU with **252** gigabytes of memory. **496** gigabytes of system memory.
+
+Everything you are about to see runs on this one box: the robots, the fleet manager, the training, the coding
+assistant. Nothing is in a cloud.
+
+*Bridge:* Let's look at what that GPU is doing right now.
+
+---
+
+## 1 · One machine, four tenants
 
 `▶ TAB 1. Hands off the mouse for the first two lines.`
 
@@ -33,14 +79,11 @@ All four are working right now. Nothing gets switched on or off during this demo
 
 An OpenShift hub runs in a VM on the same machine. It manages **13** devices: this host, and twelve robots.
 
-Two stories today. One GPU, four tenants - and how a robot's model gets better, under control. We call that the
-flywheel.
-
 *Bridge:* Let's start with the robot.
 
 ---
 
-## 2 · Collect `01:30` → `04:30`
+## 2 · Collect
 
 `▶ TAB 2. Let an episode play under the words.`
 
@@ -79,7 +122,7 @@ The same robot's last **300** episodes, as the curator judged them. Success by m
 
 ---
 
-## 3 · Train `04:30` → `06:30`
+## 3 · Train
 
 `▶ TAB 1, the "Training tenant" group. POINT at the loss curve.`
 
@@ -97,7 +140,7 @@ Nothing from these rounds is promoted. The point is simpler: training shares thi
 
 ---
 
-## 4 · Evaluate and gate `06:30` → `08:30`
+## 4 · Evaluate and gate
 
 `▶ TAB 4.`
 
@@ -123,7 +166,7 @@ What this hub did with that result: the gate decision, packaging and signing the
 
 ---
 
-## 5 · Promote - LIVE `08:30` → `12:30`
+## 5 · Promote - LIVE
 
 `▶ TAB 5, the open pull request. Title and first sentence on screen.`
 
@@ -174,7 +217,7 @@ within three and a half minutes.
 
 ---
 
-## 6 · Fleet `12:30` → `16:30`
+## 6 · Fleet
 
 `▶ TAB 7.`
 
@@ -196,6 +239,7 @@ Twelve robots were enrolled, approved and healthy about **25** minutes after the
 own identity.
 
 `▶ BACK to the device list. ⏱ all 13 "Up-to-date" and "Healthy".`
+`▶ EDIT POINT: if they are not all there yet, stop talking here; the recording jumps to the finished list.`
 
 And there is the rollout, finished: twelve of twelve. All thirteen healthy.
 
@@ -207,7 +251,7 @@ The flywheel page now shows the promoted model.
 
 ---
 
-## 7 · Coding tenant `16:30` → `20:30`
+## 7 · Coding tenant
 
 `▶ TAB 8, the prepared workspace, agent ready.`
 
@@ -235,6 +279,7 @@ The assistant is busy - and the training and rendering slices did not move.
 Measured with training running next door: **246.6** against **245.7** tokens a second. Unchanged. That is isolation.
 
 `▶ TAB 8. Wait for "349 passed, 5 skipped".`
+`▶ EDIT POINT: if the agent is still working, stop talking here; the recording jumps to the green line.`
 
 All green - `«read the last line»`. The existing tests are what shows it broke nothing.
 
@@ -242,7 +287,7 @@ All green - `«read the last line»`. The existing tests are what shows it broke
 
 ---
 
-## 8 · Close `20:30` → `21:30`
+## 8 · Close
 
 `▶ TAB 9.`
 
@@ -263,14 +308,6 @@ One workstation. One GPU. Four tenants. Thirteen managed devices.
 Ask us about it.
 
 ---
-
-## If the clock slips
-
-- Behind at beat 4: say only the four bold numbers and PASS.
-- Behind at beat 6: skip the single robot's page; keep the wall and the finished rollout.
-- Behind at beat 7: type the prompt, say the isolation lines on tab 1, close - do not wait for green.
-- The rollout has not started two minutes after the click: say "Edge Manager checks git every two minutes; the
-  rollout starts at the next check", stay on beat 6, look again.
 
 ## Not said, ever
 
