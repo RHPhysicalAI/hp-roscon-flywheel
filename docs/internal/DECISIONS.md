@@ -5808,3 +5808,21 @@ equal. On the machine: admitted under the restricted profile; the paired page st
 episodes, the collection's page still on its own 18; the new page, an hour into the lane and across the promotion
 cycle, shows `act-v2-ft160` with 28 of 37 episodes placing all three cubes on rendered cameras and the teacher 6 of
 9 - small counts, but they are what D166's open question asked for, and they keep growing by themselves.
+
+## D170 — Robot zero's world restarts itself when it goes quiet; stuck pose queries are reaped every minute
+
+**Date:** 2026-09-23
+**What happened:** from 2026-09-22 13:30 UTC robot zero's world sent about one state message a second instead of
+thirty: "Waiting for sim" on the flywheel page, `r00` gone from the wall, every episode "sensor unavailable".
+`task_eval.py` reads cube poses with `gz topic ... -n 1` under an 8 s timeout; `gz` is a wrapper, and the timeout
+killed only the wrapper, so each query that hung left a `gz-transport-topic` behind. Two days in, 75 of them (612 MB)
+put the world's unit over its 2 GiB `MemoryHigh` (28.7 M throttle events) and the sim crawled. A contributing
+engineer found it overnight; `robot-zero.sh reset` cleared it.
+**Decision:** (1) `task_eval.py` starts the query in its own session and kills the process group on timeout (fury
+9c968f2; ships with the next runtime image). (2) The world's unit gets `MemoryHigh=4G`, `MemoryMax=6G`. (3) Until
+and after that, a root timer, `robot-zero-watchdog` (`tools/host/fury/76-robot-zero-watchdog-install.sh`), runs every
+minute: kills pose queries older than 60 s, and restarts robot zero's units - the same action as `fury-mode zero` -
+when the renderer hears `r00` below 10 messages a second for four checks in a row while the world is active. It acts
+only on robot zero's four units, logs every action to its journal, and is removed with `remove`.
+**Why automatic:** the demo runs unattended all day at the booth; a presenter cannot diagnose this, and the cost of
+a restart (about two and a half minutes of "Waiting for sim") is smaller than an afternoon without robot zero.
