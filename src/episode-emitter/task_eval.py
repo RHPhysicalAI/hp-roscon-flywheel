@@ -20,8 +20,10 @@ small margin) and its z is near tray-floor height (not still in the gripper
 or knocked off the table).
 """
 
+import contextlib
 import os
 import re
+import signal
 import subprocess
 
 GZ_WORLD = os.environ.get("GZ_WORLD", "pai_world")
@@ -51,11 +53,22 @@ def read_cube_poses() -> dict[str, tuple[float, float, float]] | None:
     returned no cube at all) so callers can tell "sensor down" from "no cube on
     the tray" — the world always carries the three cubes.
     """
+    # `gz` is a wrapper that starts gz-transport-topic underneath; on a timeout the whole process group is
+    # killed, or the child outlives the query and every stuck query leaves one more behind.
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             ["gz", "topic", "-e", "-t", POSE_TOPIC, "-n", "1"],
-            capture_output=True, timeout=8, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True,
         )
+    except Exception:
+        return None
+    try:
+        stdout, _ = proc.communicate(timeout=8)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        return None
     except Exception:
         return None
 
@@ -64,7 +77,7 @@ def read_cube_poses() -> dict[str, tuple[float, float, float]] | None:
     coords: dict[str, float] = {}
     in_position = False
 
-    for line in result.stdout.splitlines():
+    for line in stdout.splitlines():
         name_match = _NAME_RE.match(line)
         if name_match:
             current = name_match.group(1)

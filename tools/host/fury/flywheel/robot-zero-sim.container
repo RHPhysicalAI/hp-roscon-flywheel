@@ -64,8 +64,8 @@ TimeoutStartSec=300
 # Measured for the same world as a pod (gitops/fleet-worlds/world.yaml): about one core and 725 MiB at steady
 # state, more than two cores wanted for the half minute of start-up.
 CPUQuota=300%
-MemoryHigh=2G
-MemoryMax=3G
+MemoryHigh=4G
+MemoryMax=6G
 MemorySwapMax=0
 
 # a boot in tenants mode brings robot zero's host side back by itself; in flywheel mode the condition skips it

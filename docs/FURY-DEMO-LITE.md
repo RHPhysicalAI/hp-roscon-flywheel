@@ -1,7 +1,9 @@
 <!-- This project was developed with assistance from AI tools. -->
 # Fury demo-lite: showing the running system
 
-For a presenter: a partner-facing colleague, a manager, a booth volunteer. The system is already running - 
+For a presenter: a partner-facing colleague, a manager, a booth volunteer. "The demo owner" throughout is the
+project lead at Red Hat who runs the system: credentials, resets and anything that needs a password go through them.
+The system is already running - 
 You only need to show what is running and talk to it. 
 
 THIS WILL NOT WORK WITHOUT BEING ON THE CORRECT TAILNET. Do the setup below once, the day before if you can.
@@ -50,7 +52,7 @@ themselves.
 | 2 | Flywheel page | 1-2 | robot zero working, every attempt judged live |
 | 3 | Live episodes - live lane | under 1 | the running score, by model |
 | 4 | Paired evaluation | 1-2 | how a model earns promotion |
-| 5 | GitHub pull requests, then Red Hat Edge Manager | 1-2 | the promotion's evidence |
+| 5 | OpenShift AI, GitHub pull requests, then Red Hat Edge Manager | 1-2 | the promotion's evidence |
 | 6 | Fleet wall, then Edge Manager again | 1-2 | twelve managed robots and robot zero |
 | 7 | GPU tenants dashboard again | 1 | training shares the GPU |
 | 8 | OPTIONAL: the coding workspace | 3-5 | a coding agent using the big slice |
@@ -167,8 +169,11 @@ themselves.
 
 ## Stop 5 - The promotion's evidence (1-2 min)
 
-- **Tabs:** the promotion pull requests - https://github.com/RHPhysicalAI/hp-roscon-flywheel/pulls (click "Closed"
-  to list the merged ones); then Red Hat Edge Manager - https://ui.flightctl.apps.sno-flywheel.local
+- **Tabs:** OpenShift AI - https://data-science-gateway.apps.sno-flywheel.local (Develop & train > Pipelines > Runs,
+  the run `promote-act-v2-ft160`; then AI hub > Models > Registry, `soarm-act`); the promotion pull requests -
+  https://github.com/RHPhysicalAI/hp-roscon-flywheel/pulls (click "Closed" to list the merged ones); then Red Hat
+  Edge Manager - https://ui.flightctl.apps.sno-flywheel.local. OpenShift AI and Edge Manager ask for the cluster
+  login: the demo owner logs the browser in before handing it over, or these two are skipped.
 - **What you are looking at:** a pull request is a proposed change to the files in git that say what every device
   must run. A promotion is exactly that: the new model's signed fingerprint (its "digest") and version, written for
   both fleets - a fleet is a group of devices managed alike; one holds the GPU host, the other the twelve robots.
@@ -181,10 +186,14 @@ themselves.
     again, nothing was re-measured. Same signed model, same gate record."
   - "When number 8 was merged, the GPU host was serving the new model a minute and a half later, and all twelve
     robots within three and a half minutes. Nothing was downloaded: every device already held both models."
-    (Exact: host 1 min 32 s, twelve robots 3 min 23 s, all thirteen devices healthy 3 min 39 s.)
+    (Exact: host 1 min 32 s, twelve robots 3 min 23 s, all thirteen devices healthy 3 min 39 s. "Held both
+    models": each device keeps the model images it has pulled, so the old and the new model were both on disk on
+    every device before the merge; a rollout, or a rollback, only switches which one runs.)
   - In Edge Manager: "And this is the result: both fleets carry the promoted model, every device up to date."
-- **Point at:** on GitHub, open number 8: the "Merged" label and its first sentence, then the quoted table, 82% to
-  92%, PASS. In Edge Manager, "Fleets" in the menu: `act-inference` (the GPU host) and `robots` (the twelve).
+- **Point at:** in OpenShift AI, the run's graph - every step green, from `eval-gate` to `open-promotion-pr` -
+  then the registry entry with the gate's result in its description. On GitHub, open number 8: the "Merged" label
+  and its first sentence, then the quoted table, 82% to 92%, PASS. In Edge Manager, "Fleets" in the menu:
+  `act-inference` (the GPU host) and `robots` (the twelve).
 - **If asked:**
   - *Can you merge one now?* "Not in this walk-through. The live merge belongs to the full demo with the demo owner."
   - *What are the older promotions in the list?* "An earlier stage of the project. Today's is 7; 8 re-shows it."
